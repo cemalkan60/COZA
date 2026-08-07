@@ -7,10 +7,13 @@
   job after each scrape (per-code representative product; concurrency 5). ~1000 codes.
 - Daily 08:00 (Europe/Istanbul) auto-scrape + incremental origin enrichment.
 
-## Roles / Auth (JWT, bcrypt, plain-string identifier)
-- Admin (proxy key + storage settings + manual scrape): admin@still / cozaadmin2026
-- Viewers (read-only, 403 on admin routes): ece@still / berilberen, cem@still / cem123
-- Public signup creates viewers.
+## Roles / Auth (JWT, bcrypt) — CLOSED AUTH WALL (no public signup)
+- Exactly 5 fixed users; startup deletes any user outside this allow-list.
+- Admin: cem / Umutcem1085. Viewers: ece, burak, beyza, ferdi (pw = <name>123).
+- `/auth/signup` removed (404). Login = plain username (case-insensitive).
+
+## Scheduler
+- Scrape + origin enrichment auto-runs **Mon & Thu 08:00 (Europe/Istanbul)**.
 
 ## Frontend (Expo Router)
 - **Drawer** navigation (hamburger LEFT of COZA logo) replaced bottom tabs. Drawer =

@@ -1,0 +1,40 @@
+{
+  "summary": "COZA iteration 4 (closed 5-user auth wall, signup removed, scheduler → Mon+Thu 08:00 Europe/Istanbul) tested end-to-end via public EXPO_PUBLIC_BACKEND_URL. Backend: 20/20 pytest cases pass (100%). Verified: POST /api/auth/login → 200 for all 5 fixed accounts (cem admin; ece/burak/beyza/ferdi viewers) with correct role in payload; case-insensitive username (CEM works); 401 for wrong password, unknown username ('admin@still'), and legacy user ('cem@still'). POST /api/auth/signup returns 404 (route deleted). GET /api/auth/me → 200 with correct role and no password_hash leak; 403 without token. Admin-only endpoints: cem 200 on GET /api/admin/settings (masked proxy '5f30••••••a041') and POST /api/admin/enrich-origins (started/already_running); ferdi (viewer) 403 on GET /api/admin/settings, POST /api/admin/enrich-origins, POST /api/admin/scrape. Direct MongoDB check: db.users contains EXACTLY {cem, ece, burak, beyza, ferdi} with correct roles; backend log confirms 'Auth wall: 5 fixed users, removed 8 stale users' on first boot then 'removed 0' after — converges idempotently. Scheduler: /app/backend/server.py L622-626 configures scheduler.add_job(run_scrape, CronTrigger(day_of_week='mon,thu', hour=8, minute=0), id='scheduled_scrape'); run_scrape() creates async enrich_origins task (L160) so both scrape + origin enrichment fire on the same cron. FRONTEND (390x844 mobile viewport): login screen shows COZA watermark logo, 'Giriş Yap' title, 'KULLANICI ADI' + 'ŞİFRE' labels; NO 'Kayıt Ol'/'Sign up' link anywhere. Direct navigation to /signup renders Expo Router 'Unmatched Route / Page could not be found' — /(auth)/signup route no longer exists. Wrong password on login shows testID='login-error' with Turkish message 'Kullanıcı adı veya şifre hatalı.'; unknown user ('admin@still') also gets same 401 error and stays on login screen. Admin login (cem/Umutcem1085) → catalog with 4659 ürün + hamburger drawer; drawer→Profil shows 'YÖNETİCİ' badge, VERİ block, PROXY & DEPOLAMA admin section with masked key '5f30••••••a041', 'Şimdi Güncelle' scrape button, and 'YENİ PROXY API ANAHTARI' edit form + 'DEPOLAMA NOTU' + Kaydet. Viewer login (ferdi/ferdi123) → catalog loads; drawer→Profil shows 'GÖZLEMCİ' badge, VERİ block, ONLY 'Çıkış Yap' — NO proxy edit form, NO 'Şimdi Güncelle' button, NO YÖNETİCİ section (frontend admin-UI gating correctly hidden for viewers). No red screens. Pre-existing library warnings persist (props.pointerEvents deprecated from @gorhom/bottom-sheet, Image style.resizeMode from expo-image / RN 0.7x).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "@gorhom/bottom-sheet", "issue": "Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' (library-level, React 19). Pre-existing from iteration 3. Reference: dependency, not project code."},
+      {"component": "expo-image / RN Image", "issue": "Console warning 'Image: style.resizeMode is deprecated. Please use props.resizeMode.' Consider migrating any <Image style={{resizeMode:...}}> usages to prop form."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_wall.py",
+    "/app/test_reports/pytest/pytest_iter4.xml"
+  ],
+  "action_items": [
+    "Optional: migrate <Image style={{resizeMode:...}}> to <Image resizeMode=... /> to silence RN warning.",
+    "Optional: bump @gorhom/bottom-sheet to a React-19-clean release to silence pointerEvents warning."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py seed_users() (L218-262) is idempotent and destructive-by-design: preserves ids and password_hash when password already verifies, only rehashes on drift, then delete_many({email:{$nin:allowed}}) evicts every non-allow-list user. Verified live: 8 legacy users removed on first boot, 0 on subsequent boots.",
+    "Scheduler job id 'scheduled_scrape' with CronTrigger(day_of_week='mon,thu', hour=8, minute=0) at timezone='Europe/Istanbul' — correct per spec (L622-626). run_scrape() then spawns enrich_origins as an async task (L160), so both jobs fire together on the same cron slot.",
+    "LoginBody keeps the field name 'email' but semantically accepts a plain username (backend normalize_ident casefolds+trims). Frontend AuthContext lowercases before posting (L54). Works, but a future rename to `username` would be cleaner for clarity.",
+    "get_current_user() strips password_hash on projection (L99) — no hash leak via /api/auth/me confirmed.",
+    "Frontend /(auth)/_layout.tsx correctly Redirects to /(tabs) when token exists — prevents logged-in users from seeing the login screen; no signup route registered.",
+    "profile.tsx correctly gates admin-only UI (proxy edit block, Şimdi Güncelle scrape button, PROXY & DEPOLAMA section) by role — GÖZLEMCİ badge shown for viewers with only Çıkış Yap in HESAP section (visually verified)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_wall.py (new, 20 tests for iter-4 closed-auth-wall)",
+    "/app/test_reports/iteration_4.json",
+    "/app/test_reports/pytest/pytest_iter4.xml"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% (all iter-4 flows verified: admin login, viewer login, wrong-pw error, unknown-user error, signup route 404, admin vs viewer profile RBAC)"},
+  "seed_data_creation": "None. Reused the 5 auto-seeded fixed users. Did NOT trigger POST /api/admin/scrape (heavy). POST /api/admin/enrich-origins was called once as admin (idempotent — returns 'already_running' if a job is in flight).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: https://coza-tracker.preview.emergentagent.com. Auth is a CLOSED 5-user allow-list — no signup route exists. Fixed users: cem/Umutcem1085 (admin), ece/ece123, burak/burak123, beyza/beyza123, ferdi/ferdi123 (viewers). Login field name is 'email' but accepts plain usernames (case-insensitive). db.users converges on backend startup (removes any user outside allow-list). Scheduler: id='scheduled_scrape', CronTrigger(day_of_week='mon,thu', hour=8, minute=0, tz='Europe/Istanbul'); run_scrape spawns enrich_origins internally. Admin-only endpoints: POST /api/admin/scrape, POST /api/admin/enrich-origins, GET/PUT /api/admin/settings — return 403 for viewers. Frontend testIDs unchanged from iter-3: login-email, login-password, login-submit, login-error, search-input, drawer-{index|new|analytics|favorites|profile}, drawer-cat-*, drawer-origin-*, product-card-{id}, favorite-toggle-{id}. Profile screen role badges: 'YÖNETİCİ' (admin) vs 'GÖZLEMCİ' (viewer). Hamburger button at ~(20,45) opens the native RN drawer. Test suites: test_coza_backend.py + test_coza_v2.py + test_coza_v3.py + test_auth_wall.py = 75 tests.",
+  "rca_of_issue": "N/A — no bug reported. All acceptance criteria for the closed-auth-wall refactor and Mon+Thu 08:00 scheduler are met and verified end-to-end."
+}

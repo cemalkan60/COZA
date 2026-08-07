@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Link, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 
 import { useTheme } from "@/src/theme/ThemeContext";
@@ -69,11 +69,11 @@ export default function Login() {
         <Text style={[styles.title, { color: colors.onSurface }]}>Giriş Yap</Text>
 
         <Field
-          label="E-POSTA / KULLANICI"
+          label="KULLANICI ADI"
           value={email}
           onChangeText={setEmail}
-          placeholder="ornek@eposta.com"
-          keyboardType="email-address"
+          placeholder="kullanıcı adı"
+          autoCapitalize="none"
           testID="login-email"
         />
         <Field
@@ -103,15 +103,6 @@ export default function Login() {
             <Text style={[styles.buttonText, { color: colors.onBrand }]}>Giriş Yap</Text>
           )}
         </Pressable>
-
-        <View style={styles.footer}>
-          <Text style={{ color: colors.brandSecondary }}>Hesabınız yok mu? </Text>
-          <Link href="/(auth)/signup" replace asChild>
-            <Pressable testID="go-signup">
-              <Text style={{ color: colors.onSurface, fontWeight: "700" }}>Kayıt Ol</Text>
-            </Pressable>
-          </Link>
-        </View>
       </KeyboardAwareScrollView>
     </View>
   );
@@ -159,5 +150,4 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   buttonText: { fontSize: 15, fontWeight: "800", letterSpacing: 0.5 },
-  footer: { flexDirection: "row", justifyContent: "center", marginTop: 28 },
 });

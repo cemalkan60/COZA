@@ -16,7 +16,6 @@ type AuthValue = {
   token: string | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
 
@@ -58,14 +57,6 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     [persist],
   );
 
-  const signUp = useCallback(
-    async (email: string, password: string, name: string) => {
-      const data = await api.signup(email.trim().toLowerCase(), password, name.trim());
-      await persist(data);
-    },
-    [persist],
-  );
-
   const signOut = useCallback(async () => {
     await storage.secureRemove(TOKEN_KEY);
     setToken(null);
@@ -73,7 +64,7 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, token, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

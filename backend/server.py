@@ -50,12 +50,6 @@ def normalize_ident(value: str) -> str:
     return (value or "").strip().casefold()
 
 
-class SignupBody(BaseModel):
-    email: str = Field(min_length=3, max_length=128)
-    password: str = Field(min_length=6, max_length=128)
-    name: str = Field(default="", max_length=80)
-
-
 class LoginBody(BaseModel):
     email: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=128)
@@ -222,58 +216,53 @@ async def _seed_if_empty():
 
 
 async def seed_users():
-    """Idempotently create the admin + two viewer accounts (bootstrap only)."""
+    """Converge db.users to EXACTLY the fixed 5-user allow-list (closed auth wall).
+
+    Idempotent: preserves existing id, only rehashes when the configured
+    password no longer verifies, and deletes any user outside the allow-list so
+    no one else can authenticate.
+    """
     import uuid
-    seed = [
-        (os.environ["SEED_ADMIN_EMAIL"], os.environ["SEED_ADMIN_PASSWORD"], "admin", "Yönetici"),
+    fixed = [
+        (os.environ["SEED_ADMIN_EMAIL"], os.environ["SEED_ADMIN_PASSWORD"], "admin", "Cem"),
         (os.environ["SEED_VIEWER1_EMAIL"], os.environ["SEED_VIEWER1_PASSWORD"], "viewer", "Ece"),
-        (os.environ["SEED_VIEWER2_EMAIL"], os.environ["SEED_VIEWER2_PASSWORD"], "viewer", "Cem"),
+        (os.environ["SEED_VIEWER2_EMAIL"], os.environ["SEED_VIEWER2_PASSWORD"], "viewer", "Burak"),
+        (os.environ["SEED_VIEWER3_EMAIL"], os.environ["SEED_VIEWER3_PASSWORD"], "viewer", "Beyza"),
+        (os.environ["SEED_VIEWER4_EMAIL"], os.environ["SEED_VIEWER4_PASSWORD"], "viewer", "Ferdi"),
     ]
-    for email, pw, role, name in seed:
+    allowed = [normalize_ident(e) for e, *_ in fixed]
+    for email, pw, role, name in fixed:
         email = normalize_ident(email)
+        existing = await db.users.find_one({"email": email})
+        pw_hash = existing.get("password_hash") if existing else None
+        if not pw_hash or not verify_pw(pw, pw_hash):
+            pw_hash = hash_pw(pw)
         await db.users.update_one(
             {"email": email},
-            {"$setOnInsert": {
-                "id": str(uuid.uuid4()),
-                "email": email,
-                "name": name,
-                "role": role,
-                "disabled": False,
-                "password_hash": hash_pw(pw),
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }},
+            {
+                "$set": {
+                    "email": email,
+                    "name": name,
+                    "role": role,
+                    "disabled": False,
+                    "password_hash": pw_hash,
+                },
+                "$setOnInsert": {
+                    "id": str(uuid.uuid4()),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            },
             upsert=True,
         )
-    # Migrate any legacy users that predate roles.
-    await db.users.update_many(
-        {"role": {"$exists": False}}, {"$set": {"role": "viewer", "disabled": False}}
+    # Destructive by design: remove every account outside the fixed allow-list.
+    result = await db.users.delete_many({"email": {"$nin": allowed}})
+    logger.info(
+        "Auth wall: %d fixed users, removed %d stale users.",
+        len(allowed), result.deleted_count,
     )
 
 
 # ----------------------------- Auth routes -----------------------------
-@api.post("/auth/signup")
-async def signup(body: SignupBody):
-    email = normalize_ident(body.email)
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(409, "Bu kullanıcı adı zaten kayıtlı.")
-    import uuid
-    uid = str(uuid.uuid4())
-    doc = {
-        "id": uid,
-        "email": email,
-        "name": body.name.strip(),
-        "role": "viewer",
-        "disabled": False,
-        "password_hash": hash_pw(body.password),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.users.insert_one(doc)
-    return {
-        "token": create_token(uid),
-        "user": {"id": uid, "email": email, "name": doc["name"], "role": "viewer"},
-    }
-
-
 @api.post("/auth/login")
 async def login(body: LoginBody):
     email = normalize_ident(body.email)
@@ -631,8 +620,9 @@ async def on_startup():
     await db.favorites.create_index([("user_id", 1), ("product_id", 1)], unique=True)
     await seed_users()
     scheduler.add_job(
-        run_scrape, CronTrigger(hour=8, minute=0), args=["daily_08:00"],
-        id="daily_scrape", replace_existing=True,
+        run_scrape, CronTrigger(day_of_week="mon,thu", hour=8, minute=0),
+        args=["scheduled_mon_thu_08:00"],
+        id="scheduled_scrape", replace_existing=True,
     )
     scheduler.start()
     await _seed_if_empty()

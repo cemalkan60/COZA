@@ -67,11 +67,6 @@ function toQuery(params: Record<string, unknown>) {
 }
 
 export const api = {
-  signup: (email: string, password: string, name: string) =>
-    request("/auth/signup", {
-      method: "POST",
-      body: JSON.stringify({ email, password, name }),
-    }),
   login: (email: string, password: string) =>
     request("/auth/login", {
       method: "POST",
