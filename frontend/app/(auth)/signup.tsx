@@ -6,8 +6,6 @@ import {
   Text,
   View,
 } from "react-native";
-import { Image } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
@@ -17,8 +15,6 @@ import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
 import { Logo } from "@/src/components/Logo";
 import { Field } from "./login";
-
-const HERO = "https://images.pexels.com/photos/11182234/pexels-photo-11182234.jpeg";
 
 export default function Signup() {
   const { colors, spacing } = useTheme();
@@ -52,26 +48,25 @@ export default function Signup() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <View style={styles.hero}>
-        <Image source={{ uri: HERO }} style={StyleSheet.absoluteFill} contentFit="cover" />
-        <LinearGradient
-          colors={["transparent", colors.surface + "AA", colors.surface]}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={[styles.heroContent, { paddingTop: insets.top + 36 }]}>
-          <Logo size={30} />
-          <Text style={[styles.tagline, { color: colors.onSurfaceSecondary }]}>
-            KOLEKSİYONU TAKİP ETMEYE BAŞLAYIN
-          </Text>
-        </View>
+      <View pointerEvents="none" style={styles.watermark}>
+        <Logo size={96} color={colors.surfaceSecondary} />
       </View>
 
       <KeyboardAwareScrollView
         bottomOffset={24}
-        contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          padding: spacing.xl,
+          paddingTop: insets.top + 80,
+          justifyContent: "center",
+        }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={[styles.title, { color: colors.onSurface }]}>Hesap oluştur</Text>
+        <View style={{ alignItems: "center", marginBottom: 44 }}>
+          <Logo size={40} />
+        </View>
+
+        <Text style={[styles.title, { color: colors.onSurface }]}>Hesap Oluştur</Text>
 
         <Field
           label="AD"
@@ -131,10 +126,15 @@ export default function Signup() {
 }
 
 const styles = StyleSheet.create({
-  hero: { height: 260 },
-  heroContent: { flex: 1, paddingHorizontal: 24 },
-  tagline: { marginTop: 10, fontSize: 11, letterSpacing: 1.6, fontWeight: "600" },
-  title: { fontSize: 26, fontWeight: "800", letterSpacing: -0.5, marginTop: 4 },
+  watermark: {
+    position: "absolute",
+    top: 110,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    opacity: 0.6,
+  },
+  title: { fontSize: 26, fontWeight: "800", letterSpacing: -0.5, marginBottom: 4 },
   error: { marginTop: 16, fontSize: 13 },
   button: { marginTop: 32, height: 54, borderRadius: 4, alignItems: "center", justifyContent: "center" },
   buttonText: { fontSize: 15, fontWeight: "800", letterSpacing: 0.5 },

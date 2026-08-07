@@ -41,6 +41,7 @@ export default function Catalog() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     api
@@ -124,59 +125,65 @@ export default function Catalog() {
 
   const chips = ["Tümü", ...categories];
 
-  const renderHeader = () => (
-    <View style={{ paddingHorizontal: spacing.lg }}>
-      <View style={styles.resultRow}>
-        <Text style={[styles.resultText, { color: colors.brandSecondary }]}>
-          {loading ? "Yükleniyor…" : `${total} ürün`}
-          {category ? ` · ${category}` : ""}
-        </Text>
-      </View>
-    </View>
-  );
-
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: insets.top }}>
-      {/* Sticky header */}
+      {/* Sticky header: logo (→ home) + search toggle */}
       <View style={[styles.header, { paddingHorizontal: spacing.lg }]}>
-        <Logo size={22} />
+        <Logo size={22} home />
+        <Pressable
+          testID="toggle-search"
+          onPress={() => setSearchOpen((s) => !s)}
+          style={[styles.iconBtn, { borderColor: colors.border }]}
+        >
+          <Feather name={searchOpen ? "x" : "search"} size={17} color={colors.onSurface} />
+        </Pressable>
+      </View>
+
+      {searchOpen && (
+        <View style={[styles.searchWrap, { paddingHorizontal: spacing.lg }]}>
+          <View style={[styles.search, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+            <Feather name="search" size={16} color={colors.brandSecondary} />
+            <TextInput
+              testID="search-input"
+              value={searchInput}
+              onChangeText={setSearchInput}
+              placeholder="Ürün veya üretici kodu (örn. 8497)"
+              placeholderTextColor={colors.brandSecondary}
+              style={[styles.searchInput, { color: colors.onSurface }]}
+              autoCapitalize="none"
+              autoFocus
+              returnKeyType="search"
+            />
+            {searchInput.length > 0 && (
+              <Pressable testID="search-clear" onPress={() => setSearchInput("")} hitSlop={8}>
+                <Feather name="x" size={16} color={colors.brandSecondary} />
+              </Pressable>
+            )}
+          </View>
+        </View>
+      )}
+
+      {/* Controls: filter on the LEFT + result count on the right */}
+      <View style={[styles.controls, { paddingHorizontal: spacing.lg }]}>
         <Pressable
           testID="open-filters"
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             sheetRef.current?.present();
           }}
-          style={[styles.filterBtn, { borderColor: colors.border }]}
+          style={[styles.filterPill, { borderColor: activeFilterCount ? colors.brand : colors.border }]}
         >
-          <Feather name="sliders" size={17} color={colors.onSurface} />
+          <Feather name="sliders" size={15} color={colors.onSurface} />
+          <Text style={[styles.filterPillText, { color: colors.onSurface }]}>Filtrele</Text>
           {activeFilterCount > 0 && (
-            <View style={[styles.badge, { backgroundColor: colors.brand }]}>
+            <View style={[styles.badgeInline, { backgroundColor: colors.brand }]}>
               <Text style={[styles.badgeText, { color: colors.onBrand }]}>{activeFilterCount}</Text>
             </View>
           )}
         </Pressable>
-      </View>
-
-      {/* Search */}
-      <View style={[styles.searchWrap, { paddingHorizontal: spacing.lg }]}>
-        <View style={[styles.search, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-          <Feather name="search" size={16} color={colors.brandSecondary} />
-          <TextInput
-            testID="search-input"
-            value={searchInput}
-            onChangeText={setSearchInput}
-            placeholder="Ürün, referans veya kod ara"
-            placeholderTextColor={colors.brandSecondary}
-            style={[styles.searchInput, { color: colors.onSurface }]}
-            autoCapitalize="none"
-            returnKeyType="search"
-          />
-          {searchInput.length > 0 && (
-            <Pressable testID="search-clear" onPress={() => setSearchInput("")} hitSlop={8}>
-              <Feather name="x" size={16} color={colors.brandSecondary} />
-            </Pressable>
-          )}
-        </View>
+        <Text style={[styles.resultText, { color: colors.brandSecondary }]}>
+          {loading ? "…" : `${total} ürün${category ? " · " + category : ""}`}
+        </Text>
       </View>
 
       {/* Category chips — single horizontal scroller */}
@@ -252,8 +259,7 @@ export default function Catalog() {
           numColumns={2}
           renderItem={({ item }) => <ProductCard product={item} />}
           columnWrapperStyle={{ paddingHorizontal: spacing.lg, gap: 12 }}
-          contentContainerStyle={{ paddingTop: 6, paddingBottom: insets.bottom + 24, gap: 22 }}
-          ListHeaderComponent={renderHeader}
+          contentContainerStyle={{ paddingTop: 8, paddingBottom: insets.bottom + 90, gap: 22 }}
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
           showsVerticalScrollIndicator={false}
@@ -292,13 +298,38 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  filterBtn: {
+  iconBtn: {
     width: 40,
     height: 40,
     borderRadius: 4,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  controls: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  filterPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    height: 38,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  filterPillText: { fontSize: 13, fontWeight: "700", letterSpacing: 0.2 },
+  badgeInline: {
+    minWidth: 18,
+    height: 18,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
   },
   badge: {
     position: "absolute",

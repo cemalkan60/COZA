@@ -12,6 +12,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ThemeProvider, useTheme } from "@/src/theme/ThemeContext";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { FavoritesProvider } from "@/src/context/FavoritesContext";
+import { CompareProvider } from "@/src/context/CompareContext";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -38,6 +39,8 @@ function ThemedShell() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="product/[id]" options={{ animation: "slide_from_right" }} />
+        <Stack.Screen name="factory/[code]" options={{ animation: "slide_from_right" }} />
+        <Stack.Screen name="compare" options={{ animation: "slide_from_bottom" }} />
       </Stack>
     </View>
   );
@@ -63,9 +66,11 @@ export default function RootLayout() {
           <ThemeProvider>
             <AuthProvider>
               <FavoritesProvider>
-                <BottomSheetModalProvider>
-                  <ThemedShell />
-                </BottomSheetModalProvider>
+                <CompareProvider>
+                  <BottomSheetModalProvider>
+                    <ThemedShell />
+                  </BottomSheetModalProvider>
+                </CompareProvider>
               </FavoritesProvider>
             </AuthProvider>
           </ThemeProvider>

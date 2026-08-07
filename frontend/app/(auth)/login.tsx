@@ -7,19 +7,14 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { Image } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Link, useRouter } from "expo-router";
-import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
 import { Logo } from "@/src/components/Logo";
-
-const HERO = "https://images.pexels.com/photos/14875811/pexels-photo-14875811.jpeg";
 
 export default function Login() {
   const { colors, spacing } = useTheme();
@@ -34,7 +29,7 @@ export default function Login() {
 
   const submit = async () => {
     if (!email.trim() || !password) {
-      setError("Lütfen e-posta ve şifrenizi girin.");
+      setError("Lütfen kullanıcı adı ve şifrenizi girin.");
       return;
     }
     setLoading(true);
@@ -52,29 +47,29 @@ export default function Login() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <View style={styles.hero}>
-        <Image source={{ uri: HERO }} style={StyleSheet.absoluteFill} contentFit="cover" />
-        <LinearGradient
-          colors={["transparent", colors.surface + "AA", colors.surface]}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={[styles.heroContent, { paddingTop: insets.top + 40 }]}>
-          <Logo size={34} />
-          <Text style={[styles.tagline, { color: colors.onSurfaceSecondary }]}>
-            ZARA WOMAN — ÜRETİM & TEDARİK İZLEME
-          </Text>
-        </View>
+      {/* Faint watermark logo */}
+      <View pointerEvents="none" style={styles.watermark}>
+        <Logo size={96} color={colors.surfaceSecondary} />
       </View>
 
       <KeyboardAwareScrollView
         bottomOffset={24}
-        contentContainerStyle={{ padding: spacing.xl, paddingBottom: insets.bottom + 40 }}
+        contentContainerStyle={{
+          flexGrow: 1,
+          padding: spacing.xl,
+          paddingTop: insets.top + 90,
+          justifyContent: "center",
+        }}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={[styles.title, { color: colors.onSurface }]}>Tekrar hoş geldiniz</Text>
+        <View style={{ alignItems: "center", marginBottom: 56 }}>
+          <Logo size={44} />
+        </View>
+
+        <Text style={[styles.title, { color: colors.onSurface }]}>Giriş Yap</Text>
 
         <Field
-          label="E-POSTA"
+          label="E-POSTA / KULLANICI"
           value={email}
           onChangeText={setEmail}
           placeholder="ornek@eposta.com"
@@ -144,10 +139,15 @@ export function Field({
 }
 
 const styles = StyleSheet.create({
-  hero: { height: 300 },
-  heroContent: { flex: 1, paddingHorizontal: 24, justifyContent: "flex-start" },
-  tagline: { marginTop: 10, fontSize: 11, letterSpacing: 1.6, fontWeight: "600" },
-  title: { fontSize: 26, fontWeight: "800", letterSpacing: -0.5, marginTop: 4 },
+  watermark: {
+    position: "absolute",
+    top: 120,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    opacity: 0.6,
+  },
+  title: { fontSize: 26, fontWeight: "800", letterSpacing: -0.5, marginBottom: 4 },
   fieldLabel: { fontSize: 10, letterSpacing: 1.4, fontWeight: "700", marginBottom: 8 },
   input: { borderBottomWidth: 1, paddingVertical: 10, fontSize: 16 },
   error: { marginTop: 16, fontSize: 13 },

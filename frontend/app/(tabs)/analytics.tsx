@@ -87,7 +87,7 @@ export default function AnalyticsScreen() {
       }
     >
       <View style={{ paddingHorizontal: spacing.xl }}>
-        <Text style={[styles.eyebrow, { color: colors.brandSecondary }]}>ZARA WOMAN · ANALİZ</Text>
+        <Text style={[styles.eyebrow, { color: colors.brandSecondary }]}>TEDARİK · ANALİZ</Text>
         <Text style={[styles.title, { color: colors.onSurface }]}>Tedarik Panosu</Text>
       </View>
 

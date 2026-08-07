@@ -19,6 +19,7 @@ import * as Haptics from "expo-haptics";
 import { api, Product } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useFavorites } from "@/src/context/FavoritesContext";
+import { useCompare } from "@/src/context/CompareContext";
 import { formatPrice } from "@/src/utils/format";
 
 export default function ProductDetail() {
@@ -28,10 +29,12 @@ export default function ProductDetail() {
   const router = useRouter();
   const { width } = useWindowDimensions();
   const { isFavorite, toggle } = useFavorites();
+  const compare = useCompare();
 
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
+  const [composition, setComposition] = useState<{ area: string; materials: string }[] | null>(null);
 
   useEffect(() => {
     api
@@ -39,6 +42,10 @@ export default function ProductDetail() {
       .then(setProduct)
       .catch(() => setProduct(null))
       .finally(() => setLoading(false));
+    api
+      .composition(String(id))
+      .then((r) => setComposition(r.composition || []))
+      .catch(() => setComposition([]));
   }, [id]);
 
   if (loading) {
@@ -71,10 +78,15 @@ export default function ProductDetail() {
     }
   };
 
-  const details: { label: string; value: string; icon: any }[] = [
+  const details: { label: string; value: string; icon: any; onPress?: () => void }[] = [
     { label: "Üretim Yeri", value: product.origin, icon: "map-pin" },
-    { label: "Tedarikçi Kodu", value: product.supplier_code, icon: "hash" },
-    { label: "Referans", value: product.display_reference || product.reference, icon: "tag" },
+    {
+      label: "Üretici Kodu",
+      value: `#${product.manufacturer_code}`,
+      icon: "hash",
+      onPress: () => router.push(`/factory/${product.manufacturer_code}`),
+    },
+    { label: "Tam Kod", value: product.full_code || product.display_reference, icon: "tag" },
     { label: "Renk", value: product.color || "—", icon: "droplet" },
     { label: "Kategori", value: product.category, icon: "grid" },
   ];
@@ -142,15 +154,49 @@ export default function ProductDetail() {
                   <Feather name={d.icon} size={15} color={colors.brandSecondary} />
                   <Text style={[styles.detailLabel, { color: colors.brandSecondary }]}>{d.label}</Text>
                 </View>
-                <Text style={[styles.detailValue, { color: colors.onSurface }]} numberOfLines={1}>
-                  {d.value}
-                </Text>
+                {d.onPress ? (
+                  <Pressable
+                    testID="pdp-factory-link"
+                    onPress={d.onPress}
+                    hitSlop={6}
+                    style={styles.detailLinkVal}
+                  >
+                    <Text style={[styles.detailValue, { color: colors.brand }]} numberOfLines={1}>
+                      {d.value}
+                    </Text>
+                    <Feather name="chevron-right" size={15} color={colors.brand} />
+                  </Pressable>
+                ) : (
+                  <Text style={[styles.detailValue, { color: colors.onSurface }]} numberOfLines={1}>
+                    {d.value}
+                  </Text>
+                )}
               </View>
             ))}
           </View>
 
+          {composition && composition.length > 0 && (
+            <View style={{ marginTop: 24 }}>
+              <Text style={[styles.compTitle, { color: colors.brandSecondary }]}>KOMPOZİSYON</Text>
+              <View style={[styles.detailBox, { borderColor: colors.border }]}>
+                {composition.map((c, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.detailRow,
+                      i < composition.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.divider },
+                    ]}
+                  >
+                    <Text style={[styles.detailLabel, { color: colors.brandSecondary }]}>{c.area}</Text>
+                    <Text style={[styles.detailValue, { color: colors.onSurface }]}>{c.materials}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
           <Text style={[styles.originNote, { color: colors.brandSecondary }]}>
-            Üretim yeri, ürün referans kodundan Inditex tedarik dağılımına göre modellenmiştir.
+            Üretim yeri, ürünün üretici kodundan Inditex tedarik dağılımına göre modellenmiştir.
           </Text>
         </View>
       </ScrollView>
@@ -163,6 +209,20 @@ export default function ProductDetail() {
           style={[styles.circle, { backgroundColor: colors.surface + "E6" }]}
         >
           <Feather name="chevron-left" size={22} color={colors.onSurface} />
+        </Pressable>
+        <Pressable
+          testID="pdp-compare"
+          onPress={() => compare.toggle(product.product_id)}
+          style={[
+            styles.circle,
+            { backgroundColor: compare.has(product.product_id) ? colors.brand : colors.surface + "E6" },
+          ]}
+        >
+          <Feather
+            name="columns"
+            size={18}
+            color={compare.has(product.product_id) ? colors.onBrand : colors.onSurface}
+          />
         </Pressable>
       </View>
 
@@ -226,10 +286,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   detailLeft: { flexDirection: "row", alignItems: "center", gap: 10 },
+  detailLinkVal: { flexDirection: "row", alignItems: "center", gap: 2, maxWidth: "55%" },
   detailLabel: { fontSize: 13, fontWeight: "500" },
   detailValue: { fontSize: 14, fontWeight: "700", maxWidth: "55%" },
+  compTitle: { fontSize: 11, fontWeight: "700", letterSpacing: 1.4, marginBottom: 12 },
   originNote: { fontSize: 11, lineHeight: 16, marginTop: 16 },
-  topBar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row" },
+  topBar: { position: "absolute", top: 0, left: 0, right: 0, flexDirection: "row", justifyContent: "space-between" },
   circle: { width: 40, height: 40, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   bottomBar: {
     position: "absolute",

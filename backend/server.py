@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
@@ -44,19 +45,28 @@ _scrape_lock = asyncio.Lock()
 
 
 # ----------------------------- Models -----------------------------
+def normalize_ident(value: str) -> str:
+    return (value or "").strip().casefold()
+
+
 class SignupBody(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=3, max_length=128)
     password: str = Field(min_length=6, max_length=128)
     name: str = Field(default="", max_length=80)
 
 
 class LoginBody(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=1, max_length=128)
 
 
 class FavoriteBody(BaseModel):
     product_id: str = Field(min_length=1, max_length=64)
+
+
+class ProxyKeyBody(BaseModel):
+    proxy_api_key: str = Field(min_length=8, max_length=256)
+    storage_note: str = Field(default="", max_length=200)
 
 
 # ----------------------------- Auth helpers -----------------------------
@@ -97,6 +107,19 @@ async def get_current_user(
     return user
 
 
+async def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekli.")
+    return user
+
+
+async def get_proxy_key() -> str:
+    cfg = await db.settings.find_one({"_id": "scraper"})
+    if cfg and cfg.get("proxy_api_key"):
+        return cfg["proxy_api_key"]
+    return os.environ["SCRAPER_API_KEY"]
+
+
 # ----------------------------- Scrape orchestration -----------------------------
 async def run_scrape(reason: str = "manual") -> dict:
     if _scrape_lock.locked():
@@ -104,10 +127,17 @@ async def run_scrape(reason: str = "manual") -> dict:
     async with _scrape_lock:
         logger.info("Scrape started (%s)", reason)
         started = datetime.now(timezone.utc)
-        products, stats = await asyncio.to_thread(scraper.collect_products)
+        proxy_key = await get_proxy_key()
+        products, stats = await asyncio.to_thread(scraper.collect_products, proxy_key)
         now_iso = datetime.now(timezone.utc).isoformat()
+
+        existing_ids = set(await db.products.distinct("product_id"))
+        first_load = len(existing_ids) == 0
         for p in products:
             p["updated_at"] = now_iso
+            # A product is "new" only if it appeared for the first time in a later scrape,
+            # never on the very first catalog load.
+            p["is_new"] = (not first_load) and (p["product_id"] not in existing_ids)
             await db.products.update_one(
                 {"product_id": p["product_id"]},
                 {"$set": p, "$setOnInsert": {"first_seen": now_iso}},
@@ -138,37 +168,73 @@ async def _seed_if_empty():
         logger.info("Catalog present: %d products.", count)
 
 
+async def seed_users():
+    """Idempotently create the admin + two viewer accounts (bootstrap only)."""
+    import uuid
+    seed = [
+        (os.environ["SEED_ADMIN_EMAIL"], os.environ["SEED_ADMIN_PASSWORD"], "admin", "Yönetici"),
+        (os.environ["SEED_VIEWER1_EMAIL"], os.environ["SEED_VIEWER1_PASSWORD"], "viewer", "Ece"),
+        (os.environ["SEED_VIEWER2_EMAIL"], os.environ["SEED_VIEWER2_PASSWORD"], "viewer", "Cem"),
+    ]
+    for email, pw, role, name in seed:
+        email = normalize_ident(email)
+        await db.users.update_one(
+            {"email": email},
+            {"$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "email": email,
+                "name": name,
+                "role": role,
+                "disabled": False,
+                "password_hash": hash_pw(pw),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+    # Migrate any legacy users that predate roles.
+    await db.users.update_many(
+        {"role": {"$exists": False}}, {"$set": {"role": "viewer", "disabled": False}}
+    )
+
+
 # ----------------------------- Auth routes -----------------------------
 @api.post("/auth/signup")
 async def signup(body: SignupBody):
-    email = body.email.lower()
+    email = normalize_ident(body.email)
     if await db.users.find_one({"email": email}):
-        raise HTTPException(409, "Bu e-posta zaten kayıtlı.")
+        raise HTTPException(409, "Bu kullanıcı adı zaten kayıtlı.")
     import uuid
     uid = str(uuid.uuid4())
     doc = {
         "id": uid,
         "email": email,
         "name": body.name.strip(),
+        "role": "viewer",
+        "disabled": False,
         "password_hash": hash_pw(body.password),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
     return {
         "token": create_token(uid),
-        "user": {"id": uid, "email": email, "name": doc["name"]},
+        "user": {"id": uid, "email": email, "name": doc["name"], "role": "viewer"},
     }
 
 
 @api.post("/auth/login")
 async def login(body: LoginBody):
-    email = body.email.lower()
+    email = normalize_ident(body.email)
     user = await db.users.find_one({"email": email})
-    if not user or not verify_pw(body.password, user["password_hash"]):
-        raise HTTPException(401, "E-posta veya şifre hatalı.")
+    if not user or user.get("disabled") or not verify_pw(body.password, user["password_hash"]):
+        raise HTTPException(401, "Kullanıcı adı veya şifre hatalı.")
     return {
         "token": create_token(user["id"]),
-        "user": {"id": user["id"], "email": user["email"], "name": user.get("name", "")},
+        "user": {
+            "id": user["id"],
+            "email": user["email"],
+            "name": user.get("name", ""),
+            "role": user.get("role", "viewer"),
+        },
     }
 
 
@@ -183,7 +249,9 @@ async def list_products(
     category: Optional[str] = None,
     origin: Optional[str] = None,
     supplier: Optional[str] = None,
+    code: Optional[str] = None,
     q: Optional[str] = None,
+    is_new: Optional[bool] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     sort: str = "featured",
@@ -195,14 +263,18 @@ async def list_products(
         query["category"] = category
     if origin:
         query["origin"] = origin
-    if supplier:
-        query["supplier_code"] = {"$regex": supplier, "$options": "i"}
+    if is_new:
+        query["is_new"] = True
+    # Manufacturer code = first 4 digits shown in the product code. Prefix match.
+    manu = (code or supplier or "").strip()
+    if manu:
+        query["manufacturer_code"] = {"$regex": "^" + re.escape(manu), "$options": "i"}
     if q:
+        qs = q.strip()
         query["$or"] = [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"reference": {"$regex": q, "$options": "i"}},
-            {"display_reference": {"$regex": q, "$options": "i"}},
-            {"supplier_code": {"$regex": q, "$options": "i"}},
+            {"name": {"$regex": re.escape(qs), "$options": "i"}},
+            {"manufacturer_code": {"$regex": "^" + re.escape(qs), "$options": "i"}},
+            {"full_code": {"$regex": "^" + re.escape(qs), "$options": "i"}},
         ]
     if min_price is not None or max_price is not None:
         pr: dict = {}
@@ -235,6 +307,19 @@ async def get_product(product_id: str):
     if not p:
         raise HTTPException(404, "Ürün bulunamadı.")
     return p
+
+
+@api.get("/products/{product_id}/composition")
+async def product_composition(product_id: str):
+    p = await db.products.find_one({"product_id": product_id})
+    if p is None:
+        raise HTTPException(404, "Ürün bulunamadı.")
+    if p.get("composition") is not None:
+        return {"composition": p["composition"]}
+    key = await get_proxy_key()
+    comp = await asyncio.to_thread(scraper.fetch_composition, product_id, key)
+    await db.products.update_one({"product_id": product_id}, {"$set": {"composition": comp}})
+    return {"composition": comp}
 
 
 @api.get("/filters")
@@ -297,9 +382,39 @@ async def get_meta():
 
 
 @api.post("/admin/scrape")
-async def admin_scrape(user: Annotated[dict, Depends(get_current_user)]):
+async def admin_scrape(admin: Annotated[dict, Depends(require_admin)]):
     result = await run_scrape("manual")
     return result
+
+
+@api.get("/admin/settings")
+async def get_settings(admin: Annotated[dict, Depends(require_admin)]):
+    cfg = await db.settings.find_one({"_id": "scraper"}) or {}
+    key = cfg.get("proxy_api_key") or os.environ["SCRAPER_API_KEY"]
+    masked = (key[:4] + "•" * 6 + key[-4:]) if len(key) > 8 else "••••"
+    return {
+        "proxy_api_key_masked": masked,
+        "storage_note": cfg.get("storage_note", ""),
+        "db_name": os.environ["DB_NAME"],
+        "product_count": await db.products.count_documents({}),
+        "updated_at": cfg.get("updated_at"),
+        "updated_by": cfg.get("updated_by"),
+    }
+
+
+@api.put("/admin/settings")
+async def update_settings(body: ProxyKeyBody, admin: Annotated[dict, Depends(require_admin)]):
+    await db.settings.update_one(
+        {"_id": "scraper"},
+        {"$set": {
+            "proxy_api_key": body.proxy_api_key,
+            "storage_note": body.storage_note,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": admin["email"],
+        }},
+        upsert=True,
+    )
+    return {"status": "ok"}
 
 
 # ----------------------------- Favorites -----------------------------
@@ -364,7 +479,10 @@ async def on_startup():
     await db.products.create_index("product_id", unique=True)
     await db.products.create_index("category")
     await db.products.create_index("origin")
+    await db.products.create_index("manufacturer_code")
+    await db.products.create_index("is_new")
     await db.favorites.create_index([("user_id", 1), ("product_id", 1)], unique=True)
+    await seed_users()
     scheduler.add_job(
         run_scrape, CronTrigger(hour=8, minute=0), args=["daily_08:00"],
         id="daily_scrape", replace_existing=True,

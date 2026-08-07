@@ -14,11 +14,16 @@ export type Product = {
   images: string[];
   reference: string;
   display_reference: string;
-  origin: string;
+  full_code: string;
+  manufacturer_code: string;
   supplier_code: string;
+  origin: string;
+  is_new?: boolean;
   seo_keyword: string;
   seo_product_id: string;
 };
+
+export type Composition = { area: string; materials: string }[];
 
 async function request(path: string, init: RequestInit = {}, auth = false) {
   const headers = new Headers(init.headers);
@@ -41,7 +46,9 @@ export type ProductQuery = {
   category?: string;
   origin?: string;
   supplier?: string;
+  code?: string;
   q?: string;
+  is_new?: boolean;
   min_price?: number;
   max_price?: number;
   sort?: string;
@@ -75,10 +82,18 @@ export const api = {
   products: (query: ProductQuery = {}) =>
     request(`/products${toQuery(query as Record<string, unknown>)}`),
   product: (id: string) => request(`/products/${id}`),
+  composition: (id: string) => request(`/products/${id}/composition`),
   filters: () => request("/filters"),
   analytics: () => request("/analytics"),
   meta: () => request("/meta"),
   scrape: () => request("/admin/scrape", { method: "POST" }, true),
+  adminSettings: () => request("/admin/settings", {}, true),
+  updateAdminSettings: (proxy_api_key: string, storage_note: string) =>
+    request(
+      "/admin/settings",
+      { method: "PUT", body: JSON.stringify({ proxy_api_key, storage_note }) },
+      true,
+    ),
 
   favorites: () => request("/favorites", {}, true),
   favoriteIds: () => request("/favorites/ids", {}, true),

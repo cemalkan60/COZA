@@ -9,7 +9,7 @@ import React, {
 import { api, TOKEN_KEY } from "@/src/api/client";
 import { storage } from "@/src/utils/storage";
 
-export type User = { id: string; email: string; name: string };
+export type User = { id: string; email: string; name: string; role: "admin" | "viewer" };
 
 type AuthValue = {
   user: User | null;

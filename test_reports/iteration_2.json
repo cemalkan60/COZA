@@ -1,0 +1,45 @@
+{
+  "summary": "COZA iteration 2 (roles + minimal login + Filtrele-left + factory detail + compare + Yeni tab + admin proxy settings) tested end-to-end via public EXPO_PUBLIC_BACKEND_URL. Backend: 39/39 pytest cases pass (100%) — including 15 new tests covering non-email logins (ece@still, cem@still), role in login response, RBAC 403 for viewer on /api/admin/scrape /api/admin/settings GET+PUT, admin 200 with masked proxy key (never plaintext) + db_name, manufacturer_code = first 4 digits enforced, q=8003 & code=8003 return only prefix matches, is_new filter, composition returns {area, materials} shape & caches on 2nd call, and 404 on unknown product. Frontend (390x844 mobile viewport): minimal login (only logo + fields, no hero photo/taglines), admin login → catalog header with Filtrele on the LEFT (x=16) + search magnifier icon in top-right (x=334) + tappable COZA logo; typing 8003 returns 2 cards each showing '#8003 ›'; tapping the code opens /factory/8003 titled 'ÜRETİCİ / STİL KODU · #8003' listing the 2 matching products (Pakistan chip); compare toggles on 2 cards show 'Kıyasla · 2/2' bar → tapping Karşılaştır opens /compare screen with side-by-side FİYAT / ÜRETİM YERİ / ÜRETİCİ KODU / TAM KOD / KATEGORİ / RENK / KOMPOZİSYON rows (all populated with real data); admin Profil shows YÖNETİCİ badge + YÖNETİM · PROXY & DEPOLAMA section (masked key TEST••••••1234, db test_database, Şimdi Güncelle button, Kaydet button, proxy/note inputs); viewer (ece@still) Profil shows GÖZLEMCİ badge and correctly HIDES the YÖNETİM section, Şimdi Güncelle button, and admin-proxy-input. Yeni tab renders. No red screens, no deprecated Expo packages. Only pre-existing @gorhom/bottom-sheet 'props.pointerEvents deprecated' console warning persists (library-level, unchanged from iteration 1).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "@gorhom/bottom-sheet",
+        "issue": "Console emits 'props.pointerEvents is deprecated. Use style.pointerEvents' (React 19 change). Originates inside the library; harmless. Consider bumping @gorhom/bottom-sheet to a React-19-clean release."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coza_backend.py",
+    "/app/backend/tests/test_coza_v2.py",
+    "/app/test_reports/pytest/pytest_v2.xml"
+  ],
+  "action_items": [
+    "Optional: upgrade @gorhom/bottom-sheet to silence pointerEvents warning under React 19.",
+    "Nice-to-have: on Profile settings save, blank out the New Key TextInput and show a masked preview refresh so admins can confirm the rotation immediately (already partially done via loadMeta())."
+  ],
+  "critical_code_review_comments": [
+    "server.py: proxy_api_key is stored plaintext in db.settings but NEVER returned plaintext — GET /api/admin/settings masks to 'XXXX••••••YYYY'. Good.",
+    "RBAC via require_admin(Depends(get_current_user)) is clean and reused for scrape + settings; returns 403 not 401.",
+    "manufacturer_code filter uses re.escape + anchored prefix regex ('^' + prefix) → both q and code paths behave identically for prefix search.",
+    "is_new is only set to True on subsequent scrapes (first_load guarded) — will legitimately be empty until the daily 08:00 job runs.",
+    "Login accepts plain string identifier (Field(min_length=1) instead of EmailStr) so 'ece@still' / 'cem@still' work — verified live.",
+    "ProductCard exposes testIDs product-card-*, favorite-toggle-*, compare-toggle-*, card-code-* — factory nav from code chip works via router.push(/factory/{code}).",
+    "Profile screen correctly gates admin UI with user?.role === 'admin' check; viewer login confirmed does NOT render admin-proxy-input / Şimdi Güncelle / YÖNETİM section.",
+    "No file exceeds 700 lines; server.py ~500, catalog ~370, profile ~340."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_coza_v2.py (new, 15 tests for iter-2 features)",
+    "/app/test_reports/iteration_2.json",
+    "/app/test_reports/pytest/pytest_v2.xml"
+  ],
+  "success_rate": {"backend": "100% (39/39)", "frontend": "100% (all iter-2 flows verified)"},
+  "seed_data_creation": "Used seeded users (admin@still, ece@still, cem@still) and existing 4430-product catalog. My PUT /api/admin/settings test rotated proxy_api_key to a test value; I explicitly cleaned it up post-test (db.settings.$unset proxy_api_key, storage_note='') so the next scrape falls back to SCRAPER_API_KEY from env.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: https://coza-tracker.preview.emergentagent.com. Auth: admin@still/cozaadmin2026 (admin), ece@still/berilberen & cem@still/cem123 (viewers). Non-email identifiers are valid (LoginBody.email is a plain string). Catalog ~4430 products. Do NOT hit POST /api/admin/scrape (external proxy, ~70s). PUT /api/admin/settings persists a plaintext key in db.settings — remember to reset via $unset after any rotation test. is_new is intentionally empty until the daily cron runs. Testing suites: /app/backend/tests/test_coza_backend.py (24) + /app/backend/tests/test_coza_v2.py (15) = 39 tests, all green.",
+  "rca_of_issue": "N/A — no bugs introduced or regressed in this iteration."
+}

@@ -9,6 +9,7 @@ reference code using Inditex's publicly documented sourcing-country distribution
 This keeps the value stable per product and realistic for filtering/analytics.
 """
 import os
+import re
 import hashlib
 import logging
 from pathlib import Path
@@ -83,19 +84,19 @@ def derive_supplier(reference: str, origin: str) -> str:
     return f"{prefix}-{num}"
 
 
-def _proxy_get(url: str, timeout: int = 90) -> requests.Response:
+def _proxy_get(url: str, api_key: str = "", timeout: int = 90) -> requests.Response:
     resp = requests.get(
         SCRAPER_BASE,
-        params={"api_key": SCRAPER_API_KEY, "url": url},
+        params={"api_key": api_key or SCRAPER_API_KEY, "url": url},
         timeout=timeout,
     )
     resp.raise_for_status()
     return resp
 
 
-def _fetch_category(cat_id: int):
+def _fetch_category(cat_id: int, api_key: str = ""):
     url = f"https://www.zara.com/tr/tr/category/{cat_id}/products?ajax=true"
-    data = _proxy_get(url).json()
+    data = _proxy_get(url, api_key).json()
     components = []
     for group in data.get("productGroups", []):
         for element in group.get("elements", []):
@@ -114,11 +115,12 @@ def _parse_product(comp: dict, category_name: str):
     reference = detail.get("reference") or comp.get("reference") or str(comp.get("id"))
     display_reference = detail.get("displayReference") or ""
 
-    images, color_name, composition = [], "", []
+    images, color_name, color_id = [], "", ""
     colors = detail.get("colors") or []
     if colors:
         color = colors[0]
         color_name = color.get("name", "")
+        color_id = str(color.get("id", "") or "")
         for media in (color.get("xmedia") or []):
             u = media.get("url")
             if u and media.get("type") == "image":
@@ -138,8 +140,12 @@ def _parse_product(comp: dict, category_name: str):
         if len(clean_images) >= 6:
             break
 
-    origin = derive_origin(reference)
-    supplier_code = derive_supplier(reference, origin)
+    # Real Zara code shown in the product description, e.g. "8003/859/020".
+    ref_digits = re.sub(r"\D", "", display_reference) or re.sub(r"\D", "", reference)
+    manufacturer_code = ref_digits[:4]
+    full_code = f"{display_reference}/{color_id}" if display_reference and color_id else display_reference
+
+    origin = derive_origin(manufacturer_code or reference)
     seo = comp.get("seo") or {}
 
     return {
@@ -153,20 +159,46 @@ def _parse_product(comp: dict, category_name: str):
         "images": clean_images,
         "reference": reference,
         "display_reference": display_reference,
+        "full_code": full_code,
+        "manufacturer_code": manufacturer_code,
+        "supplier_code": manufacturer_code,
         "origin": origin,
-        "supplier_code": supplier_code,
         "seo_keyword": seo.get("keyword", ""),
         "seo_product_id": str(seo.get("seoProductId", "")),
     }
 
 
-def collect_products():
+def fetch_composition(product_id: str, api_key: str = ""):
+    """Live-fetch material composition for a single product via the proxy."""
+    url = f"https://www.zara.com/tr/tr/products-details?productIds={product_id}&ajax=true"
+    try:
+        data = _proxy_get(url, api_key, timeout=60).json()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("composition fetch failed %s: %s", product_id, exc)
+        return []
+    if not isinstance(data, list) or not data:
+        return []
+    dc = (data[0].get("detail") or {}).get("detailedComposition") or {}
+    parts = []
+    for part in dc.get("parts", []):
+        comps = part.get("components") or []
+        materials = ", ".join(
+            f"%{c.get('percentage','').replace('%','')} {c.get('material','')}".strip()
+            for c in comps
+            if c.get("material")
+        )
+        if materials:
+            parts.append({"area": part.get("description", ""), "materials": materials})
+    return parts
+
+
+def collect_products(api_key: str = ""):
     """Synchronous. Returns (products, stats). Deduped by product_id."""
     products = {}
     stats = {"categories_ok": 0, "categories_failed": 0}
     for cat_id, cat_name in CATEGORIES:
         try:
-            components = _fetch_category(cat_id)
+            components = _fetch_category(cat_id, api_key)
             count = 0
             for comp in components:
                 parsed = _parse_product(comp, cat_name)
