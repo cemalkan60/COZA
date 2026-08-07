@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { BottomSheetModal } from "@gorhom/bottom-sheet";
+import { useFocusEffect } from "expo-router";
 import * as Haptics from "expo-haptics";
 
 import { api, Product } from "@/src/api/client";
@@ -50,6 +51,13 @@ export default function Catalog() {
       })
       .catch(() => {});
   }, []);
+
+  // Dismiss the filter sheet when leaving this tab so it never overlays other screens.
+  useFocusEffect(
+    useCallback(() => {
+      return () => sheetRef.current?.dismiss();
+    }, []),
+  );
 
   // debounce search
   useEffect(() => {
