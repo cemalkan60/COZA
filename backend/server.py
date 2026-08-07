@@ -180,11 +180,19 @@ async def enrich_origins(proxy_key: str = ""):
         sem = asyncio.Semaphore(5)
 
         async def one(code: str):
-            rep = await db.products.find_one({"manufacturer_code": code}, {"product_id": 1})
-            if not rep:
-                return
-            async with sem:
-                origin = await asyncio.to_thread(scraper.fetch_origin, rep["product_id"], proxy_key)
+            # Try several representative products for this code: the first one
+            # occasionally lacks an origin section, so fall back to others.
+            reps = await db.products.find(
+                {"manufacturer_code": code}, {"product_id": 1}
+            ).limit(5).to_list(length=5)
+            origin = None
+            for rep in reps:
+                async with sem:
+                    origin = await asyncio.to_thread(
+                        scraper.fetch_origin, rep["product_id"], proxy_key
+                    )
+                if origin:
+                    break
             if origin:
                 await db.origins.update_one(
                     {"_id": code},
@@ -512,6 +520,18 @@ async def get_meta():
 async def admin_scrape(admin: Annotated[dict, Depends(require_admin)]):
     result = await run_scrape("manual")
     return result
+
+
+@api.post("/admin/enrich-origins")
+async def admin_enrich(admin: Annotated[dict, Depends(require_admin)]):
+    """On-demand: fetch REAL origins for manufacturer codes still 'Belirleniyor…'."""
+    if _enrich_lock.locked():
+        return {"status": "already_running"}
+    known = set(await db.origins.distinct("_id"))
+    codes = [c for c in await db.products.distinct("manufacturer_code") if c]
+    pending = len([c for c in codes if c not in known])
+    asyncio.create_task(enrich_origins(await get_proxy_key()))
+    return {"status": "started", "pending_codes": pending}
 
 
 @api.get("/admin/settings")

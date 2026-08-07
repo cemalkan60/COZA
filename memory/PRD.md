@@ -32,5 +32,8 @@
 - Backend 16/16 pytest pass; all frontend flows verified.
 
 ## Backlog
-- P2: ~80 manufacturer codes still 'Belirleniyor…' (retry on next scrapes / on-demand via PDP).
-- P2: bump @gorhom/bottom-sheet to silence React-19 pointerEvents warning.
+- DONE: origin enrichment now tries up to 5 products per code + on-demand
+  admin endpoint `/admin/enrich-origins`. Pending codes 79→39 (remaining are
+  delisted 404 products; clear automatically on next daily scrape).
+- DONE: removed dead FilterSheet + @gorhom/bottom-sheet provider (React-19
+  pointerEvents warning source). Drawer-only nav; no bottom-sheet usage left.

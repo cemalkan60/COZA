@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import { LogBox, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { StatusBar } from "expo-status-bar";
 
@@ -67,9 +66,7 @@ export default function RootLayout() {
             <AuthProvider>
               <FavoritesProvider>
                 <CompareProvider>
-                  <BottomSheetModalProvider>
-                    <ThemedShell />
-                  </BottomSheetModalProvider>
+                  <ThemedShell />
                 </CompareProvider>
               </FavoritesProvider>
             </AuthProvider>
