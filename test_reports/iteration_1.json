@@ -1,0 +1,55 @@
+{
+  "summary": "COZA fresh build tested end-to-end (backend + mobile web frontend). Backend: 24/24 pytest cases pass (100%) against public EXPO_PUBLIC_BACKEND_URL — auth (signup/login/me + JWT), catalog list with pagination/filters/search/sort, product detail (200/404), filters bounds, analytics (donut + bar data), meta, and favorites full CRUD. Data is real (4451 seeded Zara Woman products, valid origins & supplier codes). Frontend (390x844 web viewport): login with seed user works, catalog grid renders real Zara images/prices with origin badges (e.g. FAS, TÜRKİYE) and supplier codes (e.g. MA-698, TR-506), search debouncing works, filter sheet opens, origin filter (Türkiye) returns filtered items with correct badges, product detail shows Üretim Yeri + Tedarikçi Kodu, analytics KPIs + donut + bar render, favorites tab loads, profile shows user, theme toggle switches dark↔light, logout button present. One UX bug found: FilterSheet (BottomSheetModal) does not auto-dismiss when the user navigates to another tab while it is open — it persists on top of Analytics/Favorites/Profile screens. Console warnings from @gorhom/bottom-sheet: 'props.pointerEvents is deprecated' and 'Accessing element.ref was removed in React 19' — library-level noise, not app bugs. No deprecated Expo packages (expo-av etc.) detected. No red screens.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "FilterSheet (BottomSheetModal)",
+        "issue": "Bottom sheet does NOT dismiss when the user taps a tab-bar item (Analiz/Favoriler/Profil) while the sheet is open. It persists on top of the newly-navigated screen, blocking interaction. Reference: /app/frontend/app/(tabs)/index.tsx (sheetRef is only dismissed in onApply). Add sheetRef.current?.dismiss() on useFocusEffect blur, or listen to tab navigation to auto-dismiss.",
+        "testID": "open-filters",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "@gorhom/bottom-sheet",
+        "issue": "Console emits 'props.pointerEvents is deprecated. Use style.pointerEvents' and 'Accessing element.ref was removed in React 19'. These originate inside the bottom-sheet library. Consider upgrading @gorhom/bottom-sheet to the latest React 19 compatible release or accept as harmless noise on web preview."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coza_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix FilterSheet persistence: dismiss the BottomSheetModal on tab blur (e.g. via useFocusEffect cleanup or router event listener) so it does not overlay other tabs.",
+    "Optional: bump @gorhom/bottom-sheet to a React-19-clean version to silence pointerEvents / element.ref warnings.",
+    "Optional: consider caching /api/filters and /api/analytics on the client (short TTL) to avoid re-fetch on every focus event."
+  ],
+  "critical_code_review_comments": [
+    "server.py explicitly excludes MongoDB _id in every projection ({'_id': 0}) — good.",
+    "Passwords are bcrypt-hashed and truncated to 72 bytes safely; JWT signed with env secret; auth guard returns 401 on invalid/missing tokens.",
+    "Favorites use compound unique index (user_id, product_id) with $setOnInsert — idempotent adds work as verified.",
+    "Backend uses async motor everywhere; APScheduler configured for Europe/Istanbul 08:00 daily scrape.",
+    "Frontend uses process.env.EXPO_PUBLIC_BACKEND_URL — no hardcoding.",
+    "No file exceeds 700 lines; server.py ~380 lines, catalog screen ~330 lines.",
+    "All interactive elements expose testID (login/signup fields, open-filters, category-chip-*, search-input, theme-toggle, logout, refresh-data, product-grid).",
+    "Turkish copy consistent across screens; error messages in Turkish."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_coza_backend.py (new pytest suite, 24 tests)",
+    "/app/test_reports/iteration_1.json",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "~95% (all critical flows working; 1 UX bug)"},
+  "seed_data_creation": "Used existing seeded catalog (4451 products) and existing test user tester@coza.app / Test1234. Created transient TEST_<uuid>@coza.app accounts for signup validation (auto-cleanable by prefix). No writes to production/seed data.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: https://coza-tracker.preview.emergentagent.com. Test user tester@coza.app / Test1234 seeded. Catalog seed already present (~4451 products). Do NOT trigger /api/admin/scrape unnecessarily (external proxy, ~70s, limited credits). Filter sheet UX bug reproduces by opening filters on Catalog then tapping any other tab; expected fix location: /app/frontend/app/(tabs)/index.tsx.",
+  "rca_of_issue": "FilterSheet persistence bug: sheetRef.current?.dismiss() is only called inside onApply. Expo Router does not automatically unmount tab screens (BottomSheetModal from @gorhom lives in a portal), so navigation events don't propagate dismiss. Fix: attach a router / tab-focus listener in Catalog that calls sheetRef.current?.dismiss() on blur, or hoist a global modal-dismisser."
+}
