@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View, Platform } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -14,14 +14,13 @@ export function CompareBar() {
   const compare = useCompare();
 
   if (compare.ids.length === 0) return null;
-  const tabH = Platform.OS === "ios" ? 84 : 64;
 
   return (
     <View
       testID="compare-bar"
       style={[
         styles.wrap,
-        { bottom: tabH + 10, backgroundColor: colors.surfaceInverse, borderColor: colors.borderStrong },
+        { bottom: insets.bottom + 16, backgroundColor: colors.surfaceInverse, borderColor: colors.borderStrong },
       ]}
     >
       <Pressable onPress={compare.clear} hitSlop={8} style={styles.clear}>

@@ -44,10 +44,9 @@ export default function NewArrivals() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: insets.top + 8 }}>
-      <View style={{ paddingHorizontal: spacing.xl, marginBottom: 12 }}>
-        <Text style={[styles.eyebrow, { color: colors.brandSecondary }]}>SON GÜNCELLEME</Text>
-        <Text style={[styles.title, { color: colors.onSurface }]}>Yeni Gelenler</Text>
+    <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: 6 }}>
+      <View style={{ paddingHorizontal: spacing.xl, marginBottom: 10 }}>
+        <Text style={[styles.eyebrow, { color: colors.brandSecondary }]}>SON GÜNCELLEMEDE EKLENENLER</Text>
       </View>
 
       {loading ? (

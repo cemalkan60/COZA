@@ -51,12 +51,7 @@ export default function Favorites() {
   const visible = items.filter((p) => ids.has(p.product_id));
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: insets.top + 8 }}>
-      <View style={{ paddingHorizontal: spacing.xl, marginBottom: 12 }}>
-        <Text style={[styles.eyebrow, { color: colors.brandSecondary }]}>KAYITLI</Text>
-        <Text style={[styles.title, { color: colors.onSurface }]}>Favoriler</Text>
-      </View>
-
+    <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: 10 }}>
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.brand} />

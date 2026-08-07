@@ -1,12 +1,14 @@
-import { Redirect, Tabs } from "expo-router";
-import { Feather } from "@expo/vector-icons";
-import { Platform, View } from "react-native";
+import { Redirect } from "expo-router";
+import { Drawer } from "expo-router/drawer";
+import { View } from "react-native";
 
 import { useAuth } from "@/src/context/AuthContext";
 import { useTheme } from "@/src/theme/ThemeContext";
+import { Logo } from "@/src/components/Logo";
+import { DrawerContent } from "@/src/components/DrawerContent";
 import { CompareBar } from "@/src/components/CompareBar";
 
-export default function TabsLayout() {
+export default function AppLayout() {
   const { token, loading } = useAuth();
   const { colors } = useTheme();
 
@@ -15,58 +17,27 @@ export default function TabsLayout() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <Tabs
+      <Drawer
+        drawerContent={(props) => <DrawerContent {...props} />}
         screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: colors.onSurface,
-          tabBarInactiveTintColor: colors.brandSecondary,
-          tabBarStyle: {
-            backgroundColor: colors.surface,
-            borderTopColor: colors.divider,
-            borderTopWidth: 1,
-            height: Platform.OS === "ios" ? 84 : 64,
-            paddingTop: 8,
-            paddingBottom: Platform.OS === "ios" ? 28 : 10,
-          },
-          tabBarLabelStyle: { fontSize: 10, letterSpacing: 0.5, fontWeight: "600" },
+          drawerType: "front",
+          drawerStyle: { backgroundColor: colors.surface, width: 300 },
+          headerStyle: { backgroundColor: colors.surface },
+          headerTintColor: colors.onSurface,
+          headerShadowVisible: false,
+          headerTitleStyle: { fontWeight: "800", letterSpacing: 0.3, color: colors.onSurface },
+          sceneStyle: { backgroundColor: colors.surface },
         }}
       >
-        <Tabs.Screen
+        <Drawer.Screen
           name="index"
-          options={{
-            title: "Katalog",
-            tabBarIcon: ({ color }) => <Feather name="grid" size={20} color={color} />,
-          }}
+          options={{ headerTitle: () => <Logo size={20} />, title: "Katalog" }}
         />
-        <Tabs.Screen
-          name="new"
-          options={{
-            title: "Yeni",
-            tabBarIcon: ({ color }) => <Feather name="zap" size={20} color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="analytics"
-          options={{
-            title: "Analiz",
-            tabBarIcon: ({ color }) => <Feather name="pie-chart" size={20} color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="favorites"
-          options={{
-            title: "Favoriler",
-            tabBarIcon: ({ color }) => <Feather name="heart" size={20} color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="profile"
-          options={{
-            title: "Profil",
-            tabBarIcon: ({ color }) => <Feather name="user" size={20} color={color} />,
-          }}
-        />
-      </Tabs>
+        <Drawer.Screen name="new" options={{ title: "Yeni Gelenler" }} />
+        <Drawer.Screen name="analytics" options={{ title: "Analiz" }} />
+        <Drawer.Screen name="favorites" options={{ title: "Favoriler" }} />
+        <Drawer.Screen name="profile" options={{ title: "Profil" }} />
+      </Drawer>
       <CompareBar />
     </View>
   );

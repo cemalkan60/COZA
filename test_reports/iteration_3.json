@@ -1,0 +1,43 @@
+{
+  "summary": "COZA iteration 3 (real 'Made in' origins + hamburger drawer + comprehensive search + manufacturer analytics) tested end-to-end via public EXPO_PUBLIC_BACKEND_URL. Backend: 16/16 pytest cases pass (100%). PRIMARY BUG FIX VERIFIED: GET /api/products?code=5216 returns 7 products, ALL with origin='Türkiye' (previously 'Fas'). Origins are real country values (Türkiye, Fas, Çin, Portekiz, Vietnam, Bangladeş, Kamboçya, Hindistan, Pakistan, Tunus…). GET /api/analytics origin_distribution excludes 'Belirleniyor…' and shows real distribution (Çin 24%, Fas 22%, Türkiye 14%, …). Comprehensive search verified: q=Türkiye returns Türkiye-origin products, q=<category> returns that category, q=<2-digit code prefix> returns matching. GET /api/manufacturers returns {code,count,origins}; ?q=52 filters to codes starting with 52. GET /api/analytics/manufacturer/5216 = {code:5216, total:7, primary_origin:'Türkiye', origin_distribution, category_distribution, avg_price:42.81}. Products have currency='€' and English names. Composition endpoint returns shape {area,materials}. RBAC intact — viewer 403 on /api/admin/scrape & /api/admin/settings; admin 200 with masked proxy key. FRONTEND (390x844 mobile viewport): admin login → catalog shows hamburger button LEFT of COZA logo, comprehensive search box with placeholder 'Her şeyde ara — isim, kod, üretim yeri, renk', NO filter pill, NO category chip row, NO bottom tab bar; product cards show real origin tags (TÜRKİYE / FAS) + manufacturer codes (#5029 › #8415 › #2587 › #5039 ›); 4659 ürün count. Tapping hamburger opens drawer with COZA logo + nav (Katalog/Yeni Gelenler/Analiz/Favoriler/Profil) + KATEGORİLER (Aksesuar & Takı, Ayakkabı, Blazer, Ceket, Elbise & Tulum, Etek, Gömlek, Jean, Pantolon…) + ÜRETİM YERİ; selecting 'Elbise & Tulum' filters catalog to 400 ürün with active chip 'Elbise & Tulum ×'. Analiz screen shows Üretici Analizi with manufacturer-search input + horizontal chips; typing 5216 filters to #5216 chip; tapping it renders KPIs (7 ÜRÜN, Türkiye, 42,81 €), ÜRETİM YERİ donut 100% Türkiye, KATEGORİ bar (Jean 6 / Elbise & Tulum 1), 'Ürünleri gör ›' link. Genel Bakış donut + category bar render correctly. Drawer nav to Profil works (YÖNETİCİ badge, masked proxy 5f30••••••a041, test_database). No red screens. Pre-existing @gorhom/bottom-sheet 'props.pointerEvents deprecated' console warning persists (library-level, unchanged).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "@gorhom/bottom-sheet",
+        "issue": "Console emits 'props.pointerEvents is deprecated. Use style.pointerEvents' (React 19). Library-level, harmless. Consider bumping @gorhom/bottom-sheet to a React-19-clean release."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_coza_v3.py",
+    "/app/test_reports/pytest/pytest_v3.xml"
+  ],
+  "action_items": [
+    "Optional: upgrade @gorhom/bottom-sheet to silence pointerEvents warning under React 19.",
+    "Optional: expose a max limit >60 on /api/products (currently le=60) for future bulk validation tests."
+  ],
+  "critical_code_review_comments": [
+    "server.py (624 lines): still within budget. Real-origin flow uses db.origins cached per manufacturer_code (4-digit) — solid, prevents redundant proxy calls.",
+    "/api/analytics AND /api/analytics/manufacturer/{code} both correctly filter out 'Belirleniyor…' from origin_distribution — verified live (labels list contains Türkiye/Fas/Çin/… but never 'Belirleniyor…').",
+    "DrawerContent.tsx filters origins to exclude 'Belirleniyor…' before rendering the ÜRETİM YERİ list — matches backend intent.",
+    "Catalog (index.tsx) correctly REMOVED the left Filtrele pill and category-chip row; comprehensive search-input is the sole entry point; active chips only appear when drawer applies category/origin params (via router.setParams).",
+    "AppLayout uses expo-router/drawer (Drawer.Screen for index/new/analytics/favorites/profile) — hamburger renders automatically as the header-left native button. Verified tappable at ~(20,45) in the web preview.",
+    "analytics.tsx correctly wires api.manufacturers() + api.manufacturerAnalytics(code) and renders DonutChart/BarChart; man-open-factory pushes to /factory/{code}.",
+    "Product currency hard-set to '€' from zara.es source — verified in every sampled product. Product names are English uppercase as expected."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_coza_v3.py (new, 16 tests for iter-3 features)",
+    "/app/test_reports/iteration_3.json",
+    "/app/test_reports/pytest/pytest_v3.xml"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (all iter-3 flows verified)"},
+  "seed_data_creation": "None. Reused seeded users and the ~4659-product catalog. Did NOT trigger POST /api/admin/scrape (per instructions).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: https://coza-tracker.preview.emergentagent.com. Auth: admin@still/cozaadmin2026 (admin), ece@still/berilberen & cem@still/cem123 (viewers). Catalog: 4659 products, source zara.es (English names, EUR '€'). Real origins cached in db.origins per 4-digit manufacturer_code. Origin distribution: Çin 24%, Fas 22%, Türkiye 14%, Bangladeş 10%, Kamboçya 6%, Vietnam 5%, Hindistan 4%, Pakistan 2%, Portekiz 2%, Tunus 1% (14 origins total, 1028 manufacturer codes). Do NOT hit POST /api/admin/scrape (~12 min enrichment). /api/products max limit=60. Test suites: /app/backend/tests/test_coza_backend.py (24) + test_coza_v2.py (15) + test_coza_v3.py (16) = 55 tests, all green. Frontend hamburger button is the native RN drawer header-left button — click at (20,45) in mobile viewport. All key testIDs: search-input, search-clear, drawer-{index|new|analytics|favorites|profile}, drawer-cat-all, drawer-cat-{name}, drawer-origin-{name}, active-category, active-origin, manufacturer-search, man-chip-{code}, man-open-factory, product-card-{id}, card-code-{id}, favorite-toggle-{id}, compare-toggle-{id}.",
+  "rca_of_issue": "N/A — the reported bug (code 5216 wrongly showing 'Fas') is confirmed FIXED. Root cause was origin previously being modeled/derived; now it is real 'Made in X' data scraped from zara.com/es and cached per 4-digit manufacturer_code. Live verification: all 7 products for code=5216 now return origin='Türkiye' with currency='€'."
+}

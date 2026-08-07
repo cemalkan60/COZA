@@ -42,6 +42,7 @@ security = HTTPBearer(auto_error=True)
 scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
 
 _scrape_lock = asyncio.Lock()
+_enrich_lock = asyncio.Lock()
 
 
 # ----------------------------- Models -----------------------------
@@ -135,14 +136,19 @@ async def run_scrape(reason: str = "manual") -> dict:
         first_load = len(existing_ids) == 0
         for p in products:
             p["updated_at"] = now_iso
-            # A product is "new" only if it appeared for the first time in a later scrape,
-            # never on the very first catalog load.
             p["is_new"] = (not first_load) and (p["product_id"] not in existing_ids)
             await db.products.update_one(
                 {"product_id": p["product_id"]},
-                {"$set": p, "$setOnInsert": {"first_seen": now_iso}},
+                {"$set": p, "$setOnInsert": {"first_seen": now_iso, "origin": "Belirleniyor…"}},
                 upsert=True,
             )
+
+        # Apply already-known origins (cached per manufacturer_code) immediately.
+        for o in await db.origins.find({}).to_list(length=10000):
+            await db.products.update_many(
+                {"manufacturer_code": o["_id"]}, {"$set": {"origin": o["origin"]}}
+            )
+
         meta = {
             "last_scrape": now_iso,
             "product_count": await db.products.count_documents({}),
@@ -156,7 +162,46 @@ async def run_scrape(reason: str = "manual") -> dict:
             reason, len(products), stats["categories_ok"], stats["categories_failed"],
             (datetime.now(timezone.utc) - started).total_seconds(),
         )
+        # Enrich real manufacturing origins in the background (per manufacturer code).
+        asyncio.create_task(enrich_origins(proxy_key))
         return {"status": "ok", **meta}
+
+
+async def enrich_origins(proxy_key: str = ""):
+    """Fetch REAL 'Made in X' origin from zara.es per manufacturer_code, cached in db.origins."""
+    if _enrich_lock.locked():
+        return
+    async with _enrich_lock:
+        proxy_key = proxy_key or await get_proxy_key()
+        codes = [c for c in await db.products.distinct("manufacturer_code") if c]
+        known = set(await db.origins.distinct("_id"))
+        todo = [c for c in codes if c not in known]
+        logger.info("Origin enrichment started: %d codes", len(todo))
+        sem = asyncio.Semaphore(5)
+
+        async def one(code: str):
+            rep = await db.products.find_one({"manufacturer_code": code}, {"product_id": 1})
+            if not rep:
+                return
+            async with sem:
+                origin = await asyncio.to_thread(scraper.fetch_origin, rep["product_id"], proxy_key)
+            if origin:
+                await db.origins.update_one(
+                    {"_id": code},
+                    {"$set": {"origin": origin, "fetched_at": datetime.now(timezone.utc).isoformat()}},
+                    upsert=True,
+                )
+                await db.products.update_many(
+                    {"manufacturer_code": code}, {"$set": {"origin": origin}}
+                )
+
+        await asyncio.gather(*[one(c) for c in todo])
+        await db.meta.update_one(
+            {"_id": "scrape"},
+            {"$set": {"origins_known": await db.origins.count_documents({})}},
+            upsert=True,
+        )
+        logger.info("Origin enrichment done: %d known", await db.origins.count_documents({}))
 
 
 async def _seed_if_empty():
@@ -273,8 +318,11 @@ async def list_products(
         qs = q.strip()
         query["$or"] = [
             {"name": {"$regex": re.escape(qs), "$options": "i"}},
+            {"category": {"$regex": re.escape(qs), "$options": "i"}},
+            {"origin": {"$regex": re.escape(qs), "$options": "i"}},
+            {"color": {"$regex": re.escape(qs), "$options": "i"}},
             {"manufacturer_code": {"$regex": "^" + re.escape(qs), "$options": "i"}},
-            {"full_code": {"$regex": "^" + re.escape(qs), "$options": "i"}},
+            {"full_code": {"$regex": re.escape(qs), "$options": "i"}},
         ]
     if min_price is not None or max_price is not None:
         pr: dict = {}
@@ -317,8 +365,17 @@ async def product_composition(product_id: str):
     if p.get("composition") is not None:
         return {"composition": p["composition"]}
     key = await get_proxy_key()
-    comp = await asyncio.to_thread(scraper.fetch_composition, product_id, key)
-    await db.products.update_one({"product_id": product_id}, {"$set": {"composition": comp}})
+    extra = await asyncio.to_thread(scraper.fetch_extra, product_id, key)
+    comp = extra.get("composition", [])
+    update = {"composition": comp}
+    if extra.get("origin"):
+        update["origin"] = extra["origin"]
+        await db.origins.update_one(
+            {"_id": p.get("manufacturer_code")},
+            {"$set": {"origin": extra["origin"]}},
+            upsert=True,
+        )
+    await db.products.update_one({"product_id": product_id}, {"$set": update})
     return {"composition": comp}
 
 
@@ -356,21 +413,90 @@ async def analytics():
     supplier_count = len(await db.products.distinct("supplier_code"))
     ps = price_stats[0] if price_stats else {"avg": 0, "min": 0, "max": 0}
     meta = await db.meta.find_one({"_id": "scrape"}, {"_id": 0}) or {}
+    real_origins = [o for o in origin_dist if o["_id"] and o["_id"] != "Belirleniyor…"]
     return {
         "total_products": total,
         "supplier_count": supplier_count,
-        "origin_count": len([o for o in origin_dist if o["_id"]]),
+        "origin_count": len(real_origins),
         "category_count": len([c for c in category_dist if c["_id"]]),
         "avg_price": round(ps.get("avg") or 0, 2),
         "min_price": ps.get("min") or 0,
         "max_price": ps.get("max") or 0,
         "origin_distribution": [
-            {"label": o["_id"], "count": o["count"]} for o in origin_dist if o["_id"]
+            {"label": o["_id"], "count": o["count"]} for o in real_origins
         ],
         "category_distribution": [
             {"label": c["_id"], "count": c["count"]} for c in category_dist if c["_id"]
         ],
+        "origins_known": meta.get("origins_known", await db.origins.count_documents({})),
         "last_scrape": meta.get("last_scrape"),
+    }
+
+
+@api.get("/manufacturers")
+async def manufacturers(q: Optional[str] = None, limit: int = Query(30, ge=1, le=100)):
+    match: dict = {"manufacturer_code": {"$ne": ""}}
+    if q:
+        match["manufacturer_code"] = {"$regex": "^" + re.escape(q.strip()), "$options": "i"}
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": "$manufacturer_code",
+            "count": {"$sum": 1},
+            "origins": {"$addToSet": "$origin"},
+        }},
+        {"$sort": {"count": -1}},
+        {"$limit": limit},
+    ]
+    rows = await db.products.aggregate(pipeline).to_list(length=limit)
+    return {
+        "items": [
+            {
+                "code": r["_id"],
+                "count": r["count"],
+                "origins": [o for o in r["origins"] if o and o != "Belirleniyor…"],
+            }
+            for r in rows
+        ]
+    }
+
+
+@api.get("/analytics/manufacturer/{code}")
+async def manufacturer_analytics(code: str):
+    match = {"manufacturer_code": code}
+    total = await db.products.count_documents(match)
+    if total == 0:
+        raise HTTPException(404, "Bu koda ait ürün bulunamadı.")
+    origin_dist = await db.products.aggregate([
+        {"$match": match},
+        {"$group": {"_id": "$origin", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]).to_list(length=50)
+    category_dist = await db.products.aggregate([
+        {"$match": match},
+        {"$group": {"_id": "$category", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]).to_list(length=50)
+    price_stats = await db.products.aggregate([
+        {"$match": match},
+        {"$group": {"_id": None, "avg": {"$avg": "$price"},
+                    "min": {"$min": "$price"}, "max": {"$max": "$price"}}},
+    ]).to_list(length=1)
+    ps = price_stats[0] if price_stats else {"avg": 0, "min": 0, "max": 0}
+    real_origins = [o for o in origin_dist if o["_id"] and o["_id"] != "Belirleniyor…"]
+    sample = await db.products.find_one(match, {"_id": 0, "images": 1, "name": 1})
+    return {
+        "code": code,
+        "total": total,
+        "avg_price": round(ps.get("avg") or 0, 2),
+        "min_price": ps.get("min") or 0,
+        "max_price": ps.get("max") or 0,
+        "primary_origin": real_origins[0]["_id"] if real_origins else "Belirleniyor…",
+        "origin_distribution": [{"label": o["_id"], "count": o["count"]} for o in real_origins],
+        "category_distribution": [
+            {"label": c["_id"], "count": c["count"]} for c in category_dist if c["_id"]
+        ],
+        "sample_image": (sample or {}).get("images", [None])[0],
     }
 
 
@@ -378,6 +504,7 @@ async def analytics():
 async def get_meta():
     meta = await db.meta.find_one({"_id": "scrape"}, {"_id": 0}) or {}
     meta["product_count"] = await db.products.count_documents({})
+    meta["origins_known"] = await db.origins.count_documents({})
     return meta
 
 

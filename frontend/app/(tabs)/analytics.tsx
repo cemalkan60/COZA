@@ -1,14 +1,16 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  FlatList,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { api } from "@/src/api/client";
@@ -22,38 +24,66 @@ type Analytics = {
   origin_count: number;
   category_count: number;
   avg_price: number;
-  min_price: number;
-  max_price: number;
   origin_distribution: Datum[];
   category_distribution: Datum[];
   last_scrape: string | null;
 };
 
 export default function AnalyticsScreen() {
-  const { colors, spacing, fontSize } = useTheme();
-  const insets = useSafeAreaInsets();
+  const { colors, spacing } = useTheme();
+  const router = useRouter();
+
   const [data, setData] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [manQuery, setManQuery] = useState("");
+  const [manufacturers, setManufacturers] = useState<{ code: string; count: number }[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [manData, setManData] = useState<any>(null);
+  const [manLoading, setManLoading] = useState(false);
+
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
     try {
-      const d = await api.analytics();
-      setData(d);
+      const [a, m] = await Promise.all([api.analytics(), api.manufacturers()]);
+      setData(a);
+      setManufacturers(m.items || []);
     } catch {
-      // ignore
+      /* ignore */
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      try {
+        const m = await api.manufacturers(manQuery.trim() || undefined);
+        setManufacturers(m.items || []);
+      } catch {
+        /* ignore */
+      }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [manQuery]);
+
+  const selectCode = async (code: string) => {
+    setSelected(code);
+    setManLoading(true);
+    try {
+      setManData(await api.manufacturerAnalytics(code));
+    } catch {
+      setManData(null);
+    } finally {
+      setManLoading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -62,11 +92,10 @@ export default function AnalyticsScreen() {
       </View>
     );
   }
-
-  if (!data || data.total_products === 0) {
+  if (!data) {
     return (
       <View style={[styles.center, { backgroundColor: colors.surface }]}>
-        <Text style={{ color: colors.onSurfaceSecondary }}>Görüntülenecek veri yok.</Text>
+        <Text style={{ color: colors.onSurfaceSecondary }}>Veri yok.</Text>
       </View>
     );
   }
@@ -81,69 +110,122 @@ export default function AnalyticsScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.surface }}
-      contentContainerStyle={{ paddingTop: insets.top + 8, paddingBottom: insets.bottom + 32 }}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />
-      }
+      contentContainerStyle={{ paddingTop: 10, paddingBottom: 120 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />}
     >
+      {/* ---- Manufacturer analysis ---- */}
       <View style={{ paddingHorizontal: spacing.xl }}>
-        <Text style={[styles.eyebrow, { color: colors.brandSecondary }]}>TEDARİK · ANALİZ</Text>
-        <Text style={[styles.title, { color: colors.onSurface }]}>Tedarik Panosu</Text>
+        <Text style={[styles.sectionTitle, { color: colors.onSurface }]}>Üretici Analizi</Text>
+        <Text style={[styles.helper, { color: colors.brandSecondary }]}>
+          Bir üretici kodunun nerede, ne ürettiğini inceleyin.
+        </Text>
+        <View style={[styles.search, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <Feather name="search" size={16} color={colors.brandSecondary} />
+          <TextInput
+            testID="manufacturer-search"
+            value={manQuery}
+            onChangeText={setManQuery}
+            placeholder="Üretici kodu (örn. 5216)"
+            placeholderTextColor={colors.brandSecondary}
+            keyboardType="number-pad"
+            style={{ flex: 1, marginLeft: 8, color: colors.onSurface, fontSize: 14 }}
+          />
+        </View>
       </View>
 
+      <FlatList
+        data={manufacturers}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyExtractor={(m) => m.code}
+        contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 12 }}
+        renderItem={({ item }) => {
+          const active = selected === item.code;
+          return (
+            <Pressable
+              testID={`man-chip-${item.code}`}
+              onPress={() => selectCode(item.code)}
+              style={[
+                styles.manChip,
+                { borderColor: active ? colors.brand : colors.border, backgroundColor: active ? colors.brand : "transparent" },
+              ]}
+            >
+              <Text style={{ color: active ? colors.onBrand : colors.onSurface, fontWeight: "700", fontSize: 13 }}>
+                #{item.code}
+              </Text>
+              <Text style={{ color: active ? colors.onBrand : colors.brandSecondary, fontSize: 11, marginLeft: 6 }}>
+                {item.count}
+              </Text>
+            </Pressable>
+          );
+        }}
+      />
+
+      {selected && (
+        <View style={{ paddingHorizontal: spacing.xl, marginBottom: 8 }}>
+          {manLoading ? (
+            <ActivityIndicator color={colors.brand} style={{ marginVertical: 20 }} />
+          ) : manData ? (
+            <View style={[styles.manCard, { borderColor: colors.border }]}>
+              <View style={styles.manHead}>
+                <Text style={[styles.manCode, { color: colors.onSurface }]}>#{manData.code}</Text>
+                <Pressable testID="man-open-factory" onPress={() => router.push(`/factory/${manData.code}`)}>
+                  <Text style={{ color: colors.brand, fontWeight: "700", fontSize: 12 }}>Ürünleri gör ›</Text>
+                </Pressable>
+              </View>
+              <View style={styles.manKpis}>
+                <Kpi label="ÜRÜN" value={String(manData.total)} />
+                <Kpi label="ÜRETİM YERİ" value={manData.primary_origin} />
+                <Kpi label="ORT. FİYAT" value={formatPrice(manData.avg_price, "€")} />
+              </View>
+              {manData.origin_distribution?.length > 0 && (
+                <>
+                  <Text style={[styles.miniTitle, { color: colors.brandSecondary }]}>ÜRETİM YERİ</Text>
+                  <DonutChart data={manData.origin_distribution} total={manData.total} centerValue={String(manData.total)} centerLabel="ürün" />
+                </>
+              )}
+              <Text style={[styles.miniTitle, { color: colors.brandSecondary, marginTop: 20 }]}>KATEGORİ</Text>
+              <BarChart data={manData.category_distribution.slice(0, 8)} />
+            </View>
+          ) : (
+            <Text style={{ color: colors.brandSecondary }}>Bu koda ait veri yok.</Text>
+          )}
+        </View>
+      )}
+
+      {/* ---- General overview ---- */}
+      <View style={{ paddingHorizontal: spacing.xl, marginTop: 20 }}>
+        <Text style={[styles.sectionTitle, { color: colors.onSurface }]}>Genel Bakış</Text>
+      </View>
       <View style={[styles.kpiGrid, { paddingHorizontal: spacing.xl }]}>
         <Kpi label="TOPLAM ÜRÜN" value={String(data.total_products)} />
         <Kpi label="ÜRETİM YERİ" value={String(data.origin_count)} />
-        <Kpi label="TEDARİKÇİ KODU" value={String(data.supplier_count)} />
-        <Kpi label="ORT. FİYAT" value={formatPrice(data.avg_price)} />
+        <Kpi label="ÜRETİCİ KODU" value={String(data.supplier_count)} />
+        <Kpi label="ORT. FİYAT" value={formatPrice(data.avg_price, "€")} />
       </View>
 
       <Section title="ÜRETİM YERİ DAĞILIMI" colors={colors} spacing={spacing}>
-        <DonutChart
-          data={data.origin_distribution.slice(0, 10)}
-          total={data.total_products}
-          centerLabel="ürün"
-          centerValue={String(data.total_products)}
-        />
+        <DonutChart data={data.origin_distribution.slice(0, 10)} total={data.total_products} centerLabel="ürün" centerValue={String(data.total_products)} />
       </Section>
-
       <Section title="KATEGORİ DAĞILIMI" colors={colors} spacing={spacing}>
         <BarChart data={data.category_distribution.slice(0, 10)} />
       </Section>
 
-      <View
-        style={[
-          styles.note,
-          { backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl },
-        ]}
-      >
+      <View style={[styles.note, { backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}>
         <Feather name="info" size={15} color={colors.brandSecondary} />
         <Text style={[styles.noteText, { color: colors.brandSecondary }]}>
-          Üretim yeri, Zara ürün referans kodlarından Inditex kamuya açık tedarik dağılımına göre
-          modellenmiştir. Son güncelleme: {formatDate(data.last_scrape)}
+          Üretim yeri bilgileri zara.com/es üzerinden gerçek "Made in" verisiyle alınmıştır.
+          Son güncelleme: {formatDate(data.last_scrape)}
         </Text>
       </View>
     </ScrollView>
   );
 }
 
-function Section({
-  title,
-  children,
-  colors,
-  spacing,
-}: React.PropsWithChildren<{ title: string; colors: any; spacing: any }>) {
+function Section({ title, children, colors, spacing }: React.PropsWithChildren<{ title: string; colors: any; spacing: any }>) {
   return (
-    <View style={{ paddingHorizontal: spacing.xl, marginTop: 34 }}>
-      <Text
-        style={{
-          color: colors.brandSecondary,
-          fontSize: 11,
-          fontWeight: "700",
-          letterSpacing: 1.4,
-          marginBottom: 20,
-        }}
-      >
+    <View style={{ paddingHorizontal: spacing.xl, marginTop: 30 }}>
+      <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700", letterSpacing: 1.4, marginBottom: 20 }}>
         {title}
       </Text>
       {children}
@@ -153,24 +235,19 @@ function Section({
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  eyebrow: { fontSize: 10, letterSpacing: 1.6, fontWeight: "700", marginTop: 6 },
-  title: { fontSize: 28, fontWeight: "800", letterSpacing: -0.6, marginTop: 6 },
-  kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 22 },
-  kpi: {
-    width: "47.5%",
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingVertical: 16,
-    paddingHorizontal: 14,
-  },
-  kpiValue: { fontSize: 20, fontWeight: "800", letterSpacing: -0.4 },
-  kpiLabel: { fontSize: 10, letterSpacing: 1, fontWeight: "700", marginTop: 6 },
-  note: {
-    flexDirection: "row",
-    gap: 10,
-    padding: 14,
-    borderRadius: 4,
-    marginTop: 34,
-  },
-  noteText: { flex: 1, fontSize: 11, lineHeight: 17, letterSpacing: 0.2 },
+  sectionTitle: { fontSize: 22, fontWeight: "800", letterSpacing: -0.4 },
+  helper: { fontSize: 12, marginTop: 4, marginBottom: 14 },
+  search: { flexDirection: "row", alignItems: "center", height: 46, borderRadius: 4, borderWidth: 1, paddingHorizontal: 12 },
+  manChip: { flexDirection: "row", alignItems: "center", height: 38, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1 },
+  manCard: { borderWidth: 1, borderRadius: 6, padding: 16 },
+  manHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 14 },
+  manCode: { fontSize: 24, fontWeight: "800" },
+  manKpis: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 18 },
+  miniTitle: { fontSize: 10, letterSpacing: 1.2, fontWeight: "700", marginBottom: 14 },
+  kpiGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 16 },
+  kpi: { minWidth: "30%", flexGrow: 1, borderWidth: 1, borderRadius: 4, paddingVertical: 14, paddingHorizontal: 12 },
+  kpiValue: { fontSize: 16, fontWeight: "800", letterSpacing: -0.3 },
+  kpiLabel: { fontSize: 9, letterSpacing: 1, fontWeight: "700", marginTop: 6 },
+  note: { flexDirection: "row", gap: 10, padding: 14, borderRadius: 4, marginTop: 30 },
+  noteText: { flex: 1, fontSize: 11, lineHeight: 17 },
 });

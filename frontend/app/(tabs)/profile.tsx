@@ -17,7 +17,6 @@ import { api } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
 import { useFavorites } from "@/src/context/FavoritesContext";
-import { Logo } from "@/src/components/Logo";
 import { formatDate } from "@/src/utils/format";
 
 export default function Profile() {
@@ -94,12 +93,8 @@ export default function Profile() {
     <KeyboardAwareScrollView
       bottomOffset={20}
       style={{ flex: 1, backgroundColor: colors.surface }}
-      contentContainerStyle={{ paddingTop: insets.top + 12, paddingBottom: insets.bottom + 40 }}
+      contentContainerStyle={{ paddingTop: 10, paddingBottom: insets.bottom + 40 }}
     >
-      <View style={{ paddingHorizontal: spacing.xl, alignItems: "center", marginBottom: 8 }}>
-        <Logo size={24} />
-      </View>
-
       {/* User card */}
       <View style={[styles.userCard, { marginHorizontal: spacing.xl, borderColor: colors.border }]}>
         <View style={[styles.avatar, { backgroundColor: colors.brand }]}>
