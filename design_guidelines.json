@@ -1,0 +1,203 @@
+{
+  "app_name": "COZA",
+  "personality": "3 Editorial structure with 6 Glass / Luxe surfaces",
+  "personality_one_liner": "A cinematic, architectural, and strictly minimalist tracking experience for high-end fashion, focused on restrained typography and studio-quality imagery.",
+  "color": {
+    "surface": "#101010",
+    "onSurface": "#F7F7F7",
+    "surfaceSecondary": "#1A1A1A",
+    "onSurfaceSecondary": "#EAEAEA",
+    "surfaceTertiary": "#262626",
+    "onSurfaceTertiary": "#D4D4D4",
+    "surfaceInverse": "#FAFAFA",
+    "onSurfaceInverse": "#101010",
+    "brand": "#D9D2C5",
+    "brandPrimary": "#D9D2C5",
+    "onBrandPrimary": "#101010",
+    "brandSecondary": "#968F83",
+    "onBrandSecondary": "#F7F7F7",
+    "brandTertiary": "#33312E",
+    "onBrandTertiary": "#D9D2C5",
+    "success": "#284A33",
+    "onSuccess": "#E0F2E9",
+    "warning": "#634824",
+    "onWarning": "#FDF3E1",
+    "error": "#542023",
+    "onError": "#FBEAEB",
+    "info": "#243C52",
+    "onInfo": "#E3F0FC",
+    "border": "#2E2E2E",
+    "borderStrong": "#4A4A4A",
+    "divider": "#212121",
+    "light_mode_overrides": {
+      "surface": "#FAFAFA",
+      "onSurface": "#101010",
+      "surfaceSecondary": "#F2F2F2",
+      "onSurfaceSecondary": "#1A1A1A",
+      "surfaceTertiary": "#E6E6E6",
+      "onSurfaceTertiary": "#333333",
+      "surfaceInverse": "#101010",
+      "onSurfaceInverse": "#FAFAFA",
+      "brand": "#101010",
+      "brandPrimary": "#101010",
+      "onBrandPrimary": "#FAFAFA",
+      "brandSecondary": "#595959",
+      "onBrandSecondary": "#FAFAFA",
+      "brandTertiary": "#EBEBEB",
+      "onBrandTertiary": "#101010",
+      "border": "#E0E0E0",
+      "borderStrong": "#BDBDBD",
+      "divider": "#EEEEEE"
+    }
+  },
+  "typography": {
+    "displayFontFamily": "Satoshi",
+    "textFontFamily": "Geist",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous architectural padding. Empty space is intentional. Use 'lg' and 'xl' to let content breathe, mimicking an art gallery or high-end magazine.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 2,
+    "md": 4,
+    "lg": 8,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": "true",
+    "do's": [
+      "Use heavy glass with strong tint underneath for tab bar and sticky headers to maintain luxury cinematic feel.",
+      "Overlay glass on product imagery for 'Add to Cart' or floating action bars."
+    ],
+    "dont's": [
+      "Do not use glass for simple list rows or cards.",
+      "Avoid glass where data legibility (like chart tooltips) is critical."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Auth",
+      "purpose": "Minimalistic entry point emphasizing the COZA wordmark with sleek email/password fields.",
+      "states": {
+        "loading": "Centered minimal spinner with subtle brand wordmark.",
+        "empty": "N/A",
+        "error": "Crisp red toast or inline error text matching the typography rhythm."
+      },
+      "layout": "Hero abstract architecture photo filling the top half with a gradient scrim into the solid background. Form fields use tight bottom borders (no full boxes) for an editorial feel."
+    },
+    {
+      "name": "Home/Browse",
+      "purpose": "Showcase Zara ZW products in an architectural 2-column grid.",
+      "states": {
+        "loading": "Skeleton frames mapping the exact aspect ratio of product shots.",
+        "empty": "Editorial illustration or abstract photo with text: 'Henüz ürün bulunamadı.'",
+        "error": "Text: 'Ürünler yüklenirken bir hata oluştu.' with a primary retry CTA."
+      },
+      "layout": "Sticky glass header with logo. Horizontal chip scroller for categories below header. 2-col product grid without gutters (full bleed between items) or with strict 'md' gaps and no card borders."
+    },
+    {
+      "name": "Filters & Advanced Sheet",
+      "purpose": "Detailed filtering by origin, supplier code, category, and price.",
+      "states": {
+        "loading": "Inline spinners next to filter groups.",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Bottom sheet using @gorhom/bottom-sheet. Clean list rows. Selected states use brandPrimary color with checkmarks. 'Sonuçları Göster' sticky bottom button."
+    },
+    {
+      "name": "Product Detail Page (PDP)",
+      "purpose": "Immersive view of a single product's data and imagery.",
+      "states": {
+        "loading": "Full-screen image skeleton.",
+        "empty": "N/A",
+        "error": "Text error overlay on failed image load."
+      },
+      "layout": "Edge-to-edge image gallery pager at the top. Below, strong typographic hierarchy showing price, manufacturing origin (Üretim yeri), and supplier codes. Sticky bottom CTA to save to favorites."
+    },
+    {
+      "name": "Analytics Dashboard",
+      "purpose": "Data visualization of supplier/origin stats matching the minimal aesthetic.",
+      "states": {
+        "loading": "Skeleton circles and bars.",
+        "empty": "Text: 'Görüntülenecek veri yok.'",
+        "error": "Text: 'Analizler yüklenemedi.'"
+      },
+      "layout": "Stack layout. Large typography for KPIs. Clean pie chart (Origin Distribution) with minimal labels and thin strokes. Minimal bar chart for categories. Use monotone colors (variations of brand/surface) for chart segments to avoid breaking the luxury palette."
+    },
+    {
+      "name": "Profile/Settings",
+      "purpose": "User management and app theme toggle.",
+      "states": {
+        "loading": "N/A",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Standard list rows with Feather icons. A prominent switch for 'Koyu Mod / Açık Mod' (Dark/Light mode). Clean, generous padding."
+    }
+  ],
+  "images": {
+    "auth_hero": {
+      "url": "https://images.pexels.com/photos/11182234/pexels-photo-11182234.jpeg",
+      "dark": "https://images.pexels.com/photos/14875811/pexels-photo-14875811.jpeg",
+      "alt": "Minimalist architecture photography"
+    },
+    "empty_state_wardrobe": {
+      "url": "https://images.unsplash.com/photo-1548768041-2fceab4c0b85?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwZmFzaGlvbiUyMGNsb3RoaW5nJTIwZmxhdCUyMGxheXxlbnwwfHx8fDE3ODYwNzc4MzB8MA&ixlib=rb-4.1.0&q=85",
+      "dark": "https://images.unsplash.com/photo-1548768041-2fceab4c0b85?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwZmFzaGlvbiUyMGNsb3RoaW5nJTIwZmxhdCUyMGxheXxlbnwwfHx8fDE3ODYwNzc4MzB8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Minimalist folded clothing on dark surface"
+    },
+    "pdp_sample_1": {
+      "url": "https://images.unsplash.com/photo-1570733117311-d990c3816c47?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTF8MHwxfHNlYXJjaHwzfHxoaWdoJTIwZW5kJTIwbWluaW1hbCUyMGZhc2hpb24lMjBlZGl0b3JpYWwlMjBzdHVkaW98ZW58MHx8fHwxNzg2MDc3ODI0fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "High end minimal fashion editorial"
+    },
+    "pdp_sample_2": {
+      "url": "https://images.unsplash.com/photo-1603189343302-e603f7add05a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTF8MHwxfHNlYXJjaHwxfHxoaWdoJTIwZW5kJTIwbWluaW1hbCUyMGZhc2hpb24lMjBlZGl0b3JpYWwlMjBzdHVkaW98ZW58MHx8fHwxNzg2MDc3ODI0fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Minimalist fashion man suit jacket"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Implement a dedicated theme context or utilize native appearance hooks to toggle between the specific dark mode (primary) and light mode overrides defined in this JSON. Ensure the entire app UI is localized in Turkish as requested.",
+    "Adopt the '3 Editorial structure with 6 Glass / Luxe surfaces' personality. Layouts should be extremely sharp, avoiding heavy shadows and instead relying on precise typography, generous whitespace (xl/2xl padding), and hairline borders (0.5pt to 1pt).",
+    "For the Analytics Dashboard, ensure the Pie and Bar charts are stripped of unnecessary grid lines and legends. Use monotone color mapping (variations of 'brandPrimary' and 'surfaceTertiary') for chart slices to prevent the luxury aesthetic from breaking into a generic colorful dashboard.",
+    "The COZA brand identity should be represented via text styling (Satoshi font, tight tracking, all caps) wherever a logo is needed. Do not use colorful app icons or playful emojis.",
+    "Product Cards on the Browse page should feature edge-to-edge imagery or strict architectural gaps without rounded box shadows. Metadata below the image must be terse (Price, Name, Origin).",
+    "The Advanced Filter Bottom Sheet must include parameters for 'Üretim yeri' (Manufacturing origin) and Supplier codes, styled using minimalist text rows or thin-bordered chips rather than bulky buttons."
+  ],
+  "haptics": {
+    "primary_button_press": "impactLight",
+    "tab_change": "selection",
+    "filter_chip_toggle": "impactLight",
+    "theme_toggle": "impactMedium",
+    "favorite_add": "notificationSuccess"
+  }
+}
