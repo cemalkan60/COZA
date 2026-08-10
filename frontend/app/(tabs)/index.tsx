@@ -98,7 +98,7 @@ export default function Catalog() {
             testID="search-input"
             value={searchInput}
             onChangeText={setSearchInput}
-            placeholder="Her şeyde ara — isim, kod, üretim yeri, renk"
+            placeholder="ara"
             placeholderTextColor={colors.brandSecondary}
             style={[styles.searchInput, { color: colors.onSurface }]}
             autoCapitalize="none"
