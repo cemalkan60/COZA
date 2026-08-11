@@ -398,21 +398,29 @@ async def filters():
 
 
 @api.get("/analytics")
-async def analytics():
-    total = await db.products.count_documents({})
+async def analytics(department: Optional[str] = None, category: Optional[str] = None):
+    match: dict = {}
+    if department:
+        match["department"] = department
+    if category:
+        match["category"] = category
+    total = await db.products.count_documents(match)
     origin_dist = await db.products.aggregate([
+        {"$match": match},
         {"$group": {"_id": "$origin", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
     ]).to_list(length=100)
     category_dist = await db.products.aggregate([
+        {"$match": match},
         {"$group": {"_id": "$category", "count": {"$sum": 1}}},
         {"$sort": {"count": -1}},
     ]).to_list(length=100)
     price_stats = await db.products.aggregate([
+        {"$match": match},
         {"$group": {"_id": None, "avg": {"$avg": "$price"},
                     "min": {"$min": "$price"}, "max": {"$max": "$price"}}}
     ]).to_list(length=1)
-    supplier_count = len(await db.products.distinct("supplier_code"))
+    supplier_count = len(await db.products.distinct("supplier_code", match))
     ps = price_stats[0] if price_stats else {"avg": 0, "min": 0, "max": 0}
     meta = await db.meta.find_one({"_id": "scrape"}, {"_id": 0}) or {}
     real_origins = [o for o in origin_dist if o["_id"] and o["_id"] != "Belirleniyor…"]
