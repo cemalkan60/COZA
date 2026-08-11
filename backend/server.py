@@ -107,12 +107,9 @@ async def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dic
         raise HTTPException(status_code=403, detail="Bu işlem için yönetici yetkisi gerekli.")
     return user
 
-
 async def get_proxy_key() -> str:
-    cfg = await db.settings.find_one({"_id": "scraper"})
-    if cfg and cfg.get("proxy_api_key"):
-        return cfg["proxy_api_key"]
-    return os.environ["SCRAPER_API_KEY"]
+    """Always use the current ScraperAPI key from Railway variables."""
+    return os.environ["SCRAPER_API_KEY"].strip()
 
 
 # ----------------------------- Scrape orchestration -----------------------------
