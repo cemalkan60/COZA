@@ -137,11 +137,6 @@ async def run_scrape(reason: str = "manual") -> dict:
                 upsert=True,
             )
 
-        # Apply already-known origins (cached per manufacturer_code) immediately.
-        for o in await db.origins.find({}).to_list(length=10000):
-            await db.products.update_many(
-                {"manufacturer_code": o["_id"]}, {"$set": {"origin": o["origin"]}}
-            )
 
         meta = {
             "last_scrape": now_iso,
@@ -159,51 +154,35 @@ async def run_scrape(reason: str = "manual") -> dict:
         # Enrich real manufacturing origins in the background (per manufacturer code).
         asyncio.create_task(enrich_origins(proxy_key))
         return {"status": "ok", **meta}
-
-
+        
 async def enrich_origins(proxy_key: str = ""):
-    """Fetch REAL 'Made in X' origin from zara.es per manufacturer_code, cached in db.origins."""
+    """Fetch REAL 'Made in X' origin from zara.es for EVERY product individually."""
     if _enrich_lock.locked():
         return
     async with _enrich_lock:
         proxy_key = proxy_key or await get_proxy_key()
-        codes = [c for c in await db.products.distinct("manufacturer_code") if c]
-        known = set(await db.origins.distinct("_id"))
-        todo = [c for c in codes if c not in known]
-        logger.info("Origin enrichment started: %d codes", len(todo))
+        pending = await db.products.find(
+            {"origin": "Belirleniyor…"}, {"product_id": 1}
+        ).to_list(length=20000)
+        logger.info("Origin enrichment started: %d products (per-product)", len(pending))
         sem = asyncio.Semaphore(5)
 
-        async def one(code: str):
-            # Try several representative products for this code: the first one
-            # occasionally lacks an origin section, so fall back to others.
-            reps = await db.products.find(
-                {"manufacturer_code": code}, {"product_id": 1}
-            ).limit(5).to_list(length=5)
-            origin = None
-            for rep in reps:
-                async with sem:
-                    origin = await asyncio.to_thread(
-                        scraper.fetch_origin, rep["product_id"], proxy_key
-                    )
-                if origin:
-                    break
+        async def one(pid: str):
+            async with sem:
+                origin = await asyncio.to_thread(scraper.fetch_origin, pid, proxy_key)
             if origin:
-                await db.origins.update_one(
-                    {"_id": code},
-                    {"$set": {"origin": origin, "fetched_at": datetime.now(timezone.utc).isoformat()}},
-                    upsert=True,
-                )
-                await db.products.update_many(
-                    {"manufacturer_code": code}, {"$set": {"origin": origin}}
+                await db.products.update_one(
+                    {"product_id": pid}, {"$set": {"origin": origin}}
                 )
 
-        await asyncio.gather(*[one(c) for c in todo])
+        await asyncio.gather(*[one(p["product_id"]) for p in pending])
+        known_count = await db.products.count_documents({"origin": {"$ne": "Belirleniyor…"}})
         await db.meta.update_one(
             {"_id": "scrape"},
-            {"$set": {"origins_known": await db.origins.count_documents({})}},
+            {"$set": {"origins_known": known_count}},
             upsert=True,
         )
-        logger.info("Origin enrichment done: %d known", await db.origins.count_documents({}))
+        logger.info("Origin enrichment done: %d known", known_count)
 
 
 async def _seed_if_empty():
@@ -438,7 +417,7 @@ async def analytics(department: Optional[str] = None, category: Optional[str] = 
         "category_distribution": [
             {"label": c["_id"], "count": c["count"]} for c in category_dist if c["_id"]
         ],
-        "origins_known": meta.get("origins_known", await db.origins.count_documents({})),
+        "origins_known": meta.get("origins_known", await db.products.count_documents({"origin": {"$ne": "Belirleniyor…"}})),
         "last_scrape": meta.get("last_scrape"),
     }
 
@@ -514,7 +493,7 @@ async def manufacturer_analytics(code: str):
 async def get_meta():
     meta = await db.meta.find_one({"_id": "scrape"}, {"_id": 0}) or {}
     meta["product_count"] = await db.products.count_documents({})
-    meta["origins_known"] = await db.origins.count_documents({})
+    meta["origins_known"] = await db.products.count_documents({"origin": {"$ne": "Belirleniyor…"}})
     return meta
 
 
