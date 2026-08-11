@@ -125,6 +125,7 @@ def _parse_product(comp: dict, category_name: str):
         "currency": "€",
         "category": category_name,
         "family": comp.get("familyName", "") or "",
+        "department": comp.get("sectionName", "") or "Basic",
         "color": color_name,
         "images": clean,
         "reference": reference,
