@@ -289,6 +289,7 @@ async def me(user: Annotated[dict, Depends(get_current_user)]):
 @api.get("/products")
 async def list_products(
     category: Optional[str] = None,
+    department: Optional[str] = None,
     origin: Optional[str] = None,
     supplier: Optional[str] = None,
     code: Optional[str] = None,
@@ -303,6 +304,8 @@ async def list_products(
     query: dict = {}
     if category:
         query["category"] = category
+    if department:
+        query["department"] = department
     if origin:
         query["origin"] = origin
     if is_new:
@@ -379,6 +382,7 @@ async def product_composition(product_id: str):
 @api.get("/filters")
 async def filters():
     categories = await db.products.distinct("category")
+    departments = await db.products.distinct("department")
     origins = await db.products.distinct("origin")
     bounds = await db.products.aggregate([
         {"$group": {"_id": None, "min": {"$min": "$price"}, "max": {"$max": "$price"}}}
@@ -386,6 +390,7 @@ async def filters():
     price = bounds[0] if bounds else {"min": 0, "max": 0}
     return {
         "categories": sorted(c for c in categories if c),
+        "departments": sorted(d for d in departments if d),
         "origins": sorted(o for o in origins if o),
         "price_min": price.get("min", 0) or 0,
         "price_max": price.get("max", 0) or 0,
