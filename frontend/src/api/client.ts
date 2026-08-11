@@ -10,6 +10,7 @@ export type Product = {
   currency: string;
   category: string;
   family: string;
+  department: string;
   color: string;
   images: string[];
   reference: string;
@@ -44,6 +45,7 @@ async function request(path: string, init: RequestInit = {}, auth = false) {
 
 export type ProductQuery = {
   category?: string;
+  department?: string;
   origin?: string;
   supplier?: string;
   code?: string;
@@ -79,7 +81,8 @@ export const api = {
   product: (id: string) => request(`/products/${id}`),
   composition: (id: string) => request(`/products/${id}/composition`),
   filters: () => request("/filters"),
-  analytics: () => request("/analytics"),
+  analytics: (params: { department?: string; category?: string } = {}) =>
+    request(`/analytics${toQuery(params as Record<string, unknown>)}`),
   manufacturers: (q?: string) => request(`/manufacturers${toQuery({ q, limit: 24 })}`),
   manufacturerAnalytics: (code: string) => request(`/analytics/manufacturer/${code}`),
   meta: () => request("/meta"),
