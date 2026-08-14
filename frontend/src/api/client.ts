@@ -20,6 +20,7 @@ export type Product = {
   supplier_code: string;
   origin: string;
   is_new?: boolean;
+  removed?: boolean;
   seo_keyword: string;
   seo_product_id: string;
 };
@@ -79,10 +80,17 @@ export const api = {
   products: (query: ProductQuery = {}) =>
     request(`/products${toQuery(query as Record<string, unknown>)}`),
   product: (id: string) => request(`/products/${id}`),
+  setRemoved: (product_id: string, removed: boolean) =>
+    request(
+      `/products/${product_id}/removed`,
+      { method: "POST", body: JSON.stringify({ removed }) },
+      true,
+    ),
   composition: (id: string) => request(`/products/${id}/composition`),
   filters: () => request("/filters"),
-  analytics: (params: { department?: string; category?: string } = {}) =>
-    request(`/analytics${toQuery(params as Record<string, unknown>)}`),
+  analytics: (
+    params: { department?: string; category?: string; family?: string; origin?: string } = {},
+  ) => request(`/analytics${toQuery(params as Record<string, unknown>)}`),
   manufacturers: (q?: string) => request(`/manufacturers${toQuery({ q, limit: 24 })}`),
   manufacturerAnalytics: (code: string) => request(`/analytics/manufacturer/${code}`),
   meta: () => request("/meta"),

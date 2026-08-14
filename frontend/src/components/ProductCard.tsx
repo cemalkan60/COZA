@@ -44,10 +44,20 @@ export function ProductCard({ product }: { product: Product }) {
           transition={220}
         />
 
-        {product.is_new && (
+        {product.is_new && !product.removed && (
           <View style={[styles.newTag, { backgroundColor: colors.brand }]}>
             <Text style={[styles.newText, { color: colors.onBrand }]}>YENİ</Text>
           </View>
+        )}
+
+        {product.removed && (
+          <>
+            <View style={styles.removedOverlay} pointerEvents="none" />
+            <View style={[styles.removedTag, { backgroundColor: colors.error }]}>
+              <Feather name="slash" size={10} color={colors.onBrand} />
+              <Text style={[styles.removedText, { color: colors.onBrand }]}>KALKTI</Text>
+            </View>
+          </>
         )}
 
         <Pressable
@@ -125,6 +135,22 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   newText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
+  removedOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  removedTag: {
+    position: "absolute",
+    top: 8,
+    left: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 2,
+  },
+  removedText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.8 },
   originTag: {
     position: "absolute",
     bottom: 8,

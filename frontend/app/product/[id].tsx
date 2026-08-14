@@ -35,6 +35,21 @@ export default function ProductDetail() {
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState(0);
   const [composition, setComposition] = useState<{ area: string; materials: string }[] | null>(null);
+  const [removedBusy, setRemovedBusy] = useState(false);
+
+  const toggleRemoved = async () => {
+    if (!product || removedBusy) return;
+    const next = !product.removed;
+    setRemovedBusy(true);
+    try {
+      const updated = await api.setRemoved(product.product_id, next);
+      setProduct(updated);
+    } catch {
+      /* ignore */
+    } finally {
+      setRemovedBusy(false);
+    }
+  };
 
   useEffect(() => {
     api
@@ -141,6 +156,13 @@ export default function ProductDetail() {
             {formatPrice(product.price, product.currency)}
           </Text>
 
+          {product.removed && (
+            <View testID="pdp-removed-badge" style={[styles.removedBadge, { backgroundColor: colors.error }]}>
+              <Feather name="slash" size={13} color={colors.onBrand} />
+              <Text style={[styles.removedBadgeText, { color: colors.onBrand }]}>MAĞAZADAN KALKTI</Text>
+            </View>
+          )}
+
           <View style={[styles.detailBox, { borderColor: colors.border }]}>
             {details.map((d, i) => (
               <View
@@ -197,6 +219,43 @@ export default function ProductDetail() {
 
           <Text style={[styles.originNote, { color: colors.brandSecondary }]}>
             Üretim yeri, ürünün üretici kodundan Inditex tedarik dağılımına göre modellenmiştir.
+          </Text>
+
+          <Pressable
+            testID="pdp-toggle-removed"
+            onPress={toggleRemoved}
+            disabled={removedBusy}
+            style={[
+              styles.removedBtn,
+              {
+                borderColor: product.removed ? colors.brand : colors.error,
+                backgroundColor: product.removed ? colors.surfaceSecondary : "transparent",
+                opacity: removedBusy ? 0.6 : 1,
+              },
+            ]}
+          >
+            {removedBusy ? (
+              <ActivityIndicator color={product.removed ? colors.brand : colors.error} />
+            ) : (
+              <>
+                <Feather
+                  name={product.removed ? "rotate-ccw" : "slash"}
+                  size={16}
+                  color={product.removed ? colors.brand : colors.error}
+                />
+                <Text
+                  style={[
+                    styles.removedBtnText,
+                    { color: product.removed ? colors.brand : colors.error },
+                  ]}
+                >
+                  {product.removed ? "Mağazada mevcut olarak işaretle" : "Mağazadan Kalktı olarak işaretle"}
+                </Text>
+              </>
+            )}
+          </Pressable>
+          <Text style={[styles.originNote, { color: colors.brandSecondary, marginTop: 10 }]}>
+            Mağazadan kalktı olarak işaretlenen ürünler analizlere dahil edilmez.
           </Text>
         </View>
       </ScrollView>
@@ -277,6 +336,28 @@ const styles = StyleSheet.create({
   family: { fontSize: 11, letterSpacing: 1.4, fontWeight: "700" },
   name: { fontSize: 20, fontWeight: "700", letterSpacing: -0.2, marginTop: 8, lineHeight: 27 },
   price: { fontSize: 22, fontWeight: "800", letterSpacing: -0.4, marginTop: 12 },
+  removedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 6,
+    marginTop: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 4,
+  },
+  removedBadgeText: { fontSize: 11, fontWeight: "800", letterSpacing: 0.6 },
+  removedBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    height: 50,
+    borderWidth: 1,
+    borderRadius: 4,
+    marginTop: 20,
+  },
+  removedBtnText: { fontSize: 14, fontWeight: "800", letterSpacing: 0.3 },
   detailBox: { borderWidth: 1, borderRadius: 4, marginTop: 24 },
   detailRow: {
     flexDirection: "row",

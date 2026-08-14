@@ -174,7 +174,7 @@ export default function Catalog() {
     minPrice || maxPrice
       ? {
           key: "price",
-          label: `${minPrice ?? "0"}₺ - ${maxPrice ?? "∞"}₺`,
+          label: `${minPrice ?? "0"}₺ - ${maxPrice ?? "∞"}₺`,
         }
       : null,
     sort ? { key: "sort", label: SORT_OPTIONS.find((s) => s.key === sort)?.label || sort } : null,
