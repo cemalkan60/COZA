@@ -23,5 +23,5 @@ export default function Index() {
     );
   }
 
-  return <Redirect href={token ? "/(tabs)" : "/(auth)/login"} />;
+  return <Redirect href={token ? "/hub" : "/(auth)/login"} />;
 }

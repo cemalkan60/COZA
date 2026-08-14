@@ -27,6 +27,27 @@ export type Product = {
 
 export type Composition = { area: string; materials: string }[];
 
+// ---- COZA Fashion (fashion-press.net runway collections) ----
+export type FashionItem = {
+  source_id: string;
+  url: string;
+  image: string | null;
+  title_ja: string;
+  title_tr: string;
+  brand_tr: string;
+  season: string;
+  season_label: string;
+  updated_at?: string;
+};
+
+export type FashionAnalytics = {
+  total: number;
+  seasons: { label: string; count: number }[];
+  brands: { label: string; count: number }[];
+  brand_count: number;
+  last_scrape: string | null;
+};
+
 async function request(path: string, init: RequestInit = {}, auth = false) {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
@@ -102,6 +123,13 @@ export const api = {
       { method: "PUT", body: JSON.stringify({ proxy_api_key, storage_note }) },
       true,
     ),
+
+  // ---- COZA Fashion ----
+  fashionCollections: (
+    params: { season?: string; q?: string; skip?: number; limit?: number } = {},
+  ) => request(`/fashion/collections${toQuery(params as Record<string, unknown>)}`, {}, true),
+  fashionAnalytics: () => request("/fashion/analytics", {}, true),
+  fashionMeta: () => request("/fashion/meta", {}, true),
 
   favorites: () => request("/favorites", {}, true),
   favoriteIds: () => request("/favorites/ids", {}, true),

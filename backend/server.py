@@ -18,6 +18,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 import scraper
+import fashion_scraper
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -43,6 +44,7 @@ scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
 
 _scrape_lock = asyncio.Lock()
 _enrich_lock = asyncio.Lock()
+_fashion_lock = asyncio.Lock()
 
 
 # ----------------------------- Models -----------------------------
@@ -193,6 +195,54 @@ async def _seed_if_empty():
         asyncio.create_task(run_scrape("initial_seed"))
     else:
         logger.info("Catalog present: %d products.", count)
+
+
+# ----------------------------- COZA Fashion orchestration -----------------------------
+async def run_fashion_scrape(reason: str = "manual") -> dict:
+    """Scrape women's runway collections from fashion-press.net (weekly, Mondays).
+
+    Only corporate / editorial data: brand, season, title (translated JA->TR).
+    No user-generated or personal content is collected.
+    """
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        logger.info("Fashion scrape started (%s)", reason)
+        started = datetime.now(timezone.utc)
+        try:
+            items = await asyncio.to_thread(fashion_scraper.scrape_collections, 40)
+        except Exception as exc:
+            logger.exception("Fashion scrape failed: %s", exc)
+            return {"status": "error", "error": str(exc)}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for it in items:
+            it["updated_at"] = now_iso
+            await db.fashion.update_one(
+                {"source_id": it["source_id"]},
+                {"$set": it, "$setOnInsert": {"first_seen": now_iso}},
+                upsert=True,
+            )
+        meta = {
+            "last_scrape": now_iso,
+            "item_count": await db.fashion.count_documents({}),
+            "reason": reason,
+        }
+        await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
+        logger.info(
+            "Fashion scrape done (%s): %d items, %.1fs",
+            reason, len(items),
+            (datetime.now(timezone.utc) - started).total_seconds(),
+        )
+        return {"status": "ok", **meta}
+
+
+async def _seed_fashion_if_empty():
+    count = await db.fashion.count_documents({})
+    if count == 0:
+        logger.info("Fashion feed empty — running initial fashion scrape in background.")
+        asyncio.create_task(run_fashion_scrape("initial_seed"))
+    else:
+        logger.info("Fashion feed present: %d items.", count)
 
 
 async def seed_users():
@@ -635,6 +685,73 @@ async def remove_favorite(product_id: str, user: Annotated[dict, Depends(get_cur
     return {"status": "ok", "product_id": product_id}
 
 
+# ----------------------------- COZA Fashion routes -----------------------------
+@api.get("/fashion/collections")
+async def fashion_collections(
+    user: Annotated[dict, Depends(get_current_user)],
+    season: Optional[str] = None,
+    q: Optional[str] = None,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(30, ge=1, le=60),
+):
+    """Women's runway collections (brand, season, title in Turkish)."""
+    query: dict = {}
+    if season:
+        query["season"] = season
+    if q:
+        qs = q.strip()
+        query["$or"] = [
+            {"brand_tr": {"$regex": re.escape(qs), "$options": "i"}},
+            {"title_tr": {"$regex": re.escape(qs), "$options": "i"}},
+        ]
+    cursor = (
+        db.fashion.find(query, {"_id": 0})
+        .sort([("source_id", -1)])
+        .skip(skip)
+        .limit(limit)
+    )
+    items = await cursor.to_list(length=limit)
+    total = await db.fashion.count_documents(query)
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+@api.get("/fashion/analytics")
+async def fashion_analytics(user: Annotated[dict, Depends(get_current_user)]):
+    """COZA-style aggregates over the fashion feed: seasons & top brands."""
+    total = await db.fashion.count_documents({})
+    season_dist = await db.fashion.aggregate([
+        {"$match": {"season_label": {"$nin": ["", None]}}},
+        {"$group": {"_id": "$season_label", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]).to_list(length=50)
+    brand_dist = await db.fashion.aggregate([
+        {"$match": {"brand_tr": {"$nin": ["", None]}}},
+        {"$group": {"_id": "$brand_tr", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 12},
+    ]).to_list(length=12)
+    meta = await db.meta.find_one({"_id": "fashion"}, {"_id": 0}) or {}
+    return {
+        "total": total,
+        "seasons": [{"label": r["_id"], "count": r["count"]} for r in season_dist],
+        "brands": [{"label": r["_id"], "count": r["count"]} for r in brand_dist],
+        "brand_count": len(await db.fashion.distinct("brand_tr")),
+        "last_scrape": meta.get("last_scrape"),
+    }
+
+
+@api.get("/fashion/meta")
+async def fashion_meta(user: Annotated[dict, Depends(get_current_user)]):
+    meta = await db.meta.find_one({"_id": "fashion"}, {"_id": 0}) or {}
+    meta["item_count"] = await db.fashion.count_documents({})
+    return meta
+
+
+@api.post("/admin/fashion-scrape")
+async def admin_fashion_scrape(admin: Annotated[dict, Depends(require_admin)]):
+    return await run_fashion_scrape("manual")
+
+
 @api.get("/")
 async def root():
     return {"app": "COZA", "status": "ok"}
@@ -661,14 +778,23 @@ async def on_startup():
     await db.products.create_index("manufacturer_code")
     await db.products.create_index("is_new")
     await db.favorites.create_index([("user_id", 1), ("product_id", 1)], unique=True)
+    await db.fashion.create_index("source_id", unique=True)
+    await db.fashion.create_index("season")
     await seed_users()
     scheduler.add_job(
         run_scrape, CronTrigger(day_of_week="mon,thu", hour=8, minute=0),
         args=["scheduled_mon_thu_08:00"],
         id="scheduled_scrape", replace_existing=True,
     )
+    # COZA Fashion: refresh runway collections weekly, every Monday at 07:00.
+    scheduler.add_job(
+        run_fashion_scrape, CronTrigger(day_of_week="mon", hour=7, minute=0),
+        args=["scheduled_mon_07:00"],
+        id="scheduled_fashion_scrape", replace_existing=True,
+    )
     scheduler.start()
     await _seed_if_empty()
+    await _seed_fashion_if_empty()
 
 
 @app.on_event("shutdown")
