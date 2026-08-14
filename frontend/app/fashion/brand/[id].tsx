@@ -38,7 +38,7 @@ async function probeImage(url: string) {
           resolve(false);
         };
         const t = setTimeout(() => onFail(), 4000);
-        .onload = () => {
+        img.onload = () => {
           clearTimeout(t);
           onOK();
         };
