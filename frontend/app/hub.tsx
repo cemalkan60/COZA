@@ -1,5 +1,6 @@
+// frontend/app/hub.tsx
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, Dimensions, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -20,19 +21,23 @@ export default function Hub() {
     router.push(href as any);
   };
 
+  const { width, height } = Dimensions.get("window");
+  const isNarrow = width < 760;
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      {/* Faint watermark logo */}
+      {/* Watermark logo (hafif) */}
       <View pointerEvents="none" style={styles.watermark}>
-        <Logo size={110} color={colors.surfaceSecondary} />
+        <Logo size={120} color={colors.surfaceSecondary} />
       </View>
 
       <View
         style={{
           flex: 1,
           paddingHorizontal: spacing.xl,
-          paddingTop: insets.top + 40,
+          paddingTop: insets.top + 24,
           paddingBottom: insets.bottom + 24,
+          justifyContent: "center",
         }}
       >
         {/* Sign out */}
@@ -46,30 +51,73 @@ export default function Hub() {
         </Pressable>
 
         <View style={{ alignItems: "center", marginTop: 8, marginBottom: 8 }}>
-          <Logo size={40} />
+          <Logo size={36} />
         </View>
         <Text style={[styles.subtitle, { color: colors.brandSecondary }]}>
           Nereye gitmek istiyorsunuz?
         </Text>
 
-        <View style={styles.cards}>
-          <HubCard
+        {/* Two-column layout */}
+        <View
+          style={[
+            styles.twoColWrap,
+            { maxWidth: 1100, alignSelf: "center", gap: 12 },
+            isNarrow ? styles.stack : styles.row,
+          ]}
+        >
+          {/* LEFT: COZA ANALYSIS */}
+          <Pressable
             testID="hub-analysis"
-            icon="bar-chart-2"
-            title="COZA Analiz"
-            desc="Zara Woman ürün, üretici ve üretim yeri analizleri"
-            colors={colors}
             onPress={() => go("/(tabs)")}
-          />
-          <HubCard
+            style={({ pressed }) => [
+              styles.colCard,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: pressed ? colors.brand : colors.border,
+                opacity: pressed ? 0.95 : 1,
+                shadowColor: "#000",
+              },
+            ]}
+          >
+            <View style={styles.leftInner}>
+              <View style={[styles.textBlock, { alignSelf: "flex-start" }]}>
+                <Text style={[styles.colTitle, { color: colors.onSurface }]}>
+                  COZA ANALYSIS
+                </Text>
+                <Text style={[styles.colDesc, { color: colors.brandSecondary }]}>
+                  Zara Woman ürün, üretici ve üretim yeri analizleri
+                </Text>
+              </View>
+            </View>
+          </Pressable>
+
+          {/* Vertical divider for wide screens */}
+          {!isNarrow && <View style={[styles.divider, { backgroundColor: "#ffffff22" }]} />}
+
+          {/* RIGHT: COZA FASHION */}
+          <Pressable
             testID="hub-fashion"
-            icon="feather"
-            title="COZA Moda"
-            desc="Haftalık defileler, sezonlar ve marka koleksiyonları"
-            colors={colors}
-            accent
             onPress={() => go("/fashion")}
-          />
+            style={({ pressed }) => [
+              styles.colCard,
+              {
+                backgroundColor: colors.surfaceSecondary,
+                borderColor: pressed ? colors.brandSecondary : colors.border,
+                opacity: pressed ? 0.95 : 1,
+              },
+            ]}
+          >
+            <View style={styles.rightInner}>
+              <View style={[styles.textBlock, { alignSelf: "flex-start" }]}>
+                <Text style={[styles.colTitle, { color: colors.onSurface }]}>
+                  COZA FASHION
+                </Text>
+                <Text style={[styles.colDesc, { color: colors.brandSecondary }]}>
+                  Haftalık defileler, sezonlar ve marka koleksiyonları
+                </Text>
+              </View>
+            </View>
+          </Pressable>
         </View>
 
         <Text style={[styles.footnote, { color: colors.brandSecondary }]}>
@@ -80,93 +128,76 @@ export default function Hub() {
   );
 }
 
-function HubCard({
-  icon,
-  title,
-  desc,
-  colors,
-  onPress,
-  accent,
-  testID,
-}: {
-  icon: keyof typeof Feather.glyphMap;
-  title: string;
-  desc: string;
-  colors: any;
-  onPress: () => void;
-  accent?: boolean;
-  testID?: string;
-}) {
-  return (
-    <Pressable
-      testID={testID}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        {
-          borderColor: accent ? colors.brand : colors.border,
-          backgroundColor: colors.surfaceSecondary,
-          opacity: pressed ? 0.85 : 1,
-        },
-      ]}
-    >
-      <View
-        style={[
-          styles.iconWrap,
-          { backgroundColor: accent ? colors.brand : colors.surfaceTertiary },
-        ]}
-      >
-        <Feather
-          name={icon}
-          size={26}
-          color={accent ? colors.onBrand : colors.onSurface}
-        />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.cardTitle, { color: colors.onSurface }]}>{title}</Text>
-        <Text style={[styles.cardDesc, { color: colors.brandSecondary }]}>{desc}</Text>
-      </View>
-      <Feather name="chevron-right" size={22} color={colors.brandSecondary} />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   watermark: {
     position: "absolute",
-    top: 90,
+    top: 80,
     left: 0,
     right: 0,
     alignItems: "center",
-    opacity: 0.5,
+    opacity: 0.45,
   },
   signout: { position: "absolute", top: 8, right: 0, padding: 8, zIndex: 2 },
   subtitle: {
     textAlign: "center",
     fontSize: 13,
     letterSpacing: 0.3,
-    marginBottom: 40,
+    marginBottom: 24,
   },
-  cards: { gap: 16 },
-  card: {
+
+  twoColWrap: {
+    width: "100%",
+    minHeight: 420,
+    display: "flex",
+  },
+  row: {
     flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 20,
+    alignItems: "stretch",
   },
-  iconWrap: {
-    width: 54,
-    height: 54,
-    borderRadius: 6,
-    alignItems: "center",
+  stack: {
+    flexDirection: "column",
+  },
+  colCard: {
+    flex: 1,
+    minHeight: 420,
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 28,
+    justifyContent: "center",
+    // shadow for iOS
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6, // android
+  },
+  leftInner: {
+    flex: 1,
     justifyContent: "center",
   },
-  cardTitle: { fontSize: 18, fontWeight: "800", letterSpacing: -0.3 },
-  cardDesc: { fontSize: 12, lineHeight: 17, marginTop: 4 },
+  rightInner: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  textBlock: {
+    maxWidth: 520,
+  },
+  colTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    letterSpacing: -0.5,
+    marginBottom: 8,
+  },
+  colDesc: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  divider: {
+    width: 2,
+    borderRadius: 2,
+    marginHorizontal: 6,
+  },
   footnote: {
-    marginTop: "auto",
+    marginTop: 20,
     textAlign: "center",
     fontSize: 11,
     lineHeight: 16,
