@@ -25,6 +25,7 @@ async function probeImage(url: string) {
     return await new Promise<boolean>((resolve) => {
       try {
         const img = new (window as any).Image();
+        img.referrerPolicy = "no-referrer";
         let done = false;
         const onOK = () => {
           if (done) return;
@@ -37,15 +38,15 @@ async function probeImage(url: string) {
           resolve(false);
         };
         const t = setTimeout(() => onFail(), 4000);
-        img.onload = () => {
+        .onload = () => {
           clearTimeout(t);
           onOK();
         };
-        img.onerror = () => {
+        .onerror = () => {
           clearTimeout(t);
           onFail();
         };
-        img.src = url;
+        .src = url;
       } catch {
         resolve(false);
       }
@@ -167,10 +168,11 @@ export default function BrandGallery() {
         // use native <img> on web for reliable sizing/quality
         <div style={{ width, height: width * 0.85, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <img
-            src={item}
-            alt=""
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", backgroundColor: colors.surface }}
-          />
+  src={item}
+  alt=""
+  referrerPolicy="no-referrer"
+  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", backgroundColor: colors.surface }}
+/>
         </div>
       );
     }
