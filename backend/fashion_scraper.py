@@ -181,6 +181,19 @@ def scrape_collections(limit: int = 40):
     logger.info("fashion: scraped %d collections", len(items))
     return items
 
+def fetch_collection_images(source_id: str):
+    """Fetch the FULL runway gallery (all photos) for one collection's detail page."""
+    html = _fetch(f"/collections/{source_id}")
+    pattern = re.compile(r'src="(/img/news/\d+/(?!w\d+_)[^"]+\.jpg)"')
+    seen = set()
+    images = []
+    for m in pattern.finditer(html):
+        path = m.group(1)
+        if path in seen:
+            continue
+        seen.add(path)
+        images.append(BASE + path)
+    return images
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
