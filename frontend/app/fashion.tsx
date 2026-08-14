@@ -65,7 +65,7 @@ export default function Fashion() {
   }, [items]);
 
   // show only first 6 items as requested (fill empty slots with null)
-  const slots = Array.from({ length: 6 }).map((_, i) => items[i] || null);
+  const slots = items;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
