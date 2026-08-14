@@ -30,6 +30,10 @@ tzdata==2026.3
 # HTTP client (scraper -> Zara ES via proxy)
 requests==2.34.2
 
+# COZA Fashion (fashion-press.net scrape + JA->TR translation)
+beautifulsoup4==4.12.3
+deep-translator==1.11.4
+
 # Testing
 pytest==9.1.1
 httpx==0.28.1
