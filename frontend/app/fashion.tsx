@@ -1,14 +1,15 @@
+// frontend/app/fashion.tsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Image,
-  Linking,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  Dimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -18,6 +19,8 @@ import { api, FashionItem, FashionAnalytics } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { DonutChart, BarChart } from "@/src/components/Charts";
 import { formatDate } from "@/src/utils/format";
+
+const { width } = Dimensions.get("window");
 
 export default function Fashion() {
   const { colors, spacing } = useTheme();
@@ -35,10 +38,7 @@ export default function Fashion() {
     async (refresh = false) => {
       if (refresh) setRefreshing(true);
       try {
-        const [feed, stats] = await Promise.all([
-          api.fashionCollections({ season, limit: 40 }),
-          api.fashionAnalytics(),
-        ]);
+        const [feed, stats] = await Promise.all([api.fashionCollections({ season, limit: 40 }), api.fashionAnalytics()]);
         setItems(feed.items || []);
         setAnalytics(stats);
       } catch {
@@ -56,16 +56,16 @@ export default function Fashion() {
     load();
   }, [load]);
 
-  // Sezon filtre seçenekleri (analytics'ten, season_label -> season eşlemesi için
-  // öğelerden türetiyoruz).
   const seasonChips = useMemo(() => {
     const map = new Map<string, string>();
     items.forEach((it) => {
       if (it.season && it.season_label) map.set(it.season, it.season_label);
     });
-    // Filtre uygulanınca liste daralır; bu yüzden analytics seasons'ı da katalım.
     return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
   }, [items]);
+
+  // show only first 6 items as requested (fill empty slots with null)
+  const slots = Array.from({ length: 6 }).map((_, i) => items[i] || null);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -83,14 +83,15 @@ export default function Fashion() {
           <Text style={[styles.brandLine, { color: colors.onSurface }]}>
             COZA <Text style={{ color: colors.brandSecondary }}>MODA</Text>
           </Text>
-          <Text style={[styles.helper, { color: colors.brandSecondary }]}>
-            Defileler · Sezonlar · Markalar
-          </Text>
+          <Text style={[styles.helper, { color: colors.brandSecondary }]}>Defileler · Sezonlar · Markalar</Text>
         </View>
         <Pressable
           testID="fashion-toggle-stats"
           onPress={() => setShowStats((s) => !s)}
-          style={[styles.statsBtn, { borderColor: showStats ? colors.brand : colors.border, backgroundColor: showStats ? colors.brand : colors.surfaceSecondary }]}
+          style={[
+            styles.statsBtn,
+            { borderColor: showStats ? colors.brand : colors.border, backgroundColor: showStats ? colors.brand : colors.surfaceSecondary },
+          ]}
         >
           <Feather name="pie-chart" size={16} color={showStats ? colors.onBrand : colors.brandSecondary} />
         </Pressable>
@@ -104,11 +105,8 @@ export default function Fashion() {
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />
-          }
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />}
         >
-          {/* İstatistik paneli */}
           {showStats && analytics && (
             <View style={{ paddingHorizontal: spacing.xl, paddingTop: 18 }}>
               <View style={styles.kpiGrid}>
@@ -120,12 +118,7 @@ export default function Fashion() {
               {analytics.seasons.length > 0 && (
                 <>
                   <Text style={[styles.sectionLabel, { color: colors.brandSecondary }]}>SEZON DAĞILIMI</Text>
-                  <DonutChart
-                    data={analytics.seasons.slice(0, 8)}
-                    total={analytics.total}
-                    centerLabel="defile"
-                    centerValue={String(analytics.total)}
-                  />
+                  <DonutChart data={analytics.seasons.slice(0, 8)} total={analytics.total} centerLabel="defile" centerValue={String(analytics.total)} />
                 </>
               )}
               {analytics.brands.length > 0 && (
@@ -139,37 +132,23 @@ export default function Fashion() {
             </View>
           )}
 
-          {/* Sezon filtre çipleri */}
           {seasonChips.length > 0 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 14 }}
-            >
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 14 }}>
               <Chip label="Tümü" active={!season} onPress={() => setSeason(undefined)} colors={colors} />
               {seasonChips.map((s) => (
-                <Chip
-                  key={s.code}
-                  label={s.label}
-                  active={season === s.code}
-                  onPress={() => setSeason((cur) => (cur === s.code ? undefined : s.code))}
-                  colors={colors}
-                />
+                <Chip key={s.code} label={s.label} active={season === s.code} onPress={() => setSeason((cur) => (cur === s.code ? undefined : s.code))} colors={colors} />
               ))}
             </ScrollView>
           )}
 
-          {/* Defile / koleksiyon kartları */}
           {items.length === 0 ? (
             <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
-              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
-                Henüz içerik yok. İçerik her Pazartesi otomatik güncellenir.
-              </Text>
+              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>Henüz içerik yok. İçerik her Pazartesi otomatik güncellenir.</Text>
             </View>
           ) : (
             <View style={[styles.grid, { paddingHorizontal: spacing.xl - 4 }]}>
-              {items.map((it) => (
-                <FashionCard key={it.source_id} item={it} colors={colors} />
+              {slots.map((it, idx) => (
+                <FashionCard key={idx} item={it} colors={colors} />
               ))}
             </View>
           )}
@@ -178,8 +157,7 @@ export default function Fashion() {
             <View style={[styles.note, { backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}>
               <Feather name="info" size={14} color={colors.brandSecondary} />
               <Text style={[styles.noteText, { color: colors.brandSecondary }]}>
-                İçerik fashion-press.net kaynağından derlenir ve Türkçeye çevrilir.
-                Her Pazartesi otomatik güncellenir. Son güncelleme: {formatDate(analytics.last_scrape)}
+                İçerik fashion-press.net kaynağından derlenir ve Türkçeye çevrilir. Her Pazartesi otomatik güncellenir. Son güncelleme: {formatDate(analytics.last_scrape)}
               </Text>
             </View>
           )}
@@ -189,40 +167,32 @@ export default function Fashion() {
   );
 }
 
-function FashionCard({ item, colors }: { item: FashionItem; colors: any }) {
-  const open = () => {
-    if (item.url) Linking.openURL(item.url);
+function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }) {
+  const router = useRouter();
+
+  const openInternal = (it: FashionItem) => {
+    // Pass the collection id and the primary image + title as query params so the gallery can show at least the first image.
+    const img = encodeURIComponent(it.image || "");
+    const title = encodeURIComponent(it.brand_tr || it.title_tr || "");
+    router.push(`/fashion/brand/${encodeURIComponent(it.source_id)}?img=${img}&title=${title}`);
   };
+
+  if (!item) {
+    return (
+      <View style={[styles.card, styles.cardEmpty]}>
+        <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>—</Text>
+      </View>
+    );
+  }
+
   return (
-    <Pressable
-      testID={`fashion-card-${item.source_id}`}
-      onPress={open}
-      style={({ pressed }) => [styles.card, { opacity: pressed ? 0.85 : 1 }]}
-    >
+    <Pressable testID={`fashion-card-${item.source_id}`} onPress={() => openInternal(item)} style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}>
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
-        {item.image ? (
-          <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
-        ) : (
-          <View style={styles.imagePlaceholder}>
-            <Feather name="image" size={22} color={colors.brandSecondary} />
-          </View>
-        )}
-        {!!item.season && (
-          <View style={[styles.seasonTag, { backgroundColor: colors.brand }]}>
-            <Text style={{ color: colors.onBrand, fontSize: 9, fontWeight: "800", letterSpacing: 0.5 }}>
-              {item.season}
-            </Text>
-          </View>
-        )}
+        {item.image ? <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" /> : <View style={styles.imagePlaceholder}><Feather name="image" size={22} color={colors.brandSecondary} /></View>}
       </View>
       <Text numberOfLines={1} style={[styles.cardBrand, { color: colors.onSurface }]}>
         {item.brand_tr || item.title_tr}
       </Text>
-      {!!item.season_label && (
-        <Text numberOfLines={1} style={[styles.cardSeason, { color: colors.brandSecondary }]}>
-          {item.season_label}
-        </Text>
-      )}
     </Pressable>
   );
 }
@@ -236,31 +206,10 @@ function Kpi({ label, value, colors }: { label: string; value: string; colors: a
   );
 }
 
-function Chip({
-  label,
-  active,
-  onPress,
-  colors,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-  colors: any;
-}) {
+function Chip({ label, active, onPress, colors }: { label: string; active: boolean; onPress: () => void; colors: any }) {
   return (
-    <Pressable
-      onPress={onPress}
-      style={[
-        styles.chip,
-        {
-          backgroundColor: active ? colors.brand : colors.surfaceSecondary,
-          borderColor: active ? colors.brand : colors.border,
-        },
-      ]}
-    >
-      <Text style={{ color: active ? colors.onBrand : colors.onSurface, fontSize: 12, fontWeight: "700" }}>
-        {label}
-      </Text>
+    <Pressable onPress={onPress} style={[styles.chip, { backgroundColor: active ? colors.brand : colors.surfaceSecondary, borderColor: active ? colors.brand : colors.border }]}>
+      <Text style={{ color: active ? colors.onBrand : colors.onSurface, fontSize: 12, fontWeight: "700" }}>{label}</Text>
     </Pressable>
   );
 }
@@ -297,28 +246,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
-  card: { width: "48%", marginBottom: 22 },
+  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
+  // 3 columns layout
+  card: { width: "32%", marginBottom: 22 },
+  cardEmpty: { alignItems: "center", justifyContent: "center", height: 220, backgroundColor: "transparent", borderRadius: 4 },
   imageWrap: {
     width: "100%",
     aspectRatio: 3 / 4,
     borderRadius: 4,
-    borderWidth: 1,
     overflow: "hidden",
     marginBottom: 8,
   },
   image: { width: "100%", height: "100%" },
   imagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
-  seasonTag: {
-    position: "absolute",
-    top: 8,
-    left: 8,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 2,
-  },
   cardBrand: { fontSize: 13, fontWeight: "700", letterSpacing: -0.2 },
-  cardSeason: { fontSize: 11, marginTop: 2 },
   note: { flexDirection: "row", gap: 10, padding: 14, borderRadius: 4, marginTop: 20 },
   noteText: { flex: 1, fontSize: 11, lineHeight: 17 },
 });
