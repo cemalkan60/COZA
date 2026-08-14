@@ -42,11 +42,11 @@ async function probeImage(url: string) {
           clearTimeout(t);
           onOK();
         };
-        .onerror = () => {
+        img.onerror = () => {
           clearTimeout(t);
           onFail();
         };
-        .src = url;
+        img.src = url;
       } catch {
         resolve(false);
       }
@@ -168,11 +168,11 @@ export default function BrandGallery() {
         // use native <img> on web for reliable sizing/quality
         <div style={{ width, height: width * 0.85, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <img
-  src={item}
-  alt=""
-  referrerPolicy="no-referrer"
-  style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", backgroundColor: colors.surface }}
-/>
+            src={item}
+            alt=""
+            referrerPolicy="no-referrer"
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", backgroundColor: colors.surface }}
+          />
         </div>
       );
     }
