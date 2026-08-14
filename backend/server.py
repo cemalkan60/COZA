@@ -59,6 +59,10 @@ class FavoriteBody(BaseModel):
     product_id: str = Field(min_length=1, max_length=64)
 
 
+class RemovedBody(BaseModel):
+    removed: bool
+
+
 class ProxyKeyBody(BaseModel):
     proxy_api_key: str = Field(min_length=8, max_length=256)
     storage_note: str = Field(default="", max_length=200)
@@ -333,6 +337,31 @@ async def get_product(product_id: str):
     return p
 
 
+@api.post("/products/{product_id}/removed")
+async def set_product_removed(
+    product_id: str,
+    body: RemovedBody,
+    user: Annotated[dict, Depends(get_current_user)],
+):
+    """Ürünü 'mağazadan kalktı' olarak işaretle/işareti kaldır.
+
+    Kalktı olarak işaretlenen ürünler katalogda görünmeye devam eder
+    ama hiçbir analiz değerine dahil edilmez.
+    """
+    result = await db.products.update_one(
+        {"product_id": product_id},
+        {"$set": {
+            "removed": body.removed,
+            "removed_at": datetime.now(timezone.utc).isoformat() if body.removed else None,
+            "removed_by": user.get("email") if body.removed else None,
+        }},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(404, "Ürün bulunamadı.")
+    p = await db.products.find_one({"product_id": product_id}, {"_id": 0})
+    return p
+
+
 @api.get("/products/{product_id}/composition")
 async def product_composition(product_id: str):
     p = await db.products.find_one({"product_id": product_id})
@@ -357,16 +386,20 @@ async def product_composition(product_id: str):
 
 @api.get("/filters")
 async def filters():
-    categories = await db.products.distinct("category")
-    departments = await db.products.distinct("department")
-    origins = await db.products.distinct("origin")
+    not_removed = {"removed": {"$ne": True}}
+    categories = await db.products.distinct("category", not_removed)
+    departments = await db.products.distinct("department", not_removed)
+    families = await db.products.distinct("family", not_removed)
+    origins = await db.products.distinct("origin", not_removed)
     bounds = await db.products.aggregate([
+        {"$match": not_removed},
         {"$group": {"_id": None, "min": {"$min": "$price"}, "max": {"$max": "$price"}}}
     ]).to_list(length=1)
     price = bounds[0] if bounds else {"min": 0, "max": 0}
     return {
         "categories": sorted(c for c in categories if c),
         "departments": sorted(d for d in departments if d),
+        "families": sorted(f for f in families if f),
         "origins": sorted(o for o in origins if o),
         "price_min": price.get("min", 0) or 0,
         "price_max": price.get("max", 0) or 0,
@@ -374,12 +407,22 @@ async def filters():
 
 
 @api.get("/analytics")
-async def analytics(department: Optional[str] = None, category: Optional[str] = None):
-    match: dict = {}
+async def analytics(
+    department: Optional[str] = None,
+    category: Optional[str] = None,
+    family: Optional[str] = None,
+    origin: Optional[str] = None,
+):
+    # Mağazadan kalkan ürünler hiçbir analiz değerine dahil edilmez.
+    match: dict = {"removed": {"$ne": True}}
     if department:
         match["department"] = department
     if category:
         match["category"] = category
+    if family:
+        match["family"] = family
+    if origin:
+        match["origin"] = origin
     total = await db.products.count_documents(match)
     origin_dist = await db.products.aggregate([
         {"$match": match},
@@ -397,12 +440,23 @@ async def analytics(department: Optional[str] = None, category: Optional[str] = 
                     "min": {"$min": "$price"}, "max": {"$max": "$price"}}}
     ]).to_list(length=1)
     supplier_count = len(await db.products.distinct("supplier_code", match))
+    # Üretici kodu dökümü: seçili filtreye giren her üreticinin kodu ve ürün adedi.
+    manufacturer_dist = await db.products.aggregate([
+        {"$match": {**match, "manufacturer_code": {"$ne": ""}}},
+        {"$group": {"_id": "$manufacturer_code", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]).to_list(length=500)
+    manufacturer_breakdown = [
+        {"code": m["_id"], "count": m["count"]} for m in manufacturer_dist if m["_id"]
+    ]
     ps = price_stats[0] if price_stats else {"avg": 0, "min": 0, "max": 0}
     meta = await db.meta.find_one({"_id": "scrape"}, {"_id": 0}) or {}
     real_origins = [o for o in origin_dist if o["_id"] and o["_id"] != "Belirleniyor…"]
     return {
         "total_products": total,
         "supplier_count": supplier_count,
+        "manufacturer_count": len(manufacturer_breakdown),
+        "manufacturer_breakdown": manufacturer_breakdown,
         "origin_count": len(real_origins),
         "category_count": len([c for c in category_dist if c["_id"]]),
         "avg_price": round(ps.get("avg") or 0, 2),
@@ -421,7 +475,7 @@ async def analytics(department: Optional[str] = None, category: Optional[str] = 
 
 @api.get("/manufacturers")
 async def manufacturers(q: Optional[str] = None, limit: int = Query(30, ge=1, le=100)):
-    match: dict = {"manufacturer_code": {"$ne": ""}}
+    match: dict = {"manufacturer_code": {"$ne": ""}, "removed": {"$ne": True}}
     if q:
         match["manufacturer_code"] = {"$regex": "^" + re.escape(q.strip()), "$options": "i"}
     pipeline = [
@@ -449,7 +503,7 @@ async def manufacturers(q: Optional[str] = None, limit: int = Query(30, ge=1, le
 
 @api.get("/analytics/manufacturer/{code}")
 async def manufacturer_analytics(code: str):
-    match = {"manufacturer_code": code}
+    match = {"manufacturer_code": code, "removed": {"$ne": True}}
     total = await db.products.count_documents(match)
     if total == 0:
         raise HTTPException(404, "Bu koda ait ürün bulunamadı.")

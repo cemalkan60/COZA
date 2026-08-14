@@ -22,10 +22,10 @@ import { ProductCard } from "@/src/components/ProductCard";
 const LIMIT = 24;
 
 const SORT_OPTIONS = [
-  { key: "featured", label: "Ã–ne Ã‡Ä±kanlar" },
+  { key: "featured", label: "Öne Çıkanlar" },
   { key: "price_asc", label: "Fiyat: Artan" },
   { key: "price_desc", label: "Fiyat: Azalan" },
-  { key: "name", label: "Ä°sim" },
+  { key: "name", label: "İsim" },
 ];
 
 export default function Catalog() {
@@ -174,7 +174,7 @@ export default function Catalog() {
     minPrice || maxPrice
       ? {
           key: "price",
-          label: `${minPrice ?? "0"}â‚º - ${maxPrice ?? "âˆ"}â‚º`,
+          label: `${minPrice ?? "0"}₺ - ${maxPrice ?? "∞"}₺`,
         }
       : null,
     sort ? { key: "sort", label: SORT_OPTIONS.find((s) => s.key === sort)?.label || sort } : null,
@@ -248,7 +248,7 @@ export default function Catalog() {
           ))}
         </ScrollView>
         <Text style={[styles.resultText, { color: colors.brandSecondary }]}>
-          {loading ? "â€¦" : `${total} Ã¼rÃ¼n`}
+          {loading ? "…" : `${total} ürün`}
         </Text>
       </View>
 
@@ -259,7 +259,7 @@ export default function Catalog() {
       ) : error ? (
         <View style={styles.center}>
           <Text style={{ color: colors.onSurface, fontSize: fontSize.lg, fontWeight: "600" }}>
-            ÃœrÃ¼nler yÃ¼klenemedi.
+            Ürünler yüklenemedi.
           </Text>
           <Pressable testID="retry" onPress={() => load("initial")} style={[styles.retry, { backgroundColor: colors.brand }]}>
             <Text style={{ color: colors.onBrand, fontWeight: "700" }}>Tekrar Dene</Text>
@@ -268,7 +268,7 @@ export default function Catalog() {
       ) : items.length === 0 ? (
         <View style={styles.center}>
           <Feather name="search" size={40} color={colors.borderStrong} />
-          <Text style={{ color: colors.onSurfaceSecondary, marginTop: 12 }}>ÃœrÃ¼n bulunamadÄ±.</Text>
+          <Text style={{ color: colors.onSurfaceSecondary, marginTop: 12 }}>Ürün bulunamadı.</Text>
         </View>
       ) : (
         <FlatList
@@ -329,7 +329,7 @@ export default function Catalog() {
 
               {/* Origin */}
               {filterOptions && filterOptions.origins.length > 0 && (
-                <FilterSection title="Ãœretim Yeri">
+                <FilterSection title="Üretim Yeri">
                   <ChipRow
                     options={filterOptions.origins}
                     selected={draftOrigin}
@@ -340,7 +340,7 @@ export default function Catalog() {
               )}
 
               {/* Price range */}
-              <FilterSection title="Fiyat AralÄ±ÄŸÄ±">
+              <FilterSection title="Fiyat Aralığı">
                 <View style={styles.priceRow}>
                   <TextInput
                     value={draftMin}
@@ -350,7 +350,7 @@ export default function Catalog() {
                     keyboardType="numeric"
                     style={[styles.priceInput, { borderColor: colors.border, color: colors.onSurface }]}
                   />
-                  <Text style={{ color: colors.brandSecondary }}>â€”</Text>
+                  <Text style={{ color: colors.brandSecondary }}>—</Text>
                   <TextInput
                     value={draftMax}
                     onChangeText={setDraftMax}
@@ -363,7 +363,7 @@ export default function Catalog() {
               </FilterSection>
 
               {/* Sort */}
-              <FilterSection title="SÄ±ralama">
+              <FilterSection title="Sıralama">
                 <ChipRow
                   options={SORT_OPTIONS.map((s) => s.label)}
                   selected={SORT_OPTIONS.find((s) => s.key === draftSort)?.label}
