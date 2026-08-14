@@ -192,7 +192,7 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
         {item.image ? (
           Platform.OS === "web" ? (
             <div style={{ width: "100%", aspectRatio: "3/4", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: 4 }}>
-              <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <img src={item.image} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             </div>
           ) : (
             <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
