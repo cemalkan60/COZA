@@ -23,93 +23,38 @@ export default function Hub() {
   const isNarrow = width < 760;
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      <View
-        style={{
-          flex: 1,
-          paddingHorizontal: spacing.xl,
-          paddingTop: insets.top + 24,
-          paddingBottom: insets.bottom + 24,
-          justifyContent: "center",
-        }}
-      >
-        {/* Sign out kept as-is */}
-        <View style={{ position: "absolute", top: 8, right: 0, padding: 8, zIndex: 2 }}>
-          {/* sign out handled elsewhere; leaving placeholder so layout doesn't shift */}
-        </View>
-
-        <View style={{ alignItems: "center", marginTop: 8, marginBottom: 8 }} />
-
-        {/* Two-column layout simplified */}
-        <View
-          style={[
-            styles.twoColWrap,
-            { maxWidth: 1100, alignSelf: "center", gap: 12 },
-            isNarrow ? styles.stack : styles.row,
-          ]}
-        >
-          {/* LEFT: COZA ANALYSIS (only title) */}
+    <View style={[styles.page, { backgroundColor: colors.surface }]}>
+      <View style={[styles.inner, { paddingTop: insets.top + 24, paddingHorizontal: spacing.xl }]}>
+        <View style={[styles.row, isNarrow && styles.column]}>
           <Pressable
             testID="hub-analysis"
             onPress={() => go("/(tabs)")}
-            style={({ pressed }) => [
-              styles.simpleCard,
-              {
-                backgroundColor: colors.surfaceSecondary,
-                opacity: pressed ? 0.95 : 1,
-              },
-            ]}
+            style={({ pressed }) => [{ paddingVertical: 40, paddingHorizontal: 20 }]}
           >
-            <Text style={[styles.onlyTitle, { color: colors.onSurface }]}>COZA ANALYSIS</Text>
+            <Text style={[styles.bigText, { color: colors.onSurface }]}>COZA ANALYSIS</Text>
           </Pressable>
 
-          {/* RIGHT: COZA FASHION (only title) */}
           <Pressable
             testID="hub-fashion"
             onPress={() => go("/fashion")}
-            style={({ pressed }) => [
-              styles.simpleCard,
-              {
-                backgroundColor: colors.surfaceSecondary,
-                opacity: pressed ? 0.95 : 1,
-              },
-            ]}
+            style={({ pressed }) => [{ paddingVertical: 40, paddingHorizontal: 20 }]}
           >
-            <Text style={[styles.onlyTitle, { color: colors.onSurface }]}>COZA FASHION</Text>
+            <Text style={[styles.bigText, { color: colors.onSurface }]}>COZA FASHION</Text>
           </Pressable>
         </View>
-
-        {/* Footnote removed per request (if you want it back, say) */}
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  twoColWrap: {
-    width: "100%",
-    minHeight: 360,
-    display: "flex",
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "stretch",
-  },
-  stack: {
-    flexDirection: "column",
-  },
-  simpleCard: {
-    flex: 1,
-    minHeight: 320,
-    borderRadius: 8,
-    padding: 20,
-    justifyContent: "center",
-    alignItems: "flex-start",
-  },
-  onlyTitle: {
-    fontSize: 30,
+  page: { flex: 1 },
+  inner: { flex: 1, justifyContent: "center", alignItems: "center" },
+  row: { width: "100%", maxWidth: 1100, flexDirection: "row", justifyContent: "space-between" },
+  column: { flexDirection: "column", alignItems: "flex-start" },
+  bigText: {
+    fontSize: 40,
     fontWeight: "900",
-    letterSpacing: -0.5,
-    paddingLeft: 8,
+    letterSpacing: -1,
   },
 });
