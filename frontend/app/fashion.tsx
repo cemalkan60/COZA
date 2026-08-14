@@ -10,6 +10,7 @@ import {
   Text,
   View,
   Dimensions,
+  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -64,7 +65,7 @@ export default function Fashion() {
     return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
   }, [items]);
 
-  // show only first 6 items as requested (fill empty slots with null)
+  // show all items (no 6-limit)
   const slots = items;
 
   return (
@@ -188,7 +189,19 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
   return (
     <Pressable testID={`fashion-card-${item.source_id}`} onPress={() => openInternal(item)} style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}>
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
-        {item.image ? <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" /> : <View style={styles.imagePlaceholder}><Feather name="image" size={22} color={colors.brandSecondary} /></View>}
+        {item.image ? (
+          Platform.OS === "web" ? (
+            <div style={{ width: "100%", aspectRatio: "3/4", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: 4 }}>
+              <img src={item.image} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            </div>
+          ) : (
+            <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+          )
+        ) : (
+          <View style={styles.imagePlaceholder}>
+            <Feather name="image" size={22} color={colors.brandSecondary} />
+          </View>
+        )}
       </View>
       <Text numberOfLines={1} style={[styles.cardBrand, { color: colors.onSurface }]}>
         {item.brand_tr || item.title_tr}
@@ -247,8 +260,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
-  // 3 columns layout
-  card: { width: "32%", marginBottom: 22 },
+  // 6 columns layout
+  card: { width: "16.6%", marginBottom: 18 },
   cardEmpty: { alignItems: "center", justifyContent: "center", height: 220, backgroundColor: "transparent", borderRadius: 4 },
   imageWrap: {
     width: "100%",
