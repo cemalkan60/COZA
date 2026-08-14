@@ -15,8 +15,12 @@ import { useTheme } from "@/src/theme/ThemeContext";
 
 const { width } = Dimensions.get("window");
 
+// SSR-safe image probe
 async function probeImage(url: string) {
   if (!url) return false;
+  // If server-side render, don't try DOM APIs
+  if (typeof window === "undefined") return false;
+
   if (Platform.OS === "web") {
     return await new Promise<boolean>((resolve) => {
       try {
@@ -32,10 +36,7 @@ async function probeImage(url: string) {
           done = true;
           resolve(false);
         };
-        img.onload = onOK;
-        img.onerror = onFail;
         const t = setTimeout(() => onFail(), 4000);
-        img.src = url;
         img.onload = () => {
           clearTimeout(t);
           onOK();
@@ -44,6 +45,7 @@ async function probeImage(url: string) {
           clearTimeout(t);
           onFail();
         };
+        img.src = url;
       } catch {
         resolve(false);
       }
@@ -113,4 +115,85 @@ export default function BrandGallery() {
         const fetchedImgs: string[] = [];
         if (base) {
           try {
-            const res = await fetch(`${base}/api/f
+            const res = await fetch(`${base}/api/fashion/collections/${encodeURIComponent(id)}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data.images)) fetchedImgs.push(...data.images);
+              if (Array.isArray(data.items)) {
+                data.items.forEach((it: any) => {
+                  if (it.image) fetchedImgs.push(it.image);
+                  if (Array.isArray(it.images)) fetchedImgs.push(...it.images);
+                });
+              }
+            }
+          } catch {
+            // ignore fetch errors (best-effort)
+          }
+        }
+
+        const merged = Array.from(
+          new Set([...(resolvedPrimary ? [resolvedPrimary] : []), ...fetchedImgs.filter(Boolean)])
+        );
+
+        if (!cancelled) {
+          if (merged.length) setImages(merged);
+          else if (primaryImg && !images.length) setImages([resolvedPrimary]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    fetchAndResolve();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, primaryImg]);
+
+  if (loading) return <ActivityIndicator style={{ marginTop: 60 }} color={colors.brand} />;
+
+  if (!images.length) {
+    return (
+      <View style={[styles.noContent, { backgroundColor: colors.surface }]}>
+        <Text style={{ color: colors.brandSecondary }}>Bu koleksiyona ait görsel bulunamadı.</Text>
+      </View>
+    );
+  }
+
+  const renderItem = ({ item }: { item: string }) => {
+    if (Platform.OS === "web") {
+      return (
+        // use native <img> on web for reliable sizing/quality
+        <div style={{ width, height: width * 0.85, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <img
+            src={item}
+            alt=""
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", backgroundColor: colors.surface }}
+          />
+        </div>
+      );
+    }
+    return <RNImage source={{ uri: item }} style={{ width, height: width * 0.85 }} resizeMode="contain" />;
+  };
+
+  return (
+    <View style={[styles.container, { backgroundColor: colors.surface }]}>
+      {title ? <Text style={[styles.title, { color: colors.onSurface }]}>{decodeURIComponent(title)}</Text> : null}
+      <FlatList
+        data={images}
+        keyExtractor={(_, i) => String(i)}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        renderItem={({ item }) => renderItem({ item })}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, alignItems: "center", justifyContent: "flex-start" },
+  title: { fontSize: 18, fontWeight: "800", marginTop: 16, marginBottom: 8 },
+  noContent: { flex: 1, alignItems: "center", justifyContent: "center" },
+});
