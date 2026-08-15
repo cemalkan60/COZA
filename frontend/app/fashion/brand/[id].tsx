@@ -4,16 +4,18 @@ import {
   View,
   FlatList,
   Image as RNImage,
-  Dimensions,
   ActivityIndicator,
   StyleSheet,
   Text,
   Platform,
+  Pressable,
+  Modal,
+  useWindowDimensions,
 } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
-
-const { width } = Dimensions.get("window");
 
 // SSR-safe image probe
 async function probeImage(url: string) {
@@ -90,14 +92,20 @@ async function resolveBest(original: string) {
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
-  const { colors } = useTheme();
+  const { colors, spacing } = useTheme();
+  const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { width } = useWindowDimensions();
+
   const id = (params.id as string) || "";
   const primaryImgParam = (params.img as string) || "";
-  const title = (params.title as string) || "";
+  const titleParam = (params.title as string) || "";
+  const title = titleParam ? decodeURIComponent(titleParam) : "";
 
   const primaryImg = primaryImgParam ? decodeURIComponent(primaryImgParam) : "";
   const [images, setImages] = useState<string[]>(primaryImg ? [primaryImg] : []);
   const [loading, setLoading] = useState(true);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -152,50 +160,170 @@ export default function BrandGallery() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, primaryImg]);
 
-  if (loading) return <ActivityIndicator style={{ marginTop: 60 }} color={colors.brand} />;
+  const columns = width >= 1200 ? 6 : width >= 900 ? 5 : width >= 700 ? 4 : width >= 480 ? 3 : 2;
+  const gap = 10;
+  const gridPad = spacing.xl;
+  const cardWidth = (width - gridPad * 2 - gap * (columns - 1)) / columns;
 
-  if (!images.length) {
+  const header = (
+    <View
+      style={[
+        styles.header,
+        { paddingTop: insets.top + 8, paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
+      ]}
+    >
+      <Pressable testID="brand-back" onPress={() => router.back()} hitSlop={10}>
+        <Feather name="chevron-left" size={26} color={colors.onSurface} />
+      </Pressable>
+      <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.onSurface }]}>
+        {title || "Koleksiyon"}
+      </Text>
+      <View style={{ width: 26 }} />
+    </View>
+  );
+
+  if (loading) {
     return (
-      <View style={[styles.noContent, { backgroundColor: colors.surface }]}>
-        <Text style={{ color: colors.brandSecondary }}>Bu koleksiyona ait görsel bulunamadı.</Text>
+      <View style={{ flex: 1, backgroundColor: colors.surface }}>
+        {header}
+        <ActivityIndicator style={{ marginTop: 60 }} color={colors.brand} />
       </View>
     );
   }
 
-  const renderItem = ({ item }: { item: string }) => {
-    if (Platform.OS === "web") {
-      return (
-        // use native <img> on web for reliable sizing/quality
-        <div style={{ width, height: width * 0.85, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <img
-            src={item}
-            alt=""
-            referrerPolicy="no-referrer"
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", backgroundColor: colors.surface }}
-          />
-        </div>
-      );
-    }
-    return <RNImage source={{ uri: item }} style={{ width, height: width * 0.85 }} resizeMode="contain" />;
-  };
+  if (!images.length) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.surface }}>
+        {header}
+        <View style={styles.noContent}>
+          <Text style={{ color: colors.brandSecondary }}>Bu koleksiyona ait görsel bulunamadı.</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surface }]}>
-      {title ? <Text style={[styles.title, { color: colors.onSurface }]}>{decodeURIComponent(title)}</Text> : null}
+      {header}
       <FlatList
         data={images}
         keyExtractor={(_, i) => String(i)}
-        horizontal
-        pagingEnabled
-        showsHorizontalScrollIndicator={false}
-        renderItem={({ item }) => renderItem({ item })}
+        key={columns}
+        numColumns={columns}
+        contentContainerStyle={{ padding: gridPad, paddingTop: 16 }}
+        columnWrapperStyle={columns > 1 ? { gap } : undefined}
+        renderItem={({ item, index }) => (
+          <Pressable
+            testID={`brand-thumb-${index}`}
+            onPress={() => setViewerIndex(index)}
+            style={({ pressed }) => [{ width: cardWidth, marginBottom: gap, opacity: pressed ? 0.85 : 1 }]}
+          >
+            {Platform.OS === "web" ? (
+              <div
+                style={{
+                  width: cardWidth,
+                  aspectRatio: "3/4",
+                  overflow: "hidden",
+                  backgroundColor: colors.surfaceTertiary,
+                  borderRadius: 4,
+                }}
+              >
+                <img
+                  src={item}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                />
+              </div>
+            ) : (
+              <RNImage
+                source={{ uri: item }}
+                style={{ width: cardWidth, aspectRatio: 3 / 4, backgroundColor: colors.surfaceTertiary, borderRadius: 4 }}
+                resizeMode="cover"
+              />
+            )}
+          </Pressable>
+        )}
       />
+
+      <Modal
+        visible={viewerIndex !== null}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setViewerIndex(null)}
+      >
+        <View style={styles.viewerOverlay}>
+          <Pressable
+            testID="brand-viewer-close"
+            onPress={() => setViewerIndex(null)}
+            style={[styles.viewerClose, { top: insets.top + 12 }]}
+            hitSlop={12}
+          >
+            <Feather name="x" size={26} color="#fff" />
+          </Pressable>
+          {viewerIndex !== null && (
+            <FlatList
+              data={images}
+              keyExtractor={(_, i) => String(i)}
+              horizontal
+              pagingEnabled
+              showsHorizontalScrollIndicator={false}
+              initialScrollIndex={viewerIndex}
+              getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
+              renderItem={({ item }) =>
+                Platform.OS === "web" ? (
+                  <div
+                    style={{
+                      width,
+                      height: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <img
+                      src={item}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+                    />
+                  </div>
+                ) : (
+                  <View style={{ width, height: "100%", alignItems: "center", justifyContent: "center" }}>
+                    <RNImage source={{ uri: item }} style={{ width, height: "100%" }} resizeMode="contain" />
+                  </View>
+                )
+              }
+            />
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "flex-start" },
-  title: { fontSize: 18, fontWeight: "800", marginTop: 16, marginBottom: 8 },
+  container: { flex: 1 },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+  },
+  headerTitle: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: "800", letterSpacing: 0.2 },
   noContent: { flex: 1, alignItems: "center", justifyContent: "center" },
+  viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" },
+  viewerClose: {
+    position: "absolute",
+    right: 16,
+    zIndex: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
 });

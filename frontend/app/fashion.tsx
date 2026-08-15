@@ -96,6 +96,13 @@ export default function Fashion() {
         >
           <Feather name="pie-chart" size={16} color={showStats ? colors.onBrand : colors.brandSecondary} />
         </Pressable>
+        <Pressable
+          testID="fashion-open-analytics"
+          onPress={() => router.push("/(tabs)/analytics" as any)}
+          style={[styles.statsBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
+        >
+          <Feather name="bar-chart-2" size={16} color={colors.brandSecondary} />
+        </Pressable>
       </View>
 
       {loading ? (

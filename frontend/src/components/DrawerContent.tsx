@@ -1,22 +1,26 @@
 import React, { useEffect, useState } from "react";
 import { Pressable, StyleSheet, Text, View, ScrollView } from "react-native";
 import { DrawerContentScrollView } from "@react-navigation/drawer";
+import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { api } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { Logo } from "@/src/components/Logo";
 
-const NAV: { route: string; label: string; icon: any }[] = [
+const NAV: { route: string; label: string; icon: any; external?: boolean }[] = [
   { route: "index", label: "Katalog", icon: "grid" },
   { route: "new", label: "Yeni Gelenler", icon: "zap" },
   { route: "analytics", label: "Analiz", icon: "pie-chart" },
   { route: "favorites", label: "Favoriler", icon: "heart" },
   { route: "profile", label: "Profil", icon: "user" },
+  { route: "/fashion", label: "Moda", icon: "camera", external: true },
+  { route: "/hub", label: "Ana Sayfa", icon: "home", external: true },
 ];
 
 export function DrawerContent(props: any) {
   const { colors } = useTheme();
+  const router = useRouter();
   const [categories, setCategories] = useState<string[]>([]);
   const [origins, setOrigins] = useState<string[]>([]);
   const current = props.state?.routeNames?.[props.state?.index] ?? "index";
@@ -36,6 +40,11 @@ export function DrawerContent(props: any) {
     props.navigation.closeDrawer();
   };
 
+  const goExternal = (href: string) => {
+    props.navigation.closeDrawer();
+    router.push(href as any);
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       <DrawerContentScrollView {...props} contentContainerStyle={{ paddingTop: 8 }}>
@@ -43,28 +52,31 @@ export function DrawerContent(props: any) {
           <Logo size={26} />
         </View>
 
-        {NAV.map((n) => {
-          const active = current === n.route;
+        {NAV.map((n, i) => {
+          const active = !n.external && current === n.route;
+          const showDivider = n.external && !NAV[i - 1]?.external;
           return (
-            <Pressable
-              key={n.route}
-              testID={`drawer-${n.route}`}
-              onPress={() => go(n.route)}
-              style={[styles.navItem, active && { backgroundColor: colors.surfaceSecondary }]}
-            >
-              <Feather name={n.icon} size={18} color={active ? colors.onSurface : colors.brandSecondary} />
-              <Text
-                style={{
-                  color: active ? colors.onSurface : colors.onSurfaceSecondary,
-                  fontWeight: active ? "800" : "600",
-                  fontSize: 15,
-                  marginLeft: 14,
-                  letterSpacing: 0.2,
-                }}
+            <React.Fragment key={n.route}>
+              {showDivider && <View style={[styles.divider, { backgroundColor: colors.divider }]} />}
+              <Pressable
+                testID={`drawer-${n.route.replace(/\W/g, "")}`}
+                onPress={() => (n.external ? goExternal(n.route) : go(n.route))}
+                style={[styles.navItem, active && { backgroundColor: colors.surfaceSecondary }]}
               >
-                {n.label}
-              </Text>
-            </Pressable>
+                <Feather name={n.icon} size={18} color={active ? colors.onSurface : colors.brandSecondary} />
+                <Text
+                  style={{
+                    color: active ? colors.onSurface : colors.onSurfaceSecondary,
+                    fontWeight: active ? "800" : "600",
+                    fontSize: 15,
+                    marginLeft: 14,
+                    letterSpacing: 0.2,
+                  }}
+                >
+                  {n.label}
+                </Text>
+              </Pressable>
+            </React.Fragment>
           );
         })}
 
@@ -110,6 +122,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     marginHorizontal: 8,
     borderRadius: 6,
+  },
+  divider: {
+    height: 1,
+    marginHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 8,
   },
   section: {
     fontSize: 10,
