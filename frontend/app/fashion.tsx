@@ -18,7 +18,6 @@ import { Feather } from "@expo/vector-icons";
 
 import { api, FashionItem, FashionAnalytics } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
-import { DonutChart, BarChart } from "@/src/components/Charts";
 import { formatDate } from "@/src/utils/format";
 import { resolveBestImage } from "@/src/utils/fashionImage";
 
@@ -34,7 +33,6 @@ export default function Fashion() {
   const [season, setSeason] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showStats, setShowStats] = useState(false);
 
   const load = useCallback(
     async (refresh = false) => {
@@ -87,23 +85,6 @@ export default function Fashion() {
           </Text>
           <Text style={[styles.helper, { color: colors.brandSecondary }]}>Defileler · Sezonlar · Markalar</Text>
         </View>
-        <Pressable
-          testID="fashion-toggle-stats"
-          onPress={() => setShowStats((s) => !s)}
-          style={[
-            styles.statsBtn,
-            { borderColor: showStats ? colors.brand : colors.border, backgroundColor: showStats ? colors.brand : colors.surfaceSecondary },
-          ]}
-        >
-          <Feather name="pie-chart" size={16} color={showStats ? colors.onBrand : colors.brandSecondary} />
-        </Pressable>
-        <Pressable
-          testID="fashion-open-analytics"
-          onPress={() => router.push("/(tabs)/analytics" as any)}
-          style={[styles.statsBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
-        >
-          <Feather name="bar-chart-2" size={16} color={colors.brandSecondary} />
-        </Pressable>
       </View>
 
       {loading ? (
@@ -116,31 +97,6 @@ export default function Fashion() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />}
         >
-          {showStats && analytics && (
-            <View style={{ paddingHorizontal: spacing.xl, paddingTop: 18 }}>
-              <View style={styles.kpiGrid}>
-                <Kpi label="KOLEKSİYON" value={String(analytics.total)} colors={colors} />
-                <Kpi label="MARKA" value={String(analytics.brand_count)} colors={colors} />
-                <Kpi label="SEZON" value={String(analytics.seasons.length)} colors={colors} />
-              </View>
-
-              {analytics.seasons.length > 0 && (
-                <>
-                  <Text style={[styles.sectionLabel, { color: colors.brandSecondary }]}>SEZON DAĞILIMI</Text>
-                  <DonutChart data={analytics.seasons.slice(0, 8)} total={analytics.total} centerLabel="defile" centerValue={String(analytics.total)} />
-                </>
-              )}
-              {analytics.brands.length > 0 && (
-                <>
-                  <Text style={[styles.sectionLabel, { color: colors.brandSecondary, marginTop: 24 }]}>
-                    EN ÇOK KOLEKSİYONLU MARKALAR
-                  </Text>
-                  <BarChart data={analytics.brands.slice(0, 8)} />
-                </>
-              )}
-            </View>
-          )}
-
           {seasonChips.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 14 }}>
               <Chip label="Tümü" active={!season} onPress={() => setSeason(undefined)} colors={colors} />
@@ -232,15 +188,6 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
   );
 }
 
-function Kpi({ label, value, colors }: { label: string; value: string; colors: any }) {
-  return (
-    <View style={[styles.kpi, { borderColor: colors.border }]}>
-      <Text style={[styles.kpiValue, { color: colors.onSurface }]}>{value}</Text>
-      <Text style={[styles.kpiLabel, { color: colors.brandSecondary }]}>{label}</Text>
-    </View>
-  );
-}
-
 function Chip({ label, active, onPress, colors }: { label: string; active: boolean; onPress: () => void; colors: any }) {
   return (
     <Pressable onPress={onPress} style={[styles.chip, { backgroundColor: active ? colors.brand : colors.surfaceSecondary, borderColor: active ? colors.brand : colors.border }]}>
@@ -260,19 +207,6 @@ const styles = StyleSheet.create({
   },
   brandLine: { fontSize: 20, fontWeight: "800", letterSpacing: 1 },
   helper: { fontSize: 11, marginTop: 3, letterSpacing: 0.3 },
-  statsBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 4,
-    borderWidth: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  kpiGrid: { flexDirection: "row", gap: 10, marginBottom: 24 },
-  kpi: { flex: 1, borderWidth: 1, borderRadius: 4, paddingVertical: 14, paddingHorizontal: 12 },
-  kpiValue: { fontSize: 18, fontWeight: "800", letterSpacing: -0.3 },
-  kpiLabel: { fontSize: 9, letterSpacing: 1, fontWeight: "700", marginTop: 6 },
-  sectionLabel: { fontSize: 11, fontWeight: "700", letterSpacing: 1.4, marginBottom: 18 },
   chip: {
     borderWidth: 1,
     borderRadius: 999,

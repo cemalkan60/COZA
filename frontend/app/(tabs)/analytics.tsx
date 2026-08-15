@@ -157,6 +157,14 @@ export default function AnalyticsScreen() {
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       {/* Header + filter button */}
       <View style={[styles.header, { paddingHorizontal: spacing.xl }]}>
+        <Pressable
+          testID="analytics-back"
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/hub"))}
+          hitSlop={10}
+          style={styles.backBtn}
+        >
+          <Feather name="chevron-left" size={26} color={colors.onSurface} />
+        </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={[styles.title, { color: colors.onSurface }]}>Analiz</Text>
           <Text style={[styles.helper, { color: colors.brandSecondary }]}>
@@ -475,6 +483,7 @@ function ChipRow({
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 12, paddingBottom: 8 },
+  backBtn: { paddingRight: 2 },
   title: { fontSize: 24, fontWeight: "800", letterSpacing: -0.4 },
   helper: { fontSize: 12, marginTop: 4 },
   filterBtn: {
