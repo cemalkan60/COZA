@@ -140,7 +140,6 @@ async def run_scrape(reason: str = "manual") -> dict:
                 upsert=True,
             )
 
-
         meta = {
             "last_scrape": now_iso,
             "product_count": await db.products.count_documents({}),
@@ -157,7 +156,8 @@ async def run_scrape(reason: str = "manual") -> dict:
         # Enrich real manufacturing origins in the background (per manufacturer code).
         asyncio.create_task(enrich_origins(proxy_key))
         return {"status": "ok", **meta}
-        
+
+
 async def enrich_origins(proxy_key: str = ""):
     """Fetch REAL 'Made in X' origin from zara.es for EVERY product individually."""
     if _enrich_lock.locked():
@@ -425,11 +425,6 @@ async def product_composition(product_id: str):
     update = {"composition": comp}
     if extra.get("origin"):
         update["origin"] = extra["origin"]
-        await db.origins.update_one(
-            {"_id": p.get("manufacturer_code")},
-            {"$set": {"origin": extra["origin"]}},
-            upsert=True,
-        )
     await db.products.update_one({"product_id": product_id}, {"$set": update})
     return {"composition": comp}
 
@@ -606,14 +601,12 @@ async def admin_scrape(admin: Annotated[dict, Depends(require_admin)]):
 
 @api.post("/admin/enrich-origins")
 async def admin_enrich(admin: Annotated[dict, Depends(require_admin)]):
-    """On-demand: fetch REAL origins for manufacturer codes still 'Belirleniyor…'."""
+    """On-demand: fetch REAL origins for products still 'Belirleniyor…'."""
     if _enrich_lock.locked():
         return {"status": "already_running"}
-    known = set(await db.origins.distinct("_id"))
-    codes = [c for c in await db.products.distinct("manufacturer_code") if c]
-    pending = len([c for c in codes if c not in known])
+    pending = await db.products.count_documents({"origin": "Belirleniyor…"})
     asyncio.create_task(enrich_origins(await get_proxy_key()))
-    return {"status": "started", "pending_codes": pending}
+    return {"status": "started", "pending_products": pending}
 
 
 @api.get("/admin/settings")
@@ -713,6 +706,23 @@ async def fashion_collections(
     items = await cursor.to_list(length=limit)
     total = await db.fashion.count_documents(query)
     return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+@api.get("/fashion/collections/{source_id}")
+async def fashion_collection_detail(source_id: str):
+    """Full runway gallery (all photos) for one collection, fetched on demand and cached."""
+    doc = await db.fashion.find_one({"source_id": source_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Koleksiyon bulunamadı.")
+    if doc.get("images"):
+        return {"images": doc["images"]}
+    try:
+        images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, source_id)
+    except Exception:
+        images = []
+    if images:
+        await db.fashion.update_one({"source_id": source_id}, {"$set": {"images": images}})
+    return {"images": images}
 
 
 @api.get("/fashion/analytics")
