@@ -1,5 +1,5 @@
 // frontend/app/fashion/brand/[id].tsx
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   FlatList,
@@ -10,6 +10,7 @@ import {
   Platform,
   Pressable,
   Modal,
+  PanResponder,
   useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -34,6 +35,41 @@ export default function BrandGallery() {
   const [images, setImages] = useState<string[]>(primaryImg ? [primaryImg] : []);
   const [loading, setLoading] = useState(true);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const viewerIndexRef = useRef<number | null>(null);
+  viewerIndexRef.current = viewerIndex;
+  const imagesLengthRef = useRef(0);
+  imagesLengthRef.current = images.length;
+
+  const goPrev = useCallback(() => {
+    setViewerIndex((i) => (i !== null ? Math.max(0, i - 1) : i));
+  }, []);
+  const goNext = useCallback(() => {
+    setViewerIndex((i) => (i !== null ? Math.min(imagesLengthRef.current - 1, i + 1) : i));
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (viewerIndexRef.current === null) return;
+      if (e.key === "ArrowLeft") goPrev();
+      else if (e.key === "ArrowRight") goNext();
+      else if (e.key === "Escape") setViewerIndex(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [goPrev, goNext]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_evt, gesture) =>
+        Math.abs(gesture.dx) > 20 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+      onPanResponderRelease: (_evt, gesture) => {
+        const SWIPE_THRESHOLD = 50;
+        if (gesture.dx <= -SWIPE_THRESHOLD) goNext();
+        else if (gesture.dx >= SWIPE_THRESHOLD) goPrev();
+      },
+    })
+  ).current;
 
   useEffect(() => {
     let cancelled = false;
@@ -180,7 +216,7 @@ export default function BrandGallery() {
         transparent
         onRequestClose={() => setViewerIndex(null)}
       >
-        <View style={styles.viewerOverlay}>
+        <View style={styles.viewerOverlay} {...panResponder.panHandlers}>
           <Pressable
             testID="brand-viewer-close"
             onPress={() => setViewerIndex(null)}
@@ -211,7 +247,7 @@ export default function BrandGallery() {
               {viewerIndex > 0 && (
                 <Pressable
                   testID="brand-viewer-prev"
-                  onPress={() => setViewerIndex((i) => (i !== null ? Math.max(0, i - 1) : i))}
+                  onPress={goPrev}
                   style={[styles.viewerNav, { left: 16 }]}
                   hitSlop={12}
                 >
@@ -221,7 +257,7 @@ export default function BrandGallery() {
               {viewerIndex < images.length - 1 && (
                 <Pressable
                   testID="brand-viewer-next"
-                  onPress={() => setViewerIndex((i) => (i !== null ? Math.min(images.length - 1, i + 1) : i))}
+                  onPress={goNext}
                   style={[styles.viewerNav, { right: 16 }]}
                   hitSlop={12}
                 >
