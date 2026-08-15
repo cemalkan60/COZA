@@ -194,6 +194,9 @@ export default function Catalog() {
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       {/* Search + filter button */}
       <View style={[styles.searchWrap, { paddingHorizontal: spacing.lg }]}>
+        <Pressable testID="catalog-back" onPress={() => router.replace("/hub")} hitSlop={10} style={styles.backBtn}>
+          <Feather name="chevron-left" size={22} color={colors.onSurface} />
+        </Pressable>
         <View style={[styles.search, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
           <Feather name="search" size={16} color={colors.brandSecondary} />
           <TextInput
@@ -448,6 +451,7 @@ function ChipRow({
 
 const styles = StyleSheet.create({
   searchWrap: { marginTop: 10, marginBottom: 10, flexDirection: "row", gap: 8, alignItems: "center" },
+  backBtn: { paddingRight: 2 },
   search: {
     flex: 1,
     flexDirection: "row",
