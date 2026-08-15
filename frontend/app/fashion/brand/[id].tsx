@@ -16,86 +16,14 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
-
-// SSR-safe image probe
-async function probeImage(url: string) {
-  if (!url) return false;
-  // If server-side render, don't try DOM APIs
-  if (typeof window === "undefined") return false;
-
-  if (Platform.OS === "web") {
-    return await new Promise<boolean>((resolve) => {
-      try {
-        const img = new (window as any).Image();
-        img.referrerPolicy = "no-referrer";
-        let done = false;
-        const onOK = () => {
-          if (done) return;
-          done = true;
-          resolve(true);
-        };
-        const onFail = () => {
-          if (done) return;
-          done = true;
-          resolve(false);
-        };
-        const t = setTimeout(() => onFail(), 4000);
-        img.onload = () => {
-          clearTimeout(t);
-          onOK();
-        };
-        img.onerror = () => {
-          clearTimeout(t);
-          onFail();
-        };
-        img.src = url;
-      } catch {
-        resolve(false);
-      }
-    });
-  } else {
-    try {
-      // @ts-ignore
-      const ok = await RNImage.prefetch(url);
-      return !!ok;
-    } catch {
-      return false;
-    }
-  }
-}
-
-// Try highest resolution variants first; fall back to the low-res original
-// only if none of the larger sizes are available.
-function makeCandidates(original: string) {
-  if (!original) return [original];
-  const re = /\/w(\d+)_/;
-  const m = original.match(re);
-  const sized: string[] = [];
-  if (m) {
-    ["1200", "1024", "768"].forEach((s) => sized.push(original.replace(re, `/w${s}_`)));
-  } else {
-    sized.push(original.replace("/w300_top", "/w1200_top"));
-    sized.push(original.replace("/w300_top", "/w768_top"));
-  }
-  return Array.from(new Set([...sized, original]));
-}
-
-async function resolveBest(original: string) {
-  const candidates = makeCandidates(original);
-  for (const c of candidates) {
-    if (!c) continue;
-    const ok = await probeImage(c);
-    if (ok) return c;
-  }
-  return original;
-}
+import { resolveBestImage } from "@/src/utils/fashionImage";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
   const { colors, spacing } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
 
   const id = (params.id as string) || "";
   const primaryImgParam = (params.img as string) || "";
@@ -114,7 +42,7 @@ export default function BrandGallery() {
         let resolvedPrimary = primaryImg;
         if (primaryImg) {
           try {
-            resolvedPrimary = await resolveBest(primaryImg);
+            resolvedPrimary = await resolveBestImage(primaryImg);
           } catch {
             resolvedPrimary = primaryImg;
           }
@@ -262,39 +190,49 @@ export default function BrandGallery() {
             <Feather name="x" size={26} color="#fff" />
           </Pressable>
           {viewerIndex !== null && (
-            <FlatList
-              data={images}
-              keyExtractor={(_, i) => String(i)}
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              initialScrollIndex={viewerIndex}
-              getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
-              renderItem={({ item }) =>
-                Platform.OS === "web" ? (
-                  <div
-                    style={{
-                      width,
-                      height: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <img
-                      src={item}
-                      alt=""
-                      referrerPolicy="no-referrer"
-                      style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-                    />
-                  </div>
+            <>
+              <View style={styles.viewerImageWrap}>
+                {Platform.OS === "web" ? (
+                  <img
+                    src={images[viewerIndex]}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                    style={{ maxWidth: "92vw", maxHeight: "88vh", objectFit: "contain" }}
+                  />
                 ) : (
-                  <View style={{ width, height: "100%", alignItems: "center", justifyContent: "center" }}>
-                    <RNImage source={{ uri: item }} style={{ width, height: "100%" }} resizeMode="contain" />
-                  </View>
-                )
-              }
-            />
+                  <RNImage
+                    source={{ uri: images[viewerIndex] }}
+                    style={{ width: width * 0.92, height: height * 0.8 }}
+                    resizeMode="contain"
+                  />
+                )}
+              </View>
+
+              {viewerIndex > 0 && (
+                <Pressable
+                  testID="brand-viewer-prev"
+                  onPress={() => setViewerIndex((i) => (i !== null ? Math.max(0, i - 1) : i))}
+                  style={[styles.viewerNav, { left: 16 }]}
+                  hitSlop={12}
+                >
+                  <Feather name="chevron-left" size={30} color="#fff" />
+                </Pressable>
+              )}
+              {viewerIndex < images.length - 1 && (
+                <Pressable
+                  testID="brand-viewer-next"
+                  onPress={() => setViewerIndex((i) => (i !== null ? Math.min(images.length - 1, i + 1) : i))}
+                  style={[styles.viewerNav, { right: 16 }]}
+                  hitSlop={12}
+                >
+                  <Feather name="chevron-right" size={30} color="#fff" />
+                </Pressable>
+              )}
+
+              <Text style={styles.viewerCounter}>
+                {viewerIndex + 1} / {images.length}
+              </Text>
+            </>
           )}
         </View>
       </Modal>
@@ -315,6 +253,7 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: "800", letterSpacing: 0.2 },
   noContent: { flex: 1, alignItems: "center", justifyContent: "center" },
   viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" },
+  viewerImageWrap: { flex: 1, width: "100%", alignItems: "center", justifyContent: "center" },
   viewerClose: {
     position: "absolute",
     right: 16,
@@ -325,5 +264,29 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  viewerNav: {
+    position: "absolute",
+    top: "50%",
+    marginTop: -24,
+    zIndex: 10,
+    width: 48,
+    height: 48,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  viewerCounter: {
+    position: "absolute",
+    bottom: 24,
+    alignSelf: "center",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+    backgroundColor: "rgba(255,255,255,0.15)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
   },
 });

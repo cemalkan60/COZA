@@ -20,6 +20,7 @@ import { api, FashionItem, FashionAnalytics } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { DonutChart, BarChart } from "@/src/components/Charts";
 import { formatDate } from "@/src/utils/format";
+import { resolveBestImage } from "@/src/utils/fashionImage";
 
 const { width } = Dimensions.get("window");
 
@@ -177,6 +178,20 @@ export default function Fashion() {
 
 function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }) {
   const router = useRouter();
+  const [displayImg, setDisplayImg] = useState<string | undefined>(item?.image);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDisplayImg(item?.image);
+    if (item?.image) {
+      resolveBestImage(item.image).then((best) => {
+        if (!cancelled) setDisplayImg(best);
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [item?.image]);
 
   const openInternal = (it: FashionItem) => {
     // Pass the collection id and the primary image + title as query params so the gallery can show at least the first image.
@@ -196,13 +211,13 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
   return (
     <Pressable testID={`fashion-card-${item.source_id}`} onPress={() => openInternal(item)} style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}>
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
-        {item.image ? (
+        {displayImg ? (
           Platform.OS === "web" ? (
             <div style={{ width: "100%", aspectRatio: "3/4", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: 4 }}>
-              <img src={item.image} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              <img src={displayImg} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             </div>
           ) : (
-            <Image source={{ uri: item.image }} style={styles.image} resizeMode="cover" />
+            <Image source={{ uri: displayImg }} style={styles.image} resizeMode="cover" />
           )
         ) : (
           <View style={styles.imagePlaceholder}>
