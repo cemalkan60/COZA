@@ -46,25 +46,22 @@ async function probeImage(url: string): Promise<boolean> {
   }
 }
 
-// Build higher-resolution candidate URLs for a fashion-press.net thumbnail
-// (e.g. ".../w300_top.jpg" -> try w1200/w1024/w768 before the low-res original).
-function makeCandidates(original: string, sizes: string[] = ["1200", "1024", "768"]): string[] {
+// fashion-press.net only ever serves two variants of a photo: the small
+// "/wNNN_name.jpg" thumbnail and the full-resolution original at the same
+// path with that size prefix stripped (e.g. "/w300_top.jpg" -> "/top.jpg").
+// There is no ladder of in-between sizes, so this is the only upgrade to try.
+function makeCandidates(original: string): string[] {
   if (!original) return [original];
-  const re = /\/w(\d+)_/;
-  const m = original.match(re);
-  const sized: string[] = [];
-  if (m) {
-    sizes.forEach((s) => sized.push(original.replace(re, `/w${s}_`)));
-  } else {
-    sizes.forEach((s) => sized.push(original.replace("/w300_top", `/w${s}_top`)));
-  }
-  return Array.from(new Set([...sized, original]));
+  const re = /\/w\d+_/;
+  if (!re.test(original)) return [original];
+  const fullRes = original.replace(re, "/");
+  return Array.from(new Set([fullRes, original]));
 }
 
-// Try highest resolution variants first; fall back to the low-res original
-// only if none of the larger sizes are available.
-export async function resolveBestImage(original: string, sizes?: string[]): Promise<string> {
-  const candidates = makeCandidates(original, sizes);
+// Try the full-resolution original first; fall back to the low-res thumbnail
+// only if the original isn't reachable.
+export async function resolveBestImage(original: string): Promise<string> {
+  const candidates = makeCandidates(original);
   for (const c of candidates) {
     if (!c) continue;
     const ok = await probeImage(c);
