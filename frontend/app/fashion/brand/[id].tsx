@@ -62,20 +62,20 @@ async function probeImage(url: string) {
   }
 }
 
+// Try highest resolution variants first; fall back to the low-res original
+// only if none of the larger sizes are available.
 function makeCandidates(original: string) {
   if (!original) return [original];
-  const cands = new Set<string>();
-  cands.add(original);
   const re = /\/w(\d+)_/;
   const m = original.match(re);
+  const sized: string[] = [];
   if (m) {
-    const sizes = ["768", "1024", "1200", "0"];
-    sizes.forEach((s) => cands.add(original.replace(re, `/${"w" + s}_`)));
+    ["1200", "1024", "768"].forEach((s) => sized.push(original.replace(re, `/w${s}_`)));
   } else {
-    cands.add(original.replace("/w300_top", "/w768_top"));
-    cands.add(original.replace("/w300_top", "/w1200_top"));
+    sized.push(original.replace("/w300_top", "/w1200_top"));
+    sized.push(original.replace("/w300_top", "/w768_top"));
   }
-  return Array.from(cands);
+  return Array.from(new Set([...sized, original]));
 }
 
 async function resolveBest(original: string) {
