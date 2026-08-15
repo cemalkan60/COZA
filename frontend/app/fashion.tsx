@@ -81,9 +81,8 @@ export default function Fashion() {
         </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={[styles.brandLine, { color: colors.onSurface }]}>
-            COZA <Text style={{ color: colors.brandSecondary }}>MODA</Text>
+            COZA <Text style={{ color: colors.brandSecondary }}>FASHION</Text>
           </Text>
-          <Text style={[styles.helper, { color: colors.brandSecondary }]}>Defileler · Sezonlar · Markalar</Text>
         </View>
       </View>
 
@@ -206,7 +205,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   brandLine: { fontSize: 20, fontWeight: "800", letterSpacing: 1 },
-  helper: { fontSize: 11, marginTop: 3, letterSpacing: 0.3 },
   chip: {
     borderWidth: 1,
     borderRadius: 999,
