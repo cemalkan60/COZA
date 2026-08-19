@@ -3,7 +3,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   FlatList,
-  Image as RNImage,
   ActivityIndicator,
   StyleSheet,
   Text,
@@ -12,6 +11,7 @@ import {
   Modal,
   useWindowDimensions,
 } from "react-native";
+import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -180,30 +180,12 @@ export default function BrandGallery() {
             onPress={() => setViewerIndex(index)}
             style={({ pressed }) => [{ width: cardWidth, marginBottom: gap, opacity: pressed ? 0.85 : 1 }]}
           >
-            {Platform.OS === "web" ? (
-              <div
-                style={{
-                  width: cardWidth,
-                  aspectRatio: "3/4",
-                  overflow: "hidden",
-                  backgroundColor: colors.surfaceTertiary,
-                  borderRadius: 4,
-                }}
-              >
-                <img
-                  src={item}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                />
-              </div>
-            ) : (
-              <RNImage
-                source={{ uri: item }}
-                style={{ width: cardWidth, aspectRatio: 3 / 4, backgroundColor: colors.surfaceTertiary, borderRadius: 4 }}
-                resizeMode="cover"
-              />
-            )}
+            <Image
+              source={{ uri: item }}
+              style={{ width: cardWidth, aspectRatio: 3 / 4, backgroundColor: colors.surfaceTertiary, borderRadius: 4 }}
+              contentFit="cover"
+              transition={220}
+            />
           </Pressable>
         )}
       />
@@ -244,21 +226,12 @@ export default function BrandGallery() {
                 }}
                 renderItem={({ item }) => (
                   <View style={{ width, height, alignItems: "center", justifyContent: "center" }}>
-                    {Platform.OS === "web" ? (
-                      <img
-                        src={item}
-                        alt=""
-                        referrerPolicy="no-referrer"
-                        draggable={false}
-                        style={{ maxWidth: "92vw", maxHeight: "88vh", objectFit: "contain" }}
-                      />
-                    ) : (
-                      <RNImage
-                        source={{ uri: item }}
-                        style={{ width: width * 0.92, height: height * 0.8 }}
-                        resizeMode="contain"
-                      />
-                    )}
+                    <Image
+                      source={{ uri: item }}
+                      style={{ width: width * 0.92, height: height * 0.8 }}
+                      contentFit="contain"
+                      transition={150}
+                    />
                   </View>
                 )}
               />
