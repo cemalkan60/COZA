@@ -136,89 +136,91 @@ export default function FashionSearch() {
         </View>
       </View>
 
-      {/* Gender tabs */}
-      <View style={[styles.tabRow, { paddingHorizontal: spacing.xl, borderBottomColor: colors.divider }]}>
-        {genderTabs.map((g) => {
-          const active = gender === g.value;
-          return (
-            <Pressable
-              key={g.value || "all"}
-              testID={`look-gender-${g.value || "all"}`}
-              onPress={() => setGender(g.value)}
-              style={styles.tabItem}
-            >
-              <Text
-                style={{
-                  color: active ? colors.onSurface : colors.brandSecondary,
-                  fontWeight: active ? "800" : "600",
-                  fontSize: 14,
-                }}
-              >
-                {g.label}
-              </Text>
-              {active && <View style={[styles.tabUnderline, { backgroundColor: colors.onSurface }]} />}
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {/* Filter dropdowns */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 12 }}
-      >
-        {FILTER_META.map((f) => {
-          const active = !!selected[f.key];
-          return (
-            <Pressable
-              key={f.key}
-              testID={`look-filter-${f.key}`}
-              onPress={() => setOpenModal(f.key)}
-              style={[
-                styles.filterBtn,
-                { borderColor: active ? colors.brand : colors.border, backgroundColor: active ? colors.brand : colors.surfaceSecondary },
-              ]}
-            >
-              <Text
-                numberOfLines={1}
-                style={{ color: active ? colors.onBrand : colors.onSurface, fontSize: 12, fontWeight: "700", maxWidth: 130 }}
-              >
-                {currentLabel(f.key)}
-              </Text>
-              <Feather name="chevron-down" size={13} color={active ? colors.onBrand : colors.brandSecondary} />
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.brand} />
         </View>
-      ) : items.length === 0 ? (
-        <View style={styles.center}>
-          <Text style={{ color: colors.brandSecondary, textAlign: "center", paddingHorizontal: 40 }}>
-            Bu filtreye uygun kombin bulunamadı.
-          </Text>
-        </View>
       ) : (
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ padding: gridPad, paddingBottom: insets.bottom + 40 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />}
         >
-          <View style={[styles.grid, { gap }]}>
-            {items.map((it, idx) => (
-              <LookCard
-                key={`${it.source_id}-${idx}`}
-                item={it}
-                width={cardWidth}
-                colors={colors}
-                onPress={() => setViewerItem(it)}
-              />
-            ))}
+          {/* Gender tabs */}
+          <View style={[styles.tabRow, { paddingHorizontal: spacing.xl, borderBottomColor: colors.divider }]}>
+            {genderTabs.map((g) => {
+              const active = gender === g.value;
+              return (
+                <Pressable
+                  key={g.value || "all"}
+                  testID={`look-gender-${g.value || "all"}`}
+                  onPress={() => setGender(g.value)}
+                  style={styles.tabItem}
+                >
+                  <Text
+                    style={{
+                      color: active ? colors.onSurface : colors.brandSecondary,
+                      fontWeight: active ? "800" : "600",
+                      fontSize: 14,
+                    }}
+                  >
+                    {g.label}
+                  </Text>
+                  {active && <View style={[styles.tabUnderline, { backgroundColor: colors.onSurface }]} />}
+                </Pressable>
+              );
+            })}
           </View>
+
+          {/* Filter dropdowns */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 12 }}
+          >
+            {FILTER_META.map((f) => {
+              const active = !!selected[f.key];
+              return (
+                <Pressable
+                  key={f.key}
+                  testID={`look-filter-${f.key}`}
+                  onPress={() => setOpenModal(f.key)}
+                  style={[
+                    styles.filterBtn,
+                    { borderColor: active ? colors.brand : colors.border, backgroundColor: active ? colors.brand : colors.surfaceSecondary },
+                  ]}
+                >
+                  <Text
+                    numberOfLines={1}
+                    style={{ color: active ? colors.onBrand : colors.onSurface, fontSize: 12, fontWeight: "700", maxWidth: 130 }}
+                  >
+                    {currentLabel(f.key)}
+                  </Text>
+                  <Feather name="chevron-down" size={13} color={active ? colors.onBrand : colors.brandSecondary} />
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {items.length === 0 ? (
+            <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
+              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
+                Bu filtreye uygun kombin bulunamadı.
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.grid, { gap, paddingHorizontal: gridPad, paddingTop: 6 }]}>
+              {items.map((it, idx) => (
+                <LookCard
+                  key={`${it.source_id}-${idx}`}
+                  item={it}
+                  width={cardWidth}
+                  colors={colors}
+                  onPress={() => setViewerItem(it)}
+                />
+              ))}
+            </View>
+          )}
         </ScrollView>
       )}
 
