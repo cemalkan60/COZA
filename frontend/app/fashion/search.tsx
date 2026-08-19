@@ -18,6 +18,7 @@ import { Feather } from "@expo/vector-icons";
 
 import { api, FashionLookFilters, FashionLookItem, FashionLookOption } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
+import { ZoomableImage } from "@/src/components/ZoomableImage";
 
 type FilterKey = "season" | "item" | "color" | "material" | "pattern";
 
@@ -33,7 +34,7 @@ export default function FashionSearch() {
   const { colors, spacing } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
 
   const [filters, setFilters] = useState<FashionLookFilters | null>(null);
   const [gender, setGender] = useState("");
@@ -247,11 +248,11 @@ export default function FashionSearch() {
           </Pressable>
           {viewerItem && (
             <View style={styles.viewerImageWrap}>
-              <Image
-                source={{ uri: viewerItem.image || "" }}
-                style={{ width: "92%", height: "70%" }}
+              <ZoomableImage
+                uri={viewerItem.image || ""}
+                width={width * 0.92}
+                height={height * 0.7}
                 contentFit="contain"
-                transition={150}
               />
               {(viewerItem.brand_tr || viewerItem.season_text_tr) && (
                 <Text style={styles.viewerCaption}>

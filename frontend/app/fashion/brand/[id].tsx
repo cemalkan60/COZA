@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { resolveBestImage } from "@/src/utils/fashionImage";
+import { ZoomableImage } from "@/src/components/ZoomableImage";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
@@ -34,6 +35,7 @@ export default function BrandGallery() {
   const [images, setImages] = useState<string[]>(primaryImg ? [primaryImg] : []);
   const [loading, setLoading] = useState(true);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [viewerZoomed, setViewerZoomed] = useState(false);
   const viewerIndexRef = useRef<number | null>(null);
   viewerIndexRef.current = viewerIndex;
   const imagesLengthRef = useRef(0);
@@ -68,6 +70,10 @@ export default function BrandGallery() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [goPrev, goNext]);
+
+  useEffect(() => {
+    setViewerZoomed(false);
+  }, [viewerIndex]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,6 +220,7 @@ export default function BrandGallery() {
                 keyExtractor={(_, i) => String(i)}
                 horizontal
                 pagingEnabled
+                scrollEnabled={!viewerZoomed}
                 showsHorizontalScrollIndicator={false}
                 initialScrollIndex={viewerIndex}
                 getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
@@ -226,11 +233,12 @@ export default function BrandGallery() {
                 }}
                 renderItem={({ item }) => (
                   <View style={{ width, height, alignItems: "center", justifyContent: "center" }}>
-                    <Image
-                      source={{ uri: item }}
-                      style={{ width: width * 0.92, height: height * 0.8 }}
+                    <ZoomableImage
+                      uri={item}
+                      width={width * 0.92}
+                      height={height * 0.8}
                       contentFit="contain"
-                      transition={150}
+                      onZoomChange={setViewerZoomed}
                     />
                   </View>
                 )}
