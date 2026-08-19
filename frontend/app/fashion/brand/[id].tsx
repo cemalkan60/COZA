@@ -10,7 +10,6 @@ import {
   Platform,
   Pressable,
   Modal,
-  PanResponder,
   useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -39,12 +38,23 @@ export default function BrandGallery() {
   viewerIndexRef.current = viewerIndex;
   const imagesLengthRef = useRef(0);
   imagesLengthRef.current = images.length;
+  const viewerListRef = useRef<FlatList<string>>(null);
 
   const goPrev = useCallback(() => {
-    setViewerIndex((i) => (i !== null ? Math.max(0, i - 1) : i));
+    setViewerIndex((i) => {
+      if (i === null) return i;
+      const next = Math.max(0, i - 1);
+      viewerListRef.current?.scrollToIndex({ index: next, animated: true });
+      return next;
+    });
   }, []);
   const goNext = useCallback(() => {
-    setViewerIndex((i) => (i !== null ? Math.min(imagesLengthRef.current - 1, i + 1) : i));
+    setViewerIndex((i) => {
+      if (i === null) return i;
+      const next = Math.min(imagesLengthRef.current - 1, i + 1);
+      viewerListRef.current?.scrollToIndex({ index: next, animated: true });
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -58,18 +68,6 @@ export default function BrandGallery() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [goPrev, goNext]);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_evt, gesture) =>
-        Math.abs(gesture.dx) > 20 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
-      onPanResponderRelease: (_evt, gesture) => {
-        const SWIPE_THRESHOLD = 50;
-        if (gesture.dx <= -SWIPE_THRESHOLD) goNext();
-        else if (gesture.dx >= SWIPE_THRESHOLD) goPrev();
-      },
-    })
-  ).current;
 
   useEffect(() => {
     let cancelled = false;
@@ -216,7 +214,7 @@ export default function BrandGallery() {
         transparent
         onRequestClose={() => setViewerIndex(null)}
       >
-        <View style={styles.viewerOverlay} {...panResponder.panHandlers}>
+        <View style={styles.viewerOverlay}>
           <Pressable
             testID="brand-viewer-close"
             onPress={() => setViewerIndex(null)}
@@ -227,22 +225,43 @@ export default function BrandGallery() {
           </Pressable>
           {viewerIndex !== null && (
             <>
-              <View style={styles.viewerImageWrap}>
-                {Platform.OS === "web" ? (
-                  <img
-                    src={images[viewerIndex]}
-                    alt=""
-                    referrerPolicy="no-referrer"
-                    style={{ maxWidth: "92vw", maxHeight: "88vh", objectFit: "contain" }}
-                  />
-                ) : (
-                  <RNImage
-                    source={{ uri: images[viewerIndex] }}
-                    style={{ width: width * 0.92, height: height * 0.8 }}
-                    resizeMode="contain"
-                  />
+              <FlatList
+                ref={viewerListRef}
+                style={{ width, height }}
+                data={images}
+                keyExtractor={(_, i) => String(i)}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                initialScrollIndex={viewerIndex}
+                getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+                onScrollToIndexFailed={(info) => {
+                  setTimeout(() => viewerListRef.current?.scrollToIndex({ index: info.index, animated: false }), 50);
+                }}
+                onMomentumScrollEnd={(e) => {
+                  const idx = Math.round(e.nativeEvent.contentOffset.x / width);
+                  setViewerIndex(idx);
+                }}
+                renderItem={({ item }) => (
+                  <View style={{ width, height, alignItems: "center", justifyContent: "center" }}>
+                    {Platform.OS === "web" ? (
+                      <img
+                        src={item}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        draggable={false}
+                        style={{ maxWidth: "92vw", maxHeight: "88vh", objectFit: "contain" }}
+                      />
+                    ) : (
+                      <RNImage
+                        source={{ uri: item }}
+                        style={{ width: width * 0.92, height: height * 0.8 }}
+                        resizeMode="contain"
+                      />
+                    )}
+                  </View>
                 )}
-              </View>
+              />
 
               {viewerIndex > 0 && (
                 <Pressable
@@ -289,7 +308,6 @@ const styles = StyleSheet.create({
   headerTitle: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: "800", letterSpacing: 0.2 },
   noContent: { flex: 1, alignItems: "center", justifyContent: "center" },
   viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" },
-  viewerImageWrap: { flex: 1, width: "100%", alignItems: "center", justifyContent: "center" },
   viewerClose: {
     position: "absolute",
     right: 16,

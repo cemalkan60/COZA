@@ -725,6 +725,64 @@ async def fashion_collection_detail(source_id: str):
     return {"images": images}
 
 
+@api.get("/fashion/looks/filters")
+async def fashion_looks_filters(user: Annotated[dict, Depends(get_current_user)]):
+    """Static filter option lists (season/gender/item/color/material/pattern) for coordinate search."""
+    return fashion_scraper.looks_filters()
+
+
+_LOOKS_CACHE_TTL = timedelta(hours=6)
+
+
+@api.get("/fashion/looks")
+async def fashion_looks(
+    user: Annotated[dict, Depends(get_current_user)],
+    gender: Optional[str] = None,
+    season: Optional[str] = None,
+    item: Optional[str] = None,
+    color: Optional[str] = None,
+    material: Optional[str] = None,
+    pattern: Optional[str] = None,
+):
+    """Coordinate search ("kombin arama"): live-filtered single runway photos.
+
+    Proxies fashion-press.net's own /collections/looks filter, cached briefly
+    per unique filter combination so repeated searches don't re-hit the source
+    site on every request.
+    """
+    params = {
+        "gender": gender,
+        "season": season,
+        "item": item,
+        "color": color,
+        "material": material,
+        "pattern": pattern,
+    }
+    params = {k: v for k, v in params.items() if v}
+    cache_key = "&".join(f"{k}={v}" for k, v in sorted(params.items())) or "_all"
+
+    cached = await db.fashion_looks_cache.find_one({"_id": cache_key})
+    if cached and cached.get("fetched_at"):
+        fetched_at = datetime.fromisoformat(cached["fetched_at"])
+        if datetime.now(timezone.utc) - fetched_at < _LOOKS_CACHE_TTL:
+            return {"items": cached["items"]}
+
+    try:
+        items = await asyncio.to_thread(fashion_scraper.fetch_looks, params)
+    except Exception:
+        logger.exception("fashion looks fetch failed for %r", params)
+        if cached:
+            return {"items": cached["items"]}
+        raise HTTPException(502, "Kıyafet arama şu anda kullanılamıyor.")
+
+    await db.fashion_looks_cache.update_one(
+        {"_id": cache_key},
+        {"$set": {"items": items, "fetched_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"items": items}
+
+
 @api.get("/fashion/analytics")
 async def fashion_analytics(user: Annotated[dict, Depends(get_current_user)]):
     """COZA-style aggregates over the fashion feed: seasons & top brands."""

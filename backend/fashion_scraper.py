@@ -29,6 +29,12 @@ HEADERS = {
 # Women's runway collections feed (clean, corporate, on-topic for Zara Woman).
 COLLECTIONS_PATH = "/collections/search/womens"
 
+# Coordinate search ("kombin arama") — single runway photos tagged by item,
+# color, material and pattern. Query params match the site's own filter form
+# (gender/season/item/color/material/pattern) so we can proxy filtered
+# searches straight through instead of re-deriving tags ourselves.
+LOOKS_PATH = "/collections/looks"
+
 
 def _normalize_season(title: str) -> str:
     """Extract & normalize a season code (e.g. 2026-27AW, 2027SS) from a title."""
@@ -202,6 +208,236 @@ def fetch_collection_images(source_id: str):
         seen.add(path)
         images.append(BASE + path)
     return images
+
+
+# ----------------------------- Coordinate search (kıyafet/kombin arama) -----------------------------
+# Static filter taxonomy for /collections/looks — (query value, Turkish label[, hex]).
+# Values mirror the site's own <option>/<a href> query params exactly; only the
+# labels are ours (hand-translated — the site's own JA labels aren't reliable
+# to machine-translate one at a time without heavy rate-limiting).
+LOOKS_ITEM_GROUPS = [
+    ("Ceket", [
+        ("biker jacket", "Biker Ceket"),
+        ("bomber jacket", "Bomber Ceket"),
+        ("collarless jacket", "Yakasız Ceket"),
+        ("double jacket", "Kruvaze Ceket"),
+        ("field jacket", "Saha Ceketi"),
+        ("puffer jacket", "Şişme (Puffer) Ceket"),
+        ("shirt jacket", "Gömlek Ceket"),
+        ("stadium jumper", "Stadyum Ceketi"),
+        ("tailored jacket", "Blazer"),
+        ("track jacket", "Eşofman Ceketi"),
+        ("work jacket", "İş Ceketi"),
+    ]),
+    ("Üstler", [
+        ("bustier", "Büstiyer"),
+        ("camisole", "Askılı Bluz"),
+        ("cardigan", "Hırka"),
+        ("hoodie", "Kapüşonlu Sweatshirt"),
+        ("polo", "Polo Yaka"),
+        ("shirt", "Gömlek"),
+        ("sweater", "Kazak / Triko"),
+        ("sweatshirt", "Sweatshirt"),
+        ("t shirt", "Tişört"),
+        ("tank top", "Atlet"),
+        ("tube top", "Straplez Bluz"),
+        ("tunic", "Tunik"),
+        ("vest", "Yelek"),
+    ]),
+    ("Alt Kısımlar", [
+        ("cargo pants", "Kargo Pantolon"),
+        ("chino pants", "Chino Pantolon"),
+        ("cropped pants", "Kısa Boy Pantolon"),
+        ("denim pants", "Kot Pantolon"),
+        ("jogger pants", "Jogger Pantolon"),
+        ("mini skirt", "Mini Etek"),
+        ("shorts", "Şort"),
+        ("skirt", "Etek"),
+        ("slacks", "Kumaş Pantolon"),
+    ]),
+    ("Elbise / Tulum", [
+        ("formal dress", "Elbise"),
+        ("jumpsuit", "Tulum"),
+        ("kimono", "Kimono"),
+        ("one piece", "Tek Parça Elbise"),
+    ]),
+    ("Kaban", [
+        ("cape coat", "Pelerin"),
+        ("chesterfield coat", "Chesterfield Palto"),
+        ("duffle coat", "Duffle Kaban"),
+        ("fur coat", "Kürk Palto"),
+        ("military coat", "Askeri Palto"),
+        ("mods coat", "Mod Ceket"),
+        ("mountain parka", "Dağ Parkası"),
+        ("pea coat", "Kalın Yün Palto"),
+        ("poncho coat", "Panço"),
+        ("rain coat", "Yağmurluk"),
+        ("soutien collar coat", "Şal Yaka Palto"),
+        ("stand collar coat", "Dik Yaka Palto"),
+        ("trench coat", "Trençkot"),
+        ("wrap coat", "Kruvaze Palto"),
+    ]),
+]
+
+LOOKS_COLORS = [
+    ("white", "Beyaz", "#FFFFFF"),
+    ("silver", "Gümüş", "#C0C0C0"),
+    ("grey", "Gri", "#808080"),
+    ("black", "Siyah", "#000000"),
+    ("red", "Kırmızı", "#D32F2F"),
+    ("burgundy", "Bordo", "#800020"),
+    ("pink", "Pembe", "#FFC0CB"),
+    ("purple", "Mor", "#6A1B9A"),
+    ("navy", "Lacivert", "#001F5B"),
+    ("blue", "Mavi", "#1976D2"),
+    ("light_blue", "Açık Mavi", "#87CEFA"),
+    ("green", "Yeşil", "#2E7D32"),
+    ("olive", "Zeytin Yeşili", "#6B8E23"),
+    ("khaki", "Haki", "#C3B091"),
+    ("yellow", "Sarı", "#FFEB3B"),
+    ("mustard", "Hardal", "#D3A51C"),
+    ("gold", "Altın", "#D4AF37"),
+    ("orange", "Turuncu", "#FF9800"),
+    ("beige", "Bej", "#F5F5DC"),
+    ("ivory", "Fildişi", "#FFF8E1"),
+    ("brown", "Kahverengi", "#795548"),
+]
+
+LOOKS_MATERIALS = [
+    ("denim", "Kot Kumaşı"),
+    ("leather_suede", "Deri / Süet"),
+    ("fleece", "Kürk / Boa"),
+    ("velvet", "Kadife"),
+    ("sheer", "Şeffaf / Tül"),
+    ("rubber", "Kauçuk / PVC"),
+    ("knit", "Triko"),
+    ("wool", "Yün"),
+    ("cotton", "Pamuk / Keten"),
+    ("nylon", "Naylon / Polyester"),
+    ("corduroy", "Fitilli Kadife"),
+    ("silk", "İpek / Saten"),
+    ("feather", "Tüy"),
+]
+
+LOOKS_PATTERNS = [
+    ("animal", "Hayvan Deseni"),
+    ("floral", "Çiçekli"),
+    ("dot", "Puantiyeli"),
+    ("stripes", "Çizgili (Dikey)"),
+    ("border", "Çizgili (Yatay)"),
+    ("check", "Ekose / Kareli"),
+    ("camouflage", "Kamuflaj"),
+    ("geometric", "Geometrik"),
+    ("color_block", "Renk Bloklu"),
+    ("gradient", "Degrade / Batik"),
+    ("paisley", "Paisley"),
+    ("nordic", "İskandinav Deseni"),
+    ("monogram", "Monogram"),
+    ("logo", "Logo / Yazı Baskılı"),
+    ("graphic", "Grafik Baskılı"),
+    ("heart", "Kalp Desenli"),
+    ("cross", "Haç Desenli"),
+    ("print", "Baskılı"),
+    ("abstract", "Soyut Desen"),
+    ("solid", "Düz Renk"),
+    ("one_spot", "Tek Nokta Desenli"),
+]
+
+LOOKS_SEASONS = [
+    "2027ss", "2026-27aw", "2026ss", "2025-26aw", "2025ss", "2024-25aw",
+    "2024ss", "2023-24aw", "2023ss", "2022-23aw", "2022ss", "2021-22aw", "2021ss",
+]
+
+
+def looks_filters() -> dict:
+    """Static filter option lists for the coordinate-search UI (season/gender/item/color/material/pattern)."""
+    return {
+        "genders": [
+            {"value": "", "label": "Tümü"},
+            {"value": "female", "label": "Bayanlar"},
+            {"value": "male", "label": "Erkekler"},
+        ],
+        "seasons": [
+            # LOOKS_SEASONS values are lowercase query params (e.g. "2026-27aw");
+            # _season_label_tr expects the AW/SS suffix uppercase.
+            {"value": s, "label": _season_label_tr(s[:-2] + s[-2:].upper())}
+            for s in LOOKS_SEASONS
+        ],
+        "items": [{"group": g, "options": [{"value": v, "label": l} for v, l in opts]} for g, opts in LOOKS_ITEM_GROUPS],
+        "colors": [{"value": v, "label": l, "hex": h} for v, l, h in LOOKS_COLORS],
+        "materials": [{"value": v, "label": l} for v, l in LOOKS_MATERIALS],
+        "patterns": [{"value": v, "label": l} for v, l in LOOKS_PATTERNS],
+    }
+
+
+def fetch_looks(params: dict, limit: int = 40) -> list:
+    """Live-query fashion-press.net's coordinate search and parse the result cards.
+
+    `params` may contain any of: gender, season, item, color, material, pattern
+    (empty/omitted values are dropped, matching the site's own filter form).
+    Each returned item: {source_id, url, image, brand_tr, season_text_tr}.
+    """
+    from urllib.parse import urlencode
+
+    qs = {k: v for k, v in (params or {}).items() if v}
+    query = urlencode(qs)
+    path = LOOKS_PATH + (f"?{query}" if query else "")
+    html = _fetch(path)
+    soup = BeautifulSoup(html, "html.parser")
+
+    raw = []
+    seen = set()
+    for art in soup.select("section.fp_look_list article"):
+        a = art.find("a", class_="mount_gallery")
+        if not a:
+            continue
+        href = a.get("href", "")
+        if not href or href in seen:
+            continue
+        img = a.find("img")
+        if not img:
+            continue
+        src = img.get("data-src") or img.get("src")
+        if src and src.startswith("/"):
+            src = BASE + src
+        caption = a.find(class_="caption")
+        brand = ""
+        season_text = ""
+        if caption:
+            parts = [p.strip() for p in caption.stripped_strings if p.strip()]
+            if parts:
+                brand = parts[0]
+            if len(parts) > 1:
+                season_text = " ".join(parts[1:])
+        seen.add(href)
+        raw.append(
+            {
+                "source_id": a.get("data-imgid") or href.rsplit("/", 1)[-1],
+                "url": BASE + href if href.startswith("/") else href,
+                "image": src,
+                "brand_ja": brand,
+                "season_text_ja": season_text,
+            }
+        )
+        if len(raw) >= limit:
+            break
+
+    # Translate brand + season caption text JA -> TR in one batch each.
+    brands_tr = _translate_batch([r["brand_ja"] for r in raw])
+    seasons_tr = _translate_batch([r["season_text_ja"] for r in raw])
+
+    items = [
+        {
+            "source_id": r["source_id"],
+            "url": r["url"],
+            "image": r["image"],
+            "brand_tr": brand_tr,
+            "season_text_tr": season_tr,
+        }
+        for r, brand_tr, season_tr in zip(raw, brands_tr, seasons_tr)
+    ]
+    logger.info("fashion: fetched %d looks for %r", len(items), qs)
+    return items
 
 
 if __name__ == "__main__":
