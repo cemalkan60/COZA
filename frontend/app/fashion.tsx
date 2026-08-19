@@ -84,6 +84,14 @@ export default function Fashion() {
             COZA <Text style={{ color: colors.brandSecondary }}>FASHION</Text>
           </Text>
         </View>
+        <Pressable
+          testID="fashion-open-search"
+          onPress={() => router.push("/fashion/search" as any)}
+          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
+          hitSlop={8}
+        >
+          <Feather name="search" size={18} color={colors.onSurface} />
+        </Pressable>
       </View>
 
       {loading ? (
@@ -205,6 +213,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   brandLine: { fontSize: 20, fontWeight: "800", letterSpacing: 1 },
+  searchBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 4,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   chip: {
     borderWidth: 1,
     borderRadius: 999,
