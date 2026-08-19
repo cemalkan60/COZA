@@ -32,5 +32,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Publish OTA update
+      - name: Publish OTA update (preview)
+        run: eas update --channel preview --message "Auto update from ${{ github.sha }}" --non-interactive
+
+      - name: Publish OTA update (production)
         run: eas update --channel production --message "Auto update from ${{ github.sha }}" --non-interactive
