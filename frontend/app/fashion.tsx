@@ -2,7 +2,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,8 +9,8 @@ import {
   Text,
   View,
   Dimensions,
-  Platform,
 } from "react-native";
+import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -175,13 +174,7 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
     <Pressable testID={`fashion-card-${item.source_id}`} onPress={() => openInternal(item)} style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}>
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {displayImg ? (
-          Platform.OS === "web" ? (
-            <div style={{ width: "100%", aspectRatio: "3/4", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", borderRadius: 4 }}>
-              <img src={displayImg} alt="" referrerPolicy="no-referrer" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            </div>
-          ) : (
-            <Image source={{ uri: displayImg }} style={styles.image} resizeMode="cover" />
-          )
+          <Image source={{ uri: displayImg }} style={styles.image} contentFit="cover" transition={220} />
         ) : (
           <View style={styles.imagePlaceholder}>
             <Feather name="image" size={22} color={colors.brandSecondary} />

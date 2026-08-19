@@ -2,9 +2,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Image,
   Modal,
-  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -13,6 +11,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -248,16 +247,12 @@ export default function FashionSearch() {
           </Pressable>
           {viewerItem && (
             <View style={styles.viewerImageWrap}>
-              {Platform.OS === "web" ? (
-                <img
-                  src={viewerItem.image || ""}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  style={{ maxWidth: "92vw", maxHeight: "80vh", objectFit: "contain" }}
-                />
-              ) : (
-                <Image source={{ uri: viewerItem.image || "" }} style={{ width: "92%", height: "70%" }} resizeMode="contain" />
-              )}
+              <Image
+                source={{ uri: viewerItem.image || "" }}
+                style={{ width: "92%", height: "70%" }}
+                contentFit="contain"
+                transition={150}
+              />
               {(viewerItem.brand_tr || viewerItem.season_text_tr) && (
                 <Text style={styles.viewerCaption}>
                   {[viewerItem.brand_tr, viewerItem.season_text_tr].filter(Boolean).join(" · ")}
@@ -290,18 +285,7 @@ function LookCard({
     >
       <View style={[styles.cardImageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {item.image ? (
-          Platform.OS === "web" ? (
-            <div style={{ width: "100%", aspectRatio: "5/7", overflow: "hidden", borderRadius: 4 }}>
-              <img
-                src={item.image}
-                alt=""
-                referrerPolicy="no-referrer"
-                style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              />
-            </div>
-          ) : (
-            <Image source={{ uri: item.image }} style={styles.cardImage} resizeMode="cover" />
-          )
+          <Image source={{ uri: item.image }} style={styles.cardImage} contentFit="cover" transition={220} />
         ) : (
           <View style={styles.cardImagePlaceholder}>
             <Feather name="image" size={20} color={colors.brandSecondary} />
