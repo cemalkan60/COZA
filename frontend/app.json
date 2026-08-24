@@ -19,7 +19,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.cozatracker.jy87q9"
+      "bundleIdentifier": "com.coza.cozatracker"
     },
     "android": {
       "adaptiveIcon": {
@@ -27,7 +27,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.cozatracker.jy87q9"
+      "package": "com.coza.cozatracker"
     },
     "web": {
       "bundler": "metro",
