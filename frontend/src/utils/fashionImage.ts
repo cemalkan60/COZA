@@ -69,3 +69,17 @@ export async function resolveBestImage(original: string): Promise<string> {
   }
   return original;
 }
+
+// fashion-press.net rejects image requests that carry a foreign Referer
+// header (or otherwise blocks direct cross-origin loads) — that's why these
+// photos render fine on native (RN doesn't send a Referer for image loads)
+// but not on web. Route the actual <Image>/<img> src through our own
+// backend on web, which fetches the bytes server-side and re-serves them
+// from our own origin; leave native untouched since it already works.
+export function fashionImageUri(url: string | undefined | null): string {
+  if (!url) return "";
+  if (Platform.OS !== "web") return url;
+  const base = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+  if (!base) return url;
+  return `${base}/api/fashion/image-proxy?url=${encodeURIComponent(url)}`;
+}

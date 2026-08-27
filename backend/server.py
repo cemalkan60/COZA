@@ -5,10 +5,13 @@ import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Annotated
+from urllib.parse import urlparse
 
 import jwt
 import bcrypt
+import requests
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Query
+from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -679,6 +682,39 @@ async def remove_favorite(product_id: str, user: Annotated[dict, Depends(get_cur
 
 
 # ----------------------------- COZA Fashion routes -----------------------------
+def _fashion_image_host_allowed(hostname: str) -> bool:
+    hostname = (hostname or "").lower()
+    return hostname == "fashion-press.net" or hostname.endswith(".fashion-press.net")
+
+
+@api.get("/fashion/image-proxy")
+async def fashion_image_proxy(url: str):
+    """Streams a fashion-press.net photo through our own origin.
+
+    fashion-press.net rejects image requests that carry a foreign Referer
+    header, which browsers attach automatically on every <img> — that's why
+    Fashion tab photos loaded fine on native (RN doesn't send one) but not on
+    web. Fetching the bytes server-side (same requests/headers the scraper
+    already uses successfully) and re-serving them from our own domain
+    sidesteps the browser's Referer/CORS behavior entirely. No auth
+    dependency here on purpose: an <img> tag can't attach our Bearer token,
+    and the host allowlist below keeps this from being an open relay.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not _fashion_image_host_allowed(parsed.hostname or ""):
+        raise HTTPException(400, "Desteklenmeyen görsel kaynağı.")
+    try:
+        resp = await asyncio.to_thread(requests.get, url, headers=fashion_scraper.HEADERS, timeout=15)
+        resp.raise_for_status()
+    except Exception:
+        raise HTTPException(502, "Görsel alınamadı.")
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("Content-Type", "image/jpeg"),
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
+
+
 @api.get("/fashion/collections")
 async def fashion_collections(
     user: Annotated[dict, Depends(get_current_user)],
