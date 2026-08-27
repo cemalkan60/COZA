@@ -19,6 +19,7 @@ import { Feather } from "@expo/vector-icons";
 import { api, FashionLookFilters, FashionLookItem, FashionLookOption } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
+import { fashionImageUri } from "@/src/utils/fashionImage";
 
 type FilterKey = "season" | "item" | "color" | "material" | "pattern";
 
@@ -249,7 +250,7 @@ export default function FashionSearch() {
           {viewerItem && (
             <View style={styles.viewerImageWrap}>
               <ZoomableImage
-                uri={viewerItem.image || ""}
+                uri={fashionImageUri(viewerItem.image)}
                 width={width * 0.92}
                 height={height * 0.7}
                 contentFit="contain"
@@ -286,7 +287,7 @@ function LookCard({
     >
       <View style={[styles.cardImageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {item.image ? (
-          <Image source={{ uri: item.image }} style={styles.cardImage} contentFit="cover" transition={220} />
+          <Image source={{ uri: fashionImageUri(item.image) }} style={styles.cardImage} contentFit="cover" transition={220} />
         ) : (
           <View style={styles.cardImagePlaceholder}>
             <Feather name="image" size={20} color={colors.brandSecondary} />

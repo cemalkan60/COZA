@@ -18,7 +18,7 @@ import { Feather } from "@expo/vector-icons";
 import { api, FashionItem, FashionAnalytics } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { formatDate } from "@/src/utils/format";
-import { resolveBestImage } from "@/src/utils/fashionImage";
+import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 
 const { width } = Dimensions.get("window");
 
@@ -174,7 +174,7 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
     <Pressable testID={`fashion-card-${item.source_id}`} onPress={() => openInternal(item)} style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}>
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {displayImg ? (
-          <Image source={{ uri: displayImg }} style={styles.image} contentFit="cover" transition={220} />
+          <Image source={{ uri: fashionImageUri(displayImg) }} style={styles.image} contentFit="cover" transition={220} />
         ) : (
           <View style={styles.imagePlaceholder}>
             <Feather name="image" size={22} color={colors.brandSecondary} />

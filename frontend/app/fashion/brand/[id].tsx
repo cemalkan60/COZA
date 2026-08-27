@@ -16,7 +16,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
-import { resolveBestImage } from "@/src/utils/fashionImage";
+import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
 
 export default function BrandGallery() {
@@ -187,7 +187,7 @@ export default function BrandGallery() {
             style={({ pressed }) => [{ width: cardWidth, marginBottom: gap, opacity: pressed ? 0.85 : 1 }]}
           >
             <Image
-              source={{ uri: item }}
+              source={{ uri: fashionImageUri(item) }}
               style={{ width: cardWidth, aspectRatio: 3 / 4, backgroundColor: colors.surfaceTertiary, borderRadius: 4 }}
               contentFit="cover"
               transition={220}
@@ -234,7 +234,7 @@ export default function BrandGallery() {
                 renderItem={({ item }) => (
                   <View style={{ width, height, alignItems: "center", justifyContent: "center" }}>
                     <ZoomableImage
-                      uri={item}
+                      uri={fashionImageUri(item)}
                       width={width * 0.92}
                       height={height * 0.8}
                       contentFit="contain"
