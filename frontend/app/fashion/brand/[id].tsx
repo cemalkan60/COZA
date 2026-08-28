@@ -79,17 +79,26 @@ export default function BrandGallery() {
   // react-native-web's FlatList doesn't reliably honor `initialScrollIndex` on
   // mount, so on web the viewer always opened on the first photo no matter
   // which thumbnail was tapped (native FlatList handles it fine, hence the
-  // bug being web-only). Force the jump explicitly once the list has mounted.
+  // bug being web-only). `contentOffset` on the FlatList below covers Chrome;
+  // Safari still needs an imperative nudge, and needs it after layout has
+  // actually flushed — a single setTimeout(0)/rAF fires too early there, so
+  // double-rAF it (a standard "wait one extra paint" trick for WebKit).
   useEffect(() => {
     const isOpen = viewerIndex !== null;
     const wasOpen = wasViewerOpenRef.current;
     wasViewerOpenRef.current = isOpen;
     if (isOpen && !wasOpen) {
       const idx = viewerIndex as number;
-      const t = setTimeout(() => {
-        viewerListRef.current?.scrollToIndex({ index: idx, animated: false });
-      }, 0);
-      return () => clearTimeout(t);
+      let raf2 = 0;
+      const raf1 = requestAnimationFrame(() => {
+        raf2 = requestAnimationFrame(() => {
+          viewerListRef.current?.scrollToIndex({ index: idx, animated: false });
+        });
+      });
+      return () => {
+        cancelAnimationFrame(raf1);
+        cancelAnimationFrame(raf2);
+      };
     }
   }, [viewerIndex]);
 
@@ -241,6 +250,7 @@ export default function BrandGallery() {
                 scrollEnabled={!viewerZoomed}
                 showsHorizontalScrollIndicator={false}
                 initialScrollIndex={viewerIndex}
+                contentOffset={{ x: width * viewerIndex, y: 0 }}
                 getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
                 onScrollToIndexFailed={(info) => {
                   setTimeout(() => viewerListRef.current?.scrollToIndex({ index: info.index, animated: false }), 50);
