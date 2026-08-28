@@ -41,6 +41,7 @@ export default function BrandGallery() {
   const imagesLengthRef = useRef(0);
   imagesLengthRef.current = images.length;
   const viewerListRef = useRef<FlatList<string>>(null);
+  const wasViewerOpenRef = useRef(false);
 
   const goPrev = useCallback(() => {
     setViewerIndex((i) => {
@@ -73,6 +74,23 @@ export default function BrandGallery() {
 
   useEffect(() => {
     setViewerZoomed(false);
+  }, [viewerIndex]);
+
+  // react-native-web's FlatList doesn't reliably honor `initialScrollIndex` on
+  // mount, so on web the viewer always opened on the first photo no matter
+  // which thumbnail was tapped (native FlatList handles it fine, hence the
+  // bug being web-only). Force the jump explicitly once the list has mounted.
+  useEffect(() => {
+    const isOpen = viewerIndex !== null;
+    const wasOpen = wasViewerOpenRef.current;
+    wasViewerOpenRef.current = isOpen;
+    if (isOpen && !wasOpen) {
+      const idx = viewerIndex as number;
+      const t = setTimeout(() => {
+        viewerListRef.current?.scrollToIndex({ index: idx, animated: false });
+      }, 0);
+      return () => clearTimeout(t);
+    }
   }, [viewerIndex]);
 
   useEffect(() => {
