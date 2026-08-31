@@ -16,7 +16,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
-import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
+import { fashionImageUri } from "@/src/utils/fashionImage";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
 
 export default function BrandGallery() {
@@ -27,12 +27,10 @@ export default function BrandGallery() {
   const { width, height } = useWindowDimensions();
 
   const id = (params.id as string) || "";
-  const primaryImgParam = (params.img as string) || "";
   const titleParam = (params.title as string) || "";
   const title = titleParam ? decodeURIComponent(titleParam) : "";
 
-  const primaryImg = primaryImgParam ? decodeURIComponent(primaryImgParam) : "";
-  const [images, setImages] = useState<string[]>(primaryImg ? [primaryImg] : []);
+  const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [viewerZoomed, setViewerZoomed] = useState(false);
@@ -104,17 +102,8 @@ export default function BrandGallery() {
 
   useEffect(() => {
     let cancelled = false;
-    async function fetchAndResolve() {
+    async function fetchImages() {
       try {
-        let resolvedPrimary = primaryImg;
-        if (primaryImg) {
-          try {
-            resolvedPrimary = await resolveBestImage(primaryImg);
-          } catch {
-            resolvedPrimary = primaryImg;
-          }
-        }
-
         const base = process.env.EXPO_PUBLIC_BACKEND_URL || "";
         const fetchedImgs: string[] = [];
         if (base) {
@@ -135,25 +124,18 @@ export default function BrandGallery() {
           }
         }
 
-        const merged = Array.from(
-          new Set([...(resolvedPrimary ? [resolvedPrimary] : []), ...fetchedImgs.filter(Boolean)])
-        );
-
-        if (!cancelled) {
-          if (merged.length) setImages(merged);
-          else if (primaryImg && !images.length) setImages([resolvedPrimary]);
-        }
+        const merged = Array.from(new Set(fetchedImgs.filter(Boolean)));
+        if (!cancelled) setImages(merged);
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    fetchAndResolve();
+    fetchImages();
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, primaryImg]);
+  }, [id]);
 
   const columns = width >= 1200 ? 6 : width >= 900 ? 5 : width >= 700 ? 4 : width >= 480 ? 3 : 2;
   const gap = 10;
