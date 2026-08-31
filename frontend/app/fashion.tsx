@@ -156,10 +156,12 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
   }, [item?.image]);
 
   const openInternal = (it: FashionItem) => {
-    // Pass the collection id and the primary image + title as query params so the gallery can show at least the first image.
-    const img = encodeURIComponent(it.image || "");
+    // Only pass id + title — the gallery screen fetches images itself.
+    // (Used to also pass the raw fashion-press.net image URL here so the
+    // first photo could paint before that fetch resolved, but it leaked the
+    // source domain straight into the visible/shareable URL.)
     const title = encodeURIComponent(it.brand_tr || it.title_tr || "");
-    router.push(`/fashion/brand/${encodeURIComponent(it.source_id)}?img=${img}&title=${title}`);
+    router.push(`/fashion/brand/${encodeURIComponent(it.source_id)}?title=${title}`);
   };
 
   if (!item) {
