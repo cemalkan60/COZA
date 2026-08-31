@@ -166,8 +166,27 @@ export default function Profile() {
             <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Son güncelleme</Text>
             <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{formatDate(meta?.last_scrape)}</Text>
           </View>
+          {isAdmin && typeof meta?.categories_failed === "number" && (
+            <View style={[styles.metaRow, { marginTop: 10 }]}>
+              <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Son tarama sonucu</Text>
+              <Text
+                style={{
+                  color: meta.categories_failed > 0 ? "#d94f4f" : colors.onSurface,
+                  fontWeight: "700",
+                }}
+              >
+                {meta.categories_ok ?? 0} başarılı / {meta.categories_failed} başarısız
+              </Text>
+            </View>
+          )}
+          {isAdmin && meta?.categories_failed > 0 && (
+            <Text style={{ color: "#d94f4f", fontSize: 11, marginTop: 6, lineHeight: 16 }}>
+              Son taramada {meta.categories_failed} kategori başarısız oldu — ürünler bu yüzden
+              güncellenmemiş olabilir. ScraperAPI anahtarınızı/kredinizi kontrol edin.
+            </Text>
+          )}
           <Text style={{ color: colors.brandSecondary, fontSize: 11, marginTop: 12, lineHeight: 16 }}>
-            Katalog her gün 08:00'de otomatik güncellenir.
+            Katalog her Pazartesi ve Perşembe 08:00'de (TR saati) otomatik güncellenir.
           </Text>
         </View>
 

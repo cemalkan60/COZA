@@ -885,14 +885,18 @@ async def on_startup():
     await db.fashion.create_index("source_id", unique=True)
     await db.fashion.create_index("season")
     await seed_users()
+    # A CronTrigger built standalone (as below) does NOT inherit the
+    # scheduler's `timezone=` — it defaults to the host's local system time,
+    # which is UTC on Railway. Without `timezone=` here these jobs silently
+    # fired at 08:00/07:00 UTC (11:00/10:00 Istanbul), not the advertised time.
     scheduler.add_job(
-        run_scrape, CronTrigger(day_of_week="mon,thu", hour=8, minute=0),
+        run_scrape, CronTrigger(day_of_week="mon,thu", hour=8, minute=0, timezone="Europe/Istanbul"),
         args=["scheduled_mon_thu_08:00"],
         id="scheduled_scrape", replace_existing=True,
     )
     # COZA Fashion: refresh runway collections weekly, every Monday at 07:00.
     scheduler.add_job(
-        run_fashion_scrape, CronTrigger(day_of_week="mon", hour=7, minute=0),
+        run_fashion_scrape, CronTrigger(day_of_week="mon", hour=7, minute=0, timezone="Europe/Istanbul"),
         args=["scheduled_mon_07:00"],
         id="scheduled_fashion_scrape", replace_existing=True,
     )
