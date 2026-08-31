@@ -60,7 +60,37 @@ def map_country(name: str) -> str:
     return COUNTRY_MAP.get(key, name.strip().rstrip("."))
 
 
+# Browser-like headers for the direct (non-proxied) attempt below. Mirrors
+# what fashion_scraper.py already uses successfully against a different site.
+_DIRECT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+    ),
+    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://www.zara.com/",
+}
+
+
 def _proxy_get(url: str, api_key: str = "", timeout: int = 80) -> requests.Response:
+    """Fetch `url`, trying a direct (proxy-free, unmetered) request first and
+    only falling back to the paid ScraperAPI proxy if Zara blocks/rate-limits
+    it. Whether direct requests get through is Zara's call, not something we
+    can know ahead of time, so this probes on every call rather than caching
+    a yes/no — but it costs nothing extra when direct keeps working, and
+    degrades to today's always-proxied behavior the moment it doesn't.
+    """
+    try:
+        direct = requests.get(url, headers=_DIRECT_HEADERS, timeout=min(timeout, 20))
+        if direct.status_code == 200:
+            # Some anti-bot challenges return 200 with an HTML interstitial
+            # instead of a block status — verify it actually parsed as the
+            # JSON we asked for before trusting it over the proxy fallback.
+            direct.json()
+            return direct
+    except (requests.RequestException, ValueError):
+        pass
     resp = requests.get(
         SCRAPER_BASE,
         params={"api_key": api_key or SCRAPER_API_KEY, "url": url},
