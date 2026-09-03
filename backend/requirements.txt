@@ -37,6 +37,10 @@ deep-translator==1.11.4
 Pillow==11.4.0
 ImageHash==4.3.2
 
+# COZA Fashion — R2 image cache (S3-compatible client; optional, only used
+# once R2_* env vars are set — see image_store.py)
+boto3>=1.34
+
 # Testing
 pytest==9.1.1
 httpx==0.28.1

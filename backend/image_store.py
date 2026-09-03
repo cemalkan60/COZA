@@ -1,0 +1,108 @@
+"""
+COZA Fashion — Cloudflare R2 image cache.
+
+Fashion photos are currently proxied live from their source site on every
+view (see /api/fashion/image-proxy in server.py), which is what makes them
+slow to open. This module downloads each photo once, at scrape time, and
+re-hosts it on our own R2 bucket — the app then serves photos instantly
+from our own CDN-backed storage instead of hitting the source site per view.
+
+Configuration (all via env vars, all required to activate):
+  R2_ACCOUNT_ID          Cloudflare account id
+  R2_ACCESS_KEY_ID       R2 API token access key
+  R2_SECRET_ACCESS_KEY   R2 API token secret key
+  R2_BUCKET_NAME         the bucket to upload into
+  R2_PUBLIC_BASE_URL     the bucket's public base URL (its r2.dev subdomain,
+                         or a custom domain mapped to it) — used to build the
+                         URL we hand back to the app after upload.
+
+Deliberately all-optional: with any of these unset, ENABLED is False and
+cache_image() is a no-op passthrough that returns the original URL, so the
+app keeps working exactly as it does today (via the live proxy) until R2 is
+configured. Nothing above imports boto3 at module load either, so a missing
+`boto3` package doesn't break the rest of the app — it only matters once
+R2 is actually configured and cache_image() is called.
+"""
+import os
+import hashlib
+import logging
+
+import requests
+
+logger = logging.getLogger("coza.image_store")
+
+_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID", "")
+_ACCESS_KEY = os.environ.get("R2_ACCESS_KEY_ID", "")
+_SECRET_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+_BUCKET = os.environ.get("R2_BUCKET_NAME", "")
+_PUBLIC_BASE = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
+
+ENABLED = bool(_ACCOUNT_ID and _ACCESS_KEY and _SECRET_KEY and _BUCKET and _PUBLIC_BASE)
+
+_DOWNLOAD_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
+    ),
+}
+
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        import boto3  # imported lazily — only needed once R2 is configured
+
+        _client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{_ACCOUNT_ID}.r2.cloudflarestorage.com",
+            aws_access_key_id=_ACCESS_KEY,
+            aws_secret_access_key=_SECRET_KEY,
+            region_name="auto",
+        )
+    return _client
+
+
+def _key_for(source_url: str) -> str:
+    """Stable, content-addressed key so re-scraping the same photo (e.g. an
+    unchanged collection re-scraped the next day) never re-uploads it.
+    """
+    digest = hashlib.sha1(source_url.encode("utf-8")).hexdigest()
+    ext = "jpg"
+    path = source_url.lower().split("?")[0]
+    for candidate in ("jpeg", "jpg", "png", "webp"):
+        if path.endswith("." + candidate):
+            ext = candidate
+            break
+    return f"fashion/{digest}.{ext}"
+
+
+def cache_image(source_url: str) -> str:
+    """Return a URL to a copy of `source_url` hosted on our own R2 bucket,
+    uploading it first if this is the first time we've seen it. Falls back
+    to the original `source_url` on any failure, or when R2 isn't
+    configured — callers never need to branch on ENABLED themselves.
+    """
+    if not ENABLED or not source_url:
+        return source_url
+
+    key = _key_for(source_url)
+    public_url = f"{_PUBLIC_BASE}/{key}"
+    client = _get_client()
+
+    try:
+        client.head_object(Bucket=_BUCKET, Key=key)
+        return public_url  # already cached from a previous scrape
+    except Exception:
+        pass  # not cached yet, or the check itself failed — try a fresh upload below
+
+    try:
+        resp = requests.get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
+        resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "image/jpeg")
+        client.put_object(Bucket=_BUCKET, Key=key, Body=resp.content, ContentType=content_type)
+        return public_url
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("image_store: failed to cache %s: %s", source_url, exc)
+        return source_url
