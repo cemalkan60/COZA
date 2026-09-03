@@ -26,6 +26,7 @@ R2 is actually configured and cache_image() is called.
 import os
 import hashlib
 import logging
+import time
 from urllib.parse import urlparse
 
 import requests
@@ -128,6 +129,34 @@ def ensure_cors_configured() -> None:
         logger.warning("image_store: failed to set bucket CORS policy: %s", exc)
 
 
+def _wait_until_publicly_readable(public_url: str, attempts: int = 5, delay: float = 0.35) -> None:
+    """Cloudflare's r2.dev public subdomain briefly 503s a photo right after
+    it's uploaded — the object is written, but hasn't finished propagating
+    to whichever edge serves the public URL yet. It always starts working on
+    its own within a couple of seconds; the only symptom otherwise is that
+    whoever happens to be the first person to open a freshly-scraped
+    collection sees a handful of blank thumbnails for a few seconds (seen
+    live on a 69-photo gallery fetched moments after its photos were
+    uploaded — most loaded fine immediately, ~12 came back 503 at first and
+    only cleared up on a later reload).
+
+    Polling here, right after upload and before handing the URL back to a
+    caller, means the app only ever gets a URL once it's actually servable
+    — no more blank boxes on first view. Best-effort and bounded (well
+    under 2 seconds worst case): if it's still not ready after `attempts`
+    tries we just give up and move on, since the object will keep finishing
+    propagation in the background regardless and load fine shortly after.
+    """
+    for _ in range(attempts):
+        try:
+            resp = requests.head(public_url, timeout=5)
+            if resp.status_code < 400:
+                return
+        except Exception:
+            pass
+        time.sleep(delay)
+
+
 def cache_image(source_url: str) -> str:
     """Return a URL to a copy of `source_url` hosted on our own R2 bucket,
     uploading it first if this is the first time we've seen it. Falls back
@@ -152,6 +181,7 @@ def cache_image(source_url: str) -> str:
         resp.raise_for_status()
         content_type = resp.headers.get("Content-Type", "image/jpeg")
         client.put_object(Bucket=_BUCKET, Key=key, Body=resp.content, ContentType=content_type)
+        _wait_until_publicly_readable(public_url)
         return public_url
     except Exception as exc:  # noqa: BLE001
         logger.warning("image_store: failed to cache %s: %s", source_url, exc)
