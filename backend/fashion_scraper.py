@@ -34,12 +34,14 @@ COLLECTIONS_PATH_BY_GENDER = {
     "men": "/collections/search/mens",
 }
 
-# Index of haute-couture houses; each brand's own archive (COLLECTIONS_BY_BRAND_PATH)
-# is crawled to find their couture collections specifically (a couture house's
-# archive can still mix in ready-to-wear seasons, so results are filtered by
-# the couture marker in the title — see scrape_haute_couture()).
+# Index of haute-couture houses; each brand's own profile page lists that
+# house's collections directly (same <a href="/collections/{id}" title="...">
+# markup as the gender search pages), so it's crawled to find their couture
+# collections specifically (a house's profile can still mix in ready-to-wear
+# seasons, so results are filtered by the couture marker in the title — see
+# scrape_haute_couture()).
 HAUTE_COUTURE_BRANDS_PATH = "/brands/all/haute"
-COLLECTIONS_BY_BRAND_PATH = "/collections/brand/{brand_id}"
+BRAND_PROFILE_PATH = "/brands/{brand_id}"
 HAUTE_COUTURE_MARKER = "オートクチュール"  # "haute couture" in Japanese
 
 # Coordinate search ("kombin arama") — single runway photos tagged by item,
@@ -218,16 +220,13 @@ def scrape_haute_couture(limit: int = 40, max_brands: int = 25):
     """Scrape haute-couture collections via the couture-house brand index.
 
     There's no dedicated couture search path, so this walks
-    /brands/all/haute -> each house's own /collections/brand/{id} archive,
-    keeping only collections whose title carries the couture marker (a
-    house's archive can otherwise mix in its ready-to-wear seasons too).
-    Best-effort: a brand whose archive page doesn't parse is skipped rather
-    than failing the whole run.
+    /brands/all/haute -> each house's own /brands/{id} profile page (which
+    lists that house's collections directly), keeping only collections whose
+    title carries the couture marker (a house's profile can otherwise mix in
+    its ready-to-wear seasons too). Best-effort: a brand whose profile page
+    doesn't parse is skipped rather than failing the whole run.
     """
-    # The brand index turned out to link brand IDs via /brands/{id} (a
-    # profile page) rather than /collections/brand/{id} directly — match
-    # both shapes since either carries the same numeric brand id.
-    brand_href_re = re.compile(r"^/(?:collections/brand|brands)/(\d+)/?$")
+    brand_href_re = re.compile(r"^/brands/(\d+)/?$")
     try:
         index_soup = BeautifulSoup(_fetch(HAUTE_COUTURE_BRANDS_PATH), "html.parser")
     except Exception as exc:  # noqa: BLE001
@@ -247,7 +246,7 @@ def scrape_haute_couture(limit: int = 40, max_brands: int = 25):
     raw = []
     for brand_id in brand_ids:
         try:
-            path = COLLECTIONS_BY_BRAND_PATH.format(brand_id=brand_id)
+            path = BRAND_PROFILE_PATH.format(brand_id=brand_id)
             for link in _parse_collection_links(_fetch(path), limit=limit):
                 if HAUTE_COUTURE_MARKER in link["title_ja"]:
                     raw.append(link)
