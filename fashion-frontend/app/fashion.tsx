@@ -75,9 +75,6 @@ export default function Fashion() {
           { paddingTop: insets.top + 8, paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
         ]}
       >
-        <Pressable testID="fashion-back" onPress={() => router.replace("/hub")} hitSlop={10}>
-          <Feather name="chevron-left" size={26} color={colors.onSurface} />
-        </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={[styles.brandLine, { color: colors.onSurface }]}>
             COZA <Text style={{ color: colors.brandSecondary }}>FASHION</Text>
@@ -90,6 +87,14 @@ export default function Fashion() {
           hitSlop={8}
         >
           <Feather name="search" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Pressable
+          testID="fashion-open-settings"
+          onPress={() => router.push("/settings" as any)}
+          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+          hitSlop={8}
+        >
+          <Feather name="settings" size={18} color={colors.onSurface} />
         </Pressable>
       </View>
 

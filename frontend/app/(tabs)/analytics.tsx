@@ -159,7 +159,7 @@ export default function AnalyticsScreen() {
       <View style={[styles.header, { paddingHorizontal: spacing.xl }]}>
         <Pressable
           testID="analytics-back"
-          onPress={() => (router.canGoBack() ? router.back() : router.replace("/hub"))}
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
           hitSlop={10}
           style={styles.backBtn}
         >

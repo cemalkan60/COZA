@@ -13,6 +13,15 @@ export default function Root({ children }: PropsWithChildren) {
           content="width=device-width, initial-scale=1, shrink-to-fit=no"
         />
         {/*
+          fashion-press.net (source for the Fashion tab's photos) rejects
+          image requests that carry a foreign Referer header. The browser
+          sends one by default on every <img>, so those photos silently
+          failed to load on web while working fine on native (RN doesn't
+          send a Referer for image loads). Disabling it document-wide fixes
+          this without per-image workarounds.
+        */}
+        <meta name="referrer" content="no-referrer" />
+        {/*
           Disable body scrolling on web to make ScrollView components work correctly.
           If you want to enable scrolling, remove `ScrollViewStyleReset` and
           set `overflow: auto` on the body style below.

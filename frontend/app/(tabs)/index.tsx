@@ -194,7 +194,12 @@ export default function Catalog() {
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
       {/* Search + filter button */}
       <View style={[styles.searchWrap, { paddingHorizontal: spacing.lg }]}>
-        <Pressable testID="catalog-back" onPress={() => router.replace("/hub")} hitSlop={10} style={styles.backBtn}>
+        <Pressable
+          testID="catalog-back"
+          onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+          hitSlop={10}
+          style={styles.backBtn}
+        >
           <Feather name="chevron-left" size={22} color={colors.onSurface} />
         </Pressable>
         <View style={[styles.search, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>

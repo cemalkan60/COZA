@@ -37,7 +37,7 @@ export default function Login() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       await signIn(email, password);
-      router.replace("/(tabs)");
+      router.replace("/fashion");
     } catch (e: any) {
       setError(e?.message || "Giriş başarısız.");
     } finally {
