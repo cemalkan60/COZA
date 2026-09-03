@@ -34,22 +34,27 @@ export default function Fashion() {
   const router = useRouter();
 
   const [items, setItems] = useState<FashionItem[]>([]);
+  const [total, setTotal] = useState(0);
   const [analytics, setAnalytics] = useState<FashionAnalytics | null>(null);
   const [season, setSeason] = useState<string | undefined>(undefined);
   const [category, setCategory] = useState<string | undefined>(undefined);
   const [city, setCity] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const PAGE_SIZE = 40;
 
   const load = useCallback(
     async (refresh = false) => {
       if (refresh) setRefreshing(true);
       try {
         const [feed, stats] = await Promise.all([
-          api.fashionCollections({ season, category, city, limit: 40 }),
+          api.fashionCollections({ season, category, city, limit: PAGE_SIZE }),
           api.fashionAnalytics(),
         ]);
         setItems(feed.items || []);
+        setTotal(feed.total ?? (feed.items || []).length);
         setAnalytics(stats);
       } catch {
         /* sessizce geç */
@@ -60,6 +65,26 @@ export default function Fashion() {
     },
     [season, category, city],
   );
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || items.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const feed = await api.fashionCollections({
+        season,
+        category,
+        city,
+        skip: items.length,
+        limit: PAGE_SIZE,
+      });
+      setItems((cur) => [...cur, ...(feed.items || [])]);
+      setTotal(feed.total ?? total);
+    } catch {
+      /* sessizce geç */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [season, category, city, items.length, total, loadingMore]);
 
   useEffect(() => {
     setLoading(true);
@@ -168,6 +193,21 @@ export default function Fashion() {
                 <FashionCard key={idx} item={it} colors={colors} />
               ))}
             </View>
+          )}
+
+          {items.length > 0 && items.length < total && (
+            <Pressable
+              testID="fashion-load-more"
+              onPress={loadMore}
+              disabled={loadingMore}
+              style={[styles.loadMoreBtn, { borderColor: colors.border, marginHorizontal: spacing.xl, opacity: loadingMore ? 0.6 : 1 }]}
+            >
+              {loadingMore ? (
+                <ActivityIndicator color={colors.onSurface} size="small" />
+              ) : (
+                <Text style={{ color: colors.onSurface, fontWeight: "700" }}>Daha Fazla Yükle ({items.length}/{total})</Text>
+              )}
+            </Pressable>
           )}
 
           {analytics?.last_scrape && (
@@ -284,6 +324,14 @@ const styles = StyleSheet.create({
   image: { width: "100%", height: "100%" },
   imagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
   cardBrand: { fontSize: 13, fontWeight: "700", letterSpacing: -0.2 },
+  loadMoreBtn: {
+    height: 44,
+    borderWidth: 1,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 8,
+  },
   note: { flexDirection: "row", gap: 10, padding: 14, borderRadius: 4, marginTop: 20 },
   noteText: { flex: 1, fontSize: 11, lineHeight: 17 },
 });
