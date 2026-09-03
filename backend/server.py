@@ -365,15 +365,34 @@ async def run_fashion_scrape(reason: str = "manual") -> dict:
         for cat in FASHION_CATEGORIES:
             await collect(f"firstview/{cat}", firstview_scraper.scrape_category, cat, 30)
 
-        merged = await asyncio.to_thread(_merge_fashion_items, raw_items)
+        by_source: dict = {}
+        for r in raw_items:
+            by_source[r.get("source", "?")] = by_source.get(r.get("source", "?"), 0) + 1
+        logger.info("Fashion scrape (%s): %d raw items collected (%s)", reason, len(raw_items), by_source)
+
         now_iso = datetime.now(timezone.utc).isoformat()
-        for it in merged:
-            it["updated_at"] = now_iso
-            await db.fashion.update_one(
-                {"source_id": it["source_id"]},
-                {"$set": it, "$setOnInsert": {"first_seen": now_iso}},
-                upsert=True,
-            )
+        try:
+            merged = await asyncio.to_thread(_merge_fashion_items, raw_items)
+            for it in merged:
+                it["updated_at"] = now_iso
+                await db.fashion.update_one(
+                    {"source_id": it["source_id"]},
+                    {"$set": it, "$setOnInsert": {"first_seen": now_iso}},
+                    upsert=True,
+                )
+        except Exception:
+            logger.exception("Fashion scrape (%s): merge/save failed", reason)
+            merged = []
+            meta = {
+                "last_scrape": now_iso,
+                "item_count": await db.fashion.count_documents({}),
+                "raw_item_count": len(raw_items),
+                "reason": reason,
+                "error": "merge_or_save_failed",
+            }
+            await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
+            return {"status": "error", **meta}
+
         meta = {
             "last_scrape": now_iso,
             "item_count": await db.fashion.count_documents({}),
@@ -396,6 +415,20 @@ async def _seed_fashion_if_empty():
         asyncio.create_task(run_fashion_scrape("initial_seed"))
     else:
         logger.info("Fashion feed present: %d items.", count)
+
+
+async def _migrate_fashion_schema():
+    """One-time cleanup: drop leftover documents from before the multi-source
+    merge system (this session's split of COZA into MadeIn + Fashion). Those
+    were keyed by the raw fashion-press numeric id directly, carry no
+    "sources" field (only ever set by _merge_fashion_items), and can never be
+    upserted-over again since the merge key format changed — so they'd
+    otherwise sit forever as orphaned, stale, image-less entries mixed into
+    the feed.
+    """
+    result = await db.fashion.delete_many({"sources": {"$exists": False}})
+    if result.deleted_count:
+        logger.info("Fashion: removed %d pre-migration legacy documents.", result.deleted_count)
 
 
 async def seed_users():
@@ -1080,6 +1113,7 @@ async def on_startup():
     )
     scheduler.start()
     await _seed_if_empty()
+    await _migrate_fashion_schema()
     await _seed_fashion_if_empty()
 
 

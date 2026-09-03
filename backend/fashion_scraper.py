@@ -184,16 +184,31 @@ def _brand_tr_from_title(title_tr: str) -> str:
 
 
 def _finish_items(raw: list, category: str) -> list:
-    """Translate titles JA->TR and shape raw link dicts into full fashion items."""
+    """Translate titles JA->TR and shape raw link dicts into full fashion items.
+
+    Also fetches each collection's full photo gallery here (not just the
+    listing-page thumbnail) so the whole gallery is pre-cached at scrape
+    time — the app must never make the user wait on a live fetch the first
+    time they open a collection. Best-effort per item: a gallery that fails
+    to fetch just falls back to its single thumbnail rather than failing
+    the whole scrape.
+    """
     titles_tr = _translate_batch([r["title_ja"] for r in raw])
     items = []
     for r, title_tr in zip(raw, titles_tr):
         season = _normalize_season(r["title_ja"])
+        try:
+            gallery = fetch_collection_images(r["source_id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fashion: gallery fetch failed for %s: %s", r["source_id"], exc)
+            gallery = []
+        images = gallery or ([r["image"]] if r["image"] else [])
         items.append(
             {
                 "source_id": r["source_id"],
                 "url": r["url"],
                 "image": r["image"],
+                "images": images,
                 "title_ja": r["title_ja"],
                 "title_tr": title_tr,
                 "brand_tr": _brand_tr_from_title(title_tr),
