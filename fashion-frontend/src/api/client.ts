@@ -108,4 +108,5 @@ export const api = {
   fashionLookFilters: (): Promise<FashionLookFilters> => request("/fashion/looks/filters", {}, true),
   fashionLooks: (params: FashionLookQuery = {}): Promise<{ items: FashionLookItem[] }> =>
     request(`/fashion/looks${toQuery(params as Record<string, unknown>)}`, {}, true),
+  fashionScrape: () => request("/admin/fashion-scrape", { method: "POST" }, true),
 };

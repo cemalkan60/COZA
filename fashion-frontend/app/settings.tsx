@@ -1,19 +1,54 @@
 // frontend/app/settings.tsx
-import React from "react";
+import React, { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
+import { api } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
+import { formatDate } from "@/src/utils/format";
 
 export default function Settings() {
   const { colors, spacing, mode, toggle } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, signOut } = useAuth();
+  const isAdmin = user?.role === "admin";
+
+  const [meta, setMeta] = useState<any>(null);
+  const [scraping, setScraping] = useState(false);
+  const [scrapeMsg, setScrapeMsg] = useState("");
+
+  const loadMeta = useCallback(async () => {
+    try {
+      setMeta(await api.fashionMeta());
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMeta();
+    }, [loadMeta]),
+  );
+
+  const triggerScrape = async () => {
+    setScraping(true);
+    setScrapeMsg("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await api.fashionScrape();
+      setScrapeMsg("Tarama başlatıldı — birkaç dakika sürebilir, bittiğinde bu sayfayı yenileyin.");
+    } catch {
+      setScrapeMsg("Başlatılamadı, tekrar deneyin.");
+    } finally {
+      setScraping(false);
+    }
+  };
 
   const logout = async () => {
     await signOut();
@@ -57,6 +92,38 @@ export default function Settings() {
           />
         </View>
 
+        {isAdmin && (
+          <>
+            <View style={[styles.metaCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+              <View style={styles.metaRow}>
+                <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Toplam koleksiyon</Text>
+                <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{meta?.item_count ?? "—"}</Text>
+              </View>
+              <View style={[styles.metaRow, { marginTop: 10 }]}>
+                <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Son güncelleme</Text>
+                <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{formatDate(meta?.last_scrape)}</Text>
+              </View>
+            </View>
+
+            <Pressable
+              testID="fashion-refresh-data"
+              onPress={triggerScrape}
+              disabled={scraping}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+            >
+              <Feather name="refresh-cw" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {scraping ? "Başlatılıyor…" : "Şimdi Güncelle"}
+              </Text>
+            </Pressable>
+            {!!scrapeMsg && (
+              <Text style={{ color: colors.brandSecondary, fontSize: 11, marginTop: 8, textAlign: "center" }}>
+                {scrapeMsg}
+              </Text>
+            )}
+          </>
+        )}
+
         <Pressable
           testID="logout"
           onPress={logout}
@@ -86,6 +153,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 14,
+  },
+  metaCard: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 14,
+    marginTop: 14,
+  },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  refreshBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    height: 48,
+    borderWidth: 1,
+    borderRadius: 8,
+    marginTop: 10,
   },
   logout: {
     flexDirection: "row",
