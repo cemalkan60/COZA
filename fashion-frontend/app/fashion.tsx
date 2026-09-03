@@ -22,6 +22,12 @@ import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 
 const { width } = Dimensions.get("window");
 
+const CATEGORIES: { value: string; label: string }[] = [
+  { value: "women", label: "Kadın" },
+  { value: "men", label: "Erkek" },
+  { value: "haute-couture", label: "Haute Couture" },
+];
+
 export default function Fashion() {
   const { colors, spacing } = useTheme();
   const insets = useSafeAreaInsets();
@@ -30,6 +36,8 @@ export default function Fashion() {
   const [items, setItems] = useState<FashionItem[]>([]);
   const [analytics, setAnalytics] = useState<FashionAnalytics | null>(null);
   const [season, setSeason] = useState<string | undefined>(undefined);
+  const [category, setCategory] = useState<string | undefined>(undefined);
+  const [city, setCity] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -37,7 +45,10 @@ export default function Fashion() {
     async (refresh = false) => {
       if (refresh) setRefreshing(true);
       try {
-        const [feed, stats] = await Promise.all([api.fashionCollections({ season, limit: 40 }), api.fashionAnalytics()]);
+        const [feed, stats] = await Promise.all([
+          api.fashionCollections({ season, category, city, limit: 40 }),
+          api.fashionAnalytics(),
+        ]);
         setItems(feed.items || []);
         setAnalytics(stats);
       } catch {
@@ -47,7 +58,7 @@ export default function Fashion() {
         setRefreshing(false);
       }
     },
-    [season],
+    [season, category, city],
   );
 
   useEffect(() => {
@@ -61,6 +72,14 @@ export default function Fashion() {
       if (it.season && it.season_label) map.set(it.season, it.season_label);
     });
     return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
+  }, [items]);
+
+  const cityChips = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((it) => {
+      if (it.city) set.add(it.city);
+    });
+    return Array.from(set).sort();
   }, [items]);
 
   // show all items (no 6-limit)
@@ -108,9 +127,31 @@ export default function Fashion() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />}
         >
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 14 }}>
+            <Chip label="Tümü" active={!category} onPress={() => setCategory(undefined)} colors={colors} />
+            {CATEGORIES.map((c) => (
+              <Chip
+                key={c.value}
+                label={c.label}
+                active={category === c.value}
+                onPress={() => setCategory((cur) => (cur === c.value ? undefined : c.value))}
+                colors={colors}
+              />
+            ))}
+          </ScrollView>
+
+          {cityChips.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingBottom: 14 }}>
+              <Chip label="Tüm Şehirler" active={!city} onPress={() => setCity(undefined)} colors={colors} />
+              {cityChips.map((c) => (
+                <Chip key={c} label={c} active={city === c} onPress={() => setCity((cur) => (cur === c ? undefined : c))} colors={colors} />
+              ))}
+            </ScrollView>
+          )}
+
           {seasonChips.length > 0 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 14 }}>
-              <Chip label="Tümü" active={!season} onPress={() => setSeason(undefined)} colors={colors} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingBottom: 14 }}>
+              <Chip label="Tüm Sezonlar" active={!season} onPress={() => setSeason(undefined)} colors={colors} />
               {seasonChips.map((s) => (
                 <Chip key={s.code} label={s.label} active={season === s.code} onPress={() => setSeason((cur) => (cur === s.code ? undefined : s.code))} colors={colors} />
               ))}
@@ -119,7 +160,7 @@ export default function Fashion() {
 
           {items.length === 0 ? (
             <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
-              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>Henüz içerik yok. İçerik her Pazartesi otomatik güncellenir.</Text>
+              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>Henüz içerik yok. İçerik her gün 07:00'de otomatik güncellenir.</Text>
             </View>
           ) : (
             <View style={[styles.grid, { paddingHorizontal: spacing.xl - 4 }]}>
@@ -133,7 +174,7 @@ export default function Fashion() {
             <View style={[styles.note, { backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}>
               <Feather name="info" size={14} color={colors.brandSecondary} />
               <Text style={[styles.noteText, { color: colors.brandSecondary }]}>
-                İçerik fashion-press.net kaynağından derlenir ve Türkçeye çevrilir. Her Pazartesi otomatik güncellenir. Son güncelleme: {formatDate(analytics.last_scrape)}
+                İçerik fashion-press.net, NOWFASHION ve FirstView'dan derlenir. Her gün 07:00'de otomatik güncellenir. Son güncelleme: {formatDate(analytics.last_scrape)}
               </Text>
             </View>
           )}

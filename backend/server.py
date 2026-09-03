@@ -1,4 +1,5 @@
 import os
+import io
 import re
 import asyncio
 import logging
@@ -22,6 +23,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 import scraper
 import fashion_scraper
+import nowfashion_scraper
+import firstview_scraper
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -201,24 +204,159 @@ async def _seed_if_empty():
 
 
 # ----------------------------- COZA Fashion orchestration -----------------------------
-async def run_fashion_scrape(reason: str = "manual") -> dict:
-    """Scrape women's runway collections from fashion-press.net (weekly, Mondays).
+# Only corporate / editorial data is collected across all sources below: brand,
+# season, category, city, title/photos of the show itself. No user-generated
+# or personal content.
+FASHION_CATEGORIES = ("women", "men", "haute-couture")
 
-    Only corporate / editorial data: brand, season, title (translated JA->TR).
-    No user-generated or personal content is collected.
+
+def _brand_slug(brand: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (brand or "").strip().lower())
+
+
+def _normalize_fashion_item(raw: dict) -> Optional[dict]:
+    """Reshape one scraper's raw item into the common shape merging works on."""
+    brand_tr = (raw.get("brand_tr") or "").strip()
+    category = raw.get("category") or ""
+    if not brand_tr or category not in FASHION_CATEGORIES:
+        return None
+    images = raw.get("images") or ([raw["image"]] if raw.get("image") else [])
+    images = [u for u in images if u]
+    season = raw.get("season") or ""
+    return {
+        "source": raw.get("source") or "",
+        "raw_source_id": raw.get("source_id") or "",
+        "url": raw.get("url") or "",
+        "brand_tr": brand_tr,
+        "title_tr": raw.get("title_tr") or brand_tr,
+        "season": season,
+        "season_label": raw.get("season_label") or fashion_scraper._season_label_tr(season),
+        "category": category,
+        "city": raw.get("city"),
+        "images": images,
+    }
+
+
+def _fashion_merge_key(item: dict) -> str:
+    key = f"{_brand_slug(item['brand_tr'])}-{(item['season'] or 'unk').lower()}-{item['category']}"
+    key = re.sub(r"-+", "-", key).strip("-")
+    return key or f"item-{abs(hash(item['url']))}"
+
+
+def _dedupe_images_phash(urls: list, threshold: int = 6) -> list:
+    """Drop near-duplicate photos (the same shot syndicated by two sources),
+    keeping the higher-resolution copy. Downloads each candidate to hash it —
+    only called for a merge group that actually mixes more than one source,
+    so this stays bounded to the collections where it can matter.
+    """
+    if len(urls) <= 1:
+        return urls
+    try:
+        from PIL import Image
+        import imagehash
+    except Exception:  # noqa: BLE001 - deps unavailable, fail open
+        return urls
+
+    entries = []  # (url, hash|None, byte_size)
+    for u in urls:
+        try:
+            resp = requests.get(u, headers=fashion_scraper.HEADERS, timeout=15)
+            resp.raise_for_status()
+            content = resp.content
+            h = imagehash.phash(Image.open(io.BytesIO(content)))
+            entries.append((u, h, len(content)))
+        except Exception:  # noqa: BLE001
+            entries.append((u, None, 0))
+
+    kept: list = []
+    for u, h, size in entries:
+        if h is None:
+            kept.append([u, h, size])
+            continue
+        dup = next((k for k in kept if k[1] is not None and (h - k[1]) <= threshold), None)
+        if dup is None:
+            kept.append([u, h, size])
+        elif size > dup[2]:
+            dup[0], dup[1], dup[2] = u, h, size
+    return [u for u, _, _ in kept]
+
+
+def _merge_fashion_items(raw_items: list) -> list:
+    """Group same brand+season+category across sources into one collection,
+    combining photos and dropping near-duplicate shots between sources.
+    """
+    groups: dict = {}
+    for raw in raw_items:
+        item = _normalize_fashion_item(raw)
+        if not item:
+            continue
+        key = _fashion_merge_key(item)
+        g = groups.get(key)
+        if g is None:
+            g = {
+                "source_id": key,
+                "url": item["url"],
+                "brand_tr": item["brand_tr"],
+                "title_tr": item["title_tr"],
+                "season": item["season"],
+                "season_label": item["season_label"],
+                "category": item["category"],
+                "city": None,
+                "images": [],
+                "sources": [],
+                "fp_source_id": None,
+            }
+            groups[key] = g
+        g["images"].extend(item["images"])
+        if item["city"] and not g["city"]:
+            g["city"] = item["city"]
+        if item["source"] and item["source"] not in g["sources"]:
+            g["sources"].append(item["source"])
+        if item["source"] == "fashion-press" and g["fp_source_id"] is None:
+            g["fp_source_id"] = item["raw_source_id"]
+
+    merged = []
+    for g in groups.values():
+        seen: set = set()
+        unique_urls = [u for u in g["images"] if not (u in seen or seen.add(u))]
+        if len(g["sources"]) > 1:
+            unique_urls = _dedupe_images_phash(unique_urls)
+        g["images"] = unique_urls
+        g["image"] = unique_urls[0] if unique_urls else None
+        merged.append(g)
+    return merged
+
+
+async def run_fashion_scrape(reason: str = "manual") -> dict:
+    """Scrape runway collections (women / men / haute couture) from
+    fashion-press.net, nowfashion.com and firstview.com, merging the same
+    brand+season+category found across sources into one entry.
     """
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
         logger.info("Fashion scrape started (%s)", reason)
         started = datetime.now(timezone.utc)
-        try:
-            items = await asyncio.to_thread(fashion_scraper.scrape_collections, 40)
-        except Exception as exc:
-            logger.exception("Fashion scrape failed: %s", exc)
-            return {"status": "error", "error": str(exc)}
+        raw_items: list = []
+
+        async def collect(label: str, fn, *args):
+            try:
+                got = await asyncio.to_thread(fn, *args)
+                raw_items.extend(got or [])
+            except Exception:
+                logger.exception("Fashion scrape source failed (%s)", label)
+
+        await collect("fashion-press/women", fashion_scraper.scrape_collections, 40, "women")
+        await collect("fashion-press/men", fashion_scraper.scrape_collections, 40, "men")
+        await collect("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, 40)
+        for cat in FASHION_CATEGORIES:
+            await collect(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, cat, 30)
+        for cat in FASHION_CATEGORIES:
+            await collect(f"firstview/{cat}", firstview_scraper.scrape_category, cat, 30)
+
+        merged = await asyncio.to_thread(_merge_fashion_items, raw_items)
         now_iso = datetime.now(timezone.utc).isoformat()
-        for it in items:
+        for it in merged:
             it["updated_at"] = now_iso
             await db.fashion.update_one(
                 {"source_id": it["source_id"]},
@@ -228,12 +366,13 @@ async def run_fashion_scrape(reason: str = "manual") -> dict:
         meta = {
             "last_scrape": now_iso,
             "item_count": await db.fashion.count_documents({}),
+            "raw_item_count": len(raw_items),
             "reason": reason,
         }
         await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
         logger.info(
-            "Fashion scrape done (%s): %d items, %.1fs",
-            reason, len(items),
+            "Fashion scrape done (%s): %d raw items -> %d merged collections, %.1fs",
+            reason, len(raw_items), len(merged),
             (datetime.now(timezone.utc) - started).total_seconds(),
         )
         return {"status": "ok", **meta}
@@ -719,14 +858,21 @@ async def fashion_image_proxy(url: str):
 async def fashion_collections(
     user: Annotated[dict, Depends(get_current_user)],
     season: Optional[str] = None,
+    category: Optional[str] = None,
+    city: Optional[str] = None,
     q: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(30, ge=1, le=60),
 ):
-    """Women's runway collections (brand, season, title in Turkish)."""
+    """Runway collections (women/men/haute couture), aggregated from
+    multiple sources and merged by brand+season+category."""
     query: dict = {}
     if season:
         query["season"] = season
+    if category:
+        query["category"] = category
+    if city:
+        query["city"] = city
     if q:
         qs = q.strip()
         query["$or"] = [
@@ -746,14 +892,23 @@ async def fashion_collections(
 
 @api.get("/fashion/collections/{source_id}")
 async def fashion_collection_detail(source_id: str):
-    """Full runway gallery (all photos) for one collection, fetched on demand and cached."""
+    """Full runway gallery (all photos) for one collection, fetched on demand and cached.
+
+    nowfashion.com and firstview.com items already carry their full photo
+    set from the scrape itself; only fashion-press.net's search-page listing
+    is thumbnail-only, so the on-demand fallback below is specific to that
+    source (fp_source_id is its raw numeric collection id).
+    """
     doc = await db.fashion.find_one({"source_id": source_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Koleksiyon bulunamadı.")
     if doc.get("images"):
         return {"images": doc["images"]}
+    fp_id = doc.get("fp_source_id")
+    if not fp_id:
+        return {"images": []}
     try:
-        images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, source_id)
+        images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, fp_id)
     except Exception:
         images = []
     if images:
@@ -853,7 +1008,12 @@ async def fashion_meta(user: Annotated[dict, Depends(get_current_user)]):
 
 @api.post("/admin/fashion-scrape")
 async def admin_fashion_scrape(admin: Annotated[dict, Depends(require_admin)]):
-    return await run_fashion_scrape("manual")
+    # Fire-and-forget: with three sources plus per-collection photo dedup this
+    # can now run well past typical HTTP client/proxy timeouts if awaited inline.
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_scrape("manual"))
+    return {"status": "started"}
 
 
 @api.get("/")
@@ -884,6 +1044,8 @@ async def on_startup():
     await db.favorites.create_index([("user_id", 1), ("product_id", 1)], unique=True)
     await db.fashion.create_index("source_id", unique=True)
     await db.fashion.create_index("season")
+    await db.fashion.create_index("category")
+    await db.fashion.create_index("city")
     await seed_users()
     # A CronTrigger built standalone (as below) does NOT inherit the
     # scheduler's `timezone=` — it defaults to the host's local system time,
@@ -894,10 +1056,13 @@ async def on_startup():
         args=["scheduled_mon_thu_08:00"],
         id="scheduled_scrape", replace_existing=True,
     )
-    # COZA Fashion: refresh runway collections weekly, every Monday at 07:00.
+    # COZA Fashion: refresh runway collections every day at 07:00. Re-scraping
+    # daily doesn't create duplicates — items upsert by brand+season+category,
+    # so an unchanged collection just gets its updated_at bumped and only
+    # genuinely new collections add a new entry.
     scheduler.add_job(
-        run_fashion_scrape, CronTrigger(day_of_week="mon", hour=7, minute=0, timezone="Europe/Istanbul"),
-        args=["scheduled_mon_07:00"],
+        run_fashion_scrape, CronTrigger(hour=7, minute=0, timezone="Europe/Istanbul"),
+        args=["scheduled_daily_07:00"],
         id="scheduled_fashion_scrape", replace_existing=True,
     )
     scheduler.start()

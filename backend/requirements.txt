@@ -30,9 +30,12 @@ tzdata==2026.3
 # HTTP client (scraper -> Zara ES via proxy)
 requests==2.34.2
 
-# COZA Fashion (fashion-press.net scrape + JA->TR translation)
+# COZA Fashion (fashion-press.net / nowfashion.com / firstview.com scrape,
+# JA->TR translation, and perceptual-hash photo de-duplication across sources)
 beautifulsoup4==4.12.3
 deep-translator==1.11.4
+Pillow==11.4.0
+ImageHash==4.3.2
 
 # Testing
 pytest==9.1.1

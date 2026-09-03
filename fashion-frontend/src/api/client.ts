@@ -8,11 +8,15 @@ export type FashionItem = {
   source_id: string;
   url: string;
   image: string | null;
-  title_ja: string;
+  images?: string[];
+  title_ja?: string;
   title_tr: string;
   brand_tr: string;
   season: string;
   season_label: string;
+  category?: "women" | "men" | "haute-couture" | string;
+  city?: string | null;
+  sources?: string[];
   updated_at?: string;
 };
 
@@ -90,7 +94,14 @@ export const api = {
   me: () => request("/auth/me", {}, true),
 
   fashionCollections: (
-    params: { season?: string; q?: string; skip?: number; limit?: number } = {},
+    params: {
+      season?: string;
+      category?: string;
+      city?: string;
+      q?: string;
+      skip?: number;
+      limit?: number;
+    } = {},
   ) => request(`/fashion/collections${toQuery(params as Record<string, unknown>)}`, {}, true),
   fashionAnalytics: () => request("/fashion/analytics", {}, true),
   fashionMeta: () => request("/fashion/meta", {}, true),
