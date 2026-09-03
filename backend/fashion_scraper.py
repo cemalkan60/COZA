@@ -224,7 +224,10 @@ def scrape_haute_couture(limit: int = 40, max_brands: int = 25):
     Best-effort: a brand whose archive page doesn't parse is skipped rather
     than failing the whole run.
     """
-    brand_href_re = re.compile(r"^/collections/brand/(\d+)$")
+    # The brand index turned out to link brand IDs via /brands/{id} (a
+    # profile page) rather than /collections/brand/{id} directly — match
+    # both shapes since either carries the same numeric brand id.
+    brand_href_re = re.compile(r"^/(?:collections/brand|brands)/(\d+)/?$")
     try:
         index_soup = BeautifulSoup(_fetch(HAUTE_COUTURE_BRANDS_PATH), "html.parser")
     except Exception as exc:  # noqa: BLE001

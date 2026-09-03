@@ -12,6 +12,7 @@ No JSON/API endpoint is exposed, so this scrapes the rendered HTML. The slug
 itself is the most reliable source for brand/category/season/city (it's a
 fixed, confirmed pattern) — page text is only used as a fallback.
 """
+import os
 import re
 import logging
 
@@ -28,6 +29,13 @@ HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
 }
+
+# nowfashion.com returns a flat 403 on direct requests (bot protection) — fall
+# back to the same ScraperAPI proxy the Zara scraper already uses when that
+# happens. Read directly from the env var rather than importing scraper.py,
+# to keep this module independently importable/testable.
+SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
+SCRAPER_PROXY_BASE = "http://api.scraperapi.com/"
 
 # Our category -> the site's own `collection` filter value.
 CATEGORY_TO_PARAM = {"women": "ready-to-wear", "men": "menswear", "haute-couture": "couture"}
@@ -46,9 +54,21 @@ _GALLERY_HREF_RE = re.compile(r"^/([a-z0-9][a-z0-9-]{10,})/?$")
 
 def _fetch(path_or_url: str, timeout: int = 30) -> str:
     url = path_or_url if path_or_url.startswith("http") else BASE + path_or_url
-    resp = requests.get(url, headers=HEADERS, timeout=timeout)
-    resp.raise_for_status()
-    return resp.text
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        resp.raise_for_status()
+        return resp.text
+    except requests.exceptions.HTTPError as exc:
+        blocked = exc.response is not None and exc.response.status_code in (403, 429)
+        if not (blocked and SCRAPER_API_KEY):
+            raise
+        resp = requests.get(
+            SCRAPER_PROXY_BASE,
+            params={"api_key": SCRAPER_API_KEY, "url": url},
+            timeout=max(timeout, 60),
+        )
+        resp.raise_for_status()
+        return resp.text
 
 
 def _extract_gallery_links(html: str, limit: int) -> list:
