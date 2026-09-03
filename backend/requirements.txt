@@ -34,8 +34,8 @@ requests==2.34.2
 # JA->TR translation, and perceptual-hash photo de-duplication across sources)
 beautifulsoup4==4.12.3
 deep-translator==1.11.4
-Pillow==11.4.0
-ImageHash==4.3.2
+Pillow>=11.3
+ImageHash>=4.3
 
 # COZA Fashion — R2 image cache (S3-compatible client; optional, only used
 # once R2_* env vars are set — see image_store.py)
