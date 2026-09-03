@@ -518,6 +518,11 @@ async def run_fashion_scrape(reason: str = "manual") -> dict:
                 *(_finalize_and_save_group(g, sem, now_iso) for g in groups)
             )
             saved = sum(1 for ok in results if ok)
+            # Belt-and-suspenders: also sweep the DB itself for duplicates
+            # this scrape's own url-merge pass couldn't see (a doc saved by
+            # an earlier scrape, before this dedup logic existed, whose
+            # merge key this run's raw items no longer reproduce at all).
+            await _dedupe_existing_fashion_docs()
             meta = {
                 "last_scrape": now_iso,
                 "item_count": await db.fashion.count_documents({}),
@@ -570,6 +575,83 @@ async def _migrate_fashion_schema():
     result = await db.fashion.delete_many({"sources": {"$exists": False}})
     if result.deleted_count:
         logger.info("Fashion: removed %d pre-migration legacy documents.", result.deleted_count)
+
+
+async def _dedupe_existing_fashion_docs():
+    """Sweep db.fashion for duplicate collections that are already saved,
+    catching cases _group_fashion_items' url-merge pass can't: two docs
+    that were never grouped together in the SAME scrape (e.g. one saved
+    before this dedup logic existed, or a scrape where a translation only
+    drifted on one of two runs) still won't get merged by that pass, since
+    it only ever sees one scrape's raw items at a time. This runs against
+    whatever is actually in the DB instead, so it catches those too —
+    idempotent and cheap (the collection is small), safe to run on every
+    startup and after every scrape.
+    """
+    docs = await db.fashion.find({}, {"_id": 0}).to_list(length=None)
+    by_url: dict = {}
+    for d in docs:
+        if d.get("url"):
+            by_url.setdefault(d["url"], []).append(d)
+
+    merged_count = 0
+    for url, group in by_url.items():
+        if len(group) <= 1:
+            continue
+        # Keep the one with the most photos already cached (best signal of
+        # "most complete"); ties broken by source_id for determinism.
+        group.sort(key=lambda d: (-len(d.get("images") or []), d["source_id"]))
+        canonical, *dups = group
+        images = list(canonical.get("images") or [])
+        seen = set(images)
+        sources = list(canonical.get("sources") or [])
+        brand_tr, title_tr = canonical.get("brand_tr", ""), canonical.get("title_tr", "")
+        category = canonical.get("category", "")
+        city = canonical.get("city")
+        fp_source_id = canonical.get("fp_source_id")
+        season, season_label = canonical.get("season"), canonical.get("season_label")
+        for d in dups:
+            for u in d.get("images") or []:
+                if u not in seen:
+                    seen.add(u)
+                    images.append(u)
+            for s in d.get("sources") or []:
+                if s not in sources:
+                    sources.append(s)
+            if d.get("city") and not city:
+                city = d["city"]
+            if not fp_source_id:
+                fp_source_id = d.get("fp_source_id")
+            if not season and d.get("season"):
+                season, season_label = d["season"], d.get("season_label")
+            brand_tr = _looks_better_text(brand_tr, d.get("brand_tr", ""))
+            title_tr = _looks_better_text(title_tr, d.get("title_tr", ""))
+            if _FASHION_CATEGORY_PRIORITY.get(d.get("category", ""), 9) < _FASHION_CATEGORY_PRIORITY.get(category, 9):
+                category = d["category"]
+
+        await db.fashion.update_one(
+            {"source_id": canonical["source_id"]},
+            {
+                "$set": {
+                    "images": images,
+                    "image": images[0] if images else None,
+                    "sources": sources,
+                    "brand_tr": brand_tr,
+                    "title_tr": title_tr,
+                    "category": category,
+                    "city": city,
+                    "fp_source_id": fp_source_id,
+                    "season": season,
+                    "season_label": season_label,
+                }
+            },
+        )
+        dup_ids = [d["source_id"] for d in dups]
+        await db.fashion.delete_many({"source_id": {"$in": dup_ids}})
+        merged_count += len(dup_ids)
+
+    if merged_count:
+        logger.info("Fashion: merged %d duplicate collection(s) already sitting in the DB.", merged_count)
 
 
 async def seed_users():
@@ -1282,6 +1364,7 @@ async def on_startup():
     scheduler.start()
     await _seed_if_empty()
     await _migrate_fashion_schema()
+    await _dedupe_existing_fashion_docs()
     await _seed_fashion_if_empty()
     # Let browsers load fashion photos straight from the R2 bucket (see
     # image_store.ensure_cors_configured's docstring for why this is
