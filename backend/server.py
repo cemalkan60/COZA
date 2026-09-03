@@ -282,7 +282,34 @@ def _dedupe_images_phash(urls: list, threshold: int = 6) -> list:
     return [u for u, _, _ in kept]
 
 
-def _group_fashion_items(raw_items: list) -> list:
+def _looks_better_text(a: str, b: str) -> str:
+    """Pick the better of two candidate strings for the same field, when
+    merging two scrapes of what turns out to be the same source collection
+    (see _group_fashion_items). The free translate endpoint occasionally
+    hands back the original Japanese untranslated on one pass but not
+    another, so prefer whichever isn't still Japanese; if both (or
+    neither) are, prefer the longer/more complete one.
+    """
+    a, b = a or "", b or ""
+    a_jp = fashion_scraper._looks_japanese(a)
+    b_jp = fashion_scraper._looks_japanese(b)
+    if a_jp and not b_jp:
+        return b
+    if b_jp and not a_jp:
+        return a
+    return a if len(a) >= len(b) else b
+
+
+# Which category "wins" when the same real-world show turns out to be
+# filed under more than one (see _group_fashion_items) — fashion-press
+# lists some shows as a combined "Kadın & Erkek" (women+men) collection,
+# which gets scraped once per gender search page it's listed on. "women"
+# winning is an arbitrary but stable choice, not a judgment about which
+# listing is more "correct".
+_FASHION_CATEGORY_PRIORITY = {"women": 0, "men": 1, "haute-couture": 2}
+
+
+def _group_fashion_items(raw_items: list) -> tuple:
     """Group same brand+season+category across sources into one collection.
 
     Pure, in-memory, no network calls — safe to run synchronously up front.
@@ -290,6 +317,19 @@ def _group_fashion_items(raw_items: list) -> list:
     dedup + R2 caching) before it's ready to save; that part is what's slow,
     so it's kept separate and run with bounded concurrency per group instead
     of sequentially for the whole batch (see run_fashion_scrape).
+
+    A second pass then folds together groups that are actually the same
+    real-world collection under a different identity — the two cases seen
+    in practice are a fashion-press "Kadın & Erkek" (combined women+men)
+    show, scraped once from the women listing and once from the men
+    listing (same page, different category), and a title whose JA->TR
+    translation drifted between scrapes (came back untranslated once),
+    landing under a different brand_tr and therefore a different merge
+    key. Both share the same source `url`, which is what this pass keys
+    on to catch them. Returns (groups, obsolete_keys) — obsolete_keys are
+    merge keys that existed before this pass but got folded into another
+    group, so the caller must delete any DB document still sitting under
+    one of those keys or the old duplicate lingers forever.
     """
     groups: dict = {}
     for raw in raw_items:
@@ -320,7 +360,42 @@ def _group_fashion_items(raw_items: list) -> list:
             g["sources"].append(item["source"])
         if item["source"] == "fashion-press" and g["fp_source_id"] is None:
             g["fp_source_id"] = item["raw_source_id"]
-    return list(groups.values())
+
+    by_url: dict = {}
+    for key, g in groups.items():
+        if g["url"]:
+            by_url.setdefault(g["url"], []).append(key)
+
+    obsolete: set = set()
+    for url, keys in by_url.items():
+        if len(keys) <= 1:
+            continue
+        # Sorted for a deterministic pick — otherwise which key "wins" could
+        # flip between daily scrapes and needlessly churn the DB doc id.
+        canonical_key, *dup_keys = sorted(keys)
+        canonical = groups[canonical_key]
+        for dup_key in dup_keys:
+            other = groups.pop(dup_key)
+            obsolete.add(dup_key)
+            canonical["images"].extend(other["images"])
+            for s in other["sources"]:
+                if s not in canonical["sources"]:
+                    canonical["sources"].append(s)
+            if other["city"] and not canonical["city"]:
+                canonical["city"] = other["city"]
+            if canonical["fp_source_id"] is None:
+                canonical["fp_source_id"] = other["fp_source_id"]
+            canonical["brand_tr"] = _looks_better_text(canonical["brand_tr"], other["brand_tr"])
+            canonical["title_tr"] = _looks_better_text(canonical["title_tr"], other["title_tr"])
+            if not canonical["season"] and other["season"]:
+                canonical["season"] = other["season"]
+                canonical["season_label"] = other["season_label"]
+            if _FASHION_CATEGORY_PRIORITY.get(other["category"], 9) < _FASHION_CATEGORY_PRIORITY.get(
+                canonical["category"], 9
+            ):
+                canonical["category"] = other["category"]
+
+    return list(groups.values()), obsolete
 
 
 def _finalize_fashion_group(g: dict) -> dict:
@@ -408,7 +483,18 @@ async def run_fashion_scrape(reason: str = "manual") -> dict:
 
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
-            groups = _group_fashion_items(raw_items)
+            groups, obsolete_keys = _group_fashion_items(raw_items)
+            if obsolete_keys:
+                # These merge keys used to be their own saved collection but
+                # just got folded into another one above (see
+                # _group_fashion_items) — delete the old doc so the same
+                # show doesn't keep showing up twice in the feed.
+                result = await db.fashion.delete_many({"source_id": {"$in": list(obsolete_keys)}})
+                if result.deleted_count:
+                    logger.info(
+                        "Fashion scrape (%s): removed %d duplicate collection(s) merged into another entry",
+                        reason, result.deleted_count,
+                    )
             await db.meta.update_one(
                 {"_id": "fashion"},
                 {
@@ -1010,26 +1096,38 @@ async def fashion_collection_detail(source_id: str):
 
     nowfashion.com and firstview.com items already carry their full photo
     set from the scrape itself; only fashion-press.net's search-page listing
-    is thumbnail-only, so the on-demand fallback below is specific to that
-    source (fp_source_id is its raw numeric collection id).
+    is thumbnail-only (see fashion_scraper._finish_items), so the on-demand
+    fallback below is specific to that source (fp_source_id is its raw
+    numeric collection id).
+
+    Bug fixed here: `doc["images"]` already holds that one listing
+    thumbnail by the time this endpoint is hit (saved at scrape time by
+    _finalize_fashion_group), so `if doc.get("images")` was always true and
+    this fallback never actually ran — every fashion-press collection's
+    detail page showed a single photo instead of the full runway gallery.
+    Track whether the full-gallery fetch has been attempted with its own
+    flag instead of inferring it from images being non-empty.
     """
     doc = await db.fashion.find_one({"source_id": source_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Koleksiyon bulunamadı.")
-    if doc.get("images"):
-        return {"images": doc["images"]}
     fp_id = doc.get("fp_source_id")
-    if not fp_id:
-        return {"images": []}
+    if not fp_id or doc.get("gallery_fetched"):
+        return {"images": doc.get("images") or []}
     try:
         images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, fp_id)
         if image_store.ENABLED:
             images = await asyncio.to_thread(lambda: [image_store.cache_image(u) for u in images])
     except Exception:
         images = []
+    update = {"gallery_fetched": True}
     if images:
-        await db.fashion.update_one({"source_id": source_id}, {"$set": {"images": images}})
-    return {"images": images}
+        update["images"] = images
+    # Mark fetched even on failure/empty so a broken collection doesn't
+    # re-trigger this fetch (and re-hit fashion-press.net) on every view —
+    # the existing thumbnail stays as the fallback.
+    await db.fashion.update_one({"source_id": source_id}, {"$set": update})
+    return {"images": images or doc.get("images") or []}
 
 
 @api.get("/fashion/looks/filters")
