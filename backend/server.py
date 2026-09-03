@@ -335,8 +335,9 @@ def _merge_fashion_items(raw_items: list) -> list:
 
 async def run_fashion_scrape(reason: str = "manual") -> dict:
     """Scrape runway collections (women / men / haute couture) from
-    fashion-press.net, nowfashion.com and firstview.com, merging the same
-    brand+season+category found across sources into one entry.
+    fashion-press.net and firstview.com (nowfashion.com temporarily disabled,
+    see below), merging the same brand+season+category found across sources
+    into one entry.
     """
     if _fashion_lock.locked():
         return {"status": "already_running"}
@@ -355,8 +356,12 @@ async def run_fashion_scrape(reason: str = "manual") -> dict:
         await collect("fashion-press/women", fashion_scraper.scrape_collections, 40, "women")
         await collect("fashion-press/men", fashion_scraper.scrape_collections, 40, "men")
         await collect("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, 40)
-        for cat in FASHION_CATEGORIES:
-            await collect(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, cat, 30)
+        # nowfashion.com is disabled for now: it blocks direct requests (403) and
+        # also fails through the plain ScraperAPI proxy (500), which points to a
+        # JS-based bot challenge — fixable with ScraperAPI's render=true mode, but
+        # that costs ~10x credits per request, so left off pending a decision.
+        # for cat in FASHION_CATEGORIES:
+        #     await collect(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, cat, 30)
         for cat in FASHION_CATEGORIES:
             await collect(f"firstview/{cat}", firstview_scraper.scrape_category, cat, 30)
 
