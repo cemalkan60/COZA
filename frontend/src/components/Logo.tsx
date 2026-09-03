@@ -28,7 +28,7 @@ export function Logo({
         { color: c, fontSize: size, letterSpacing: size * 0.44, paddingLeft: size * 0.44 },
       ]}
     >
-      COZA
+      MadeIn
     </Text>
   );
 

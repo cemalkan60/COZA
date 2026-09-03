@@ -275,7 +275,7 @@ export default function Profile() {
       </Pressable>
 
       <Text style={{ color: colors.brandSecondary, textAlign: "center", fontSize: 12, marginTop: 24, letterSpacing: 2 }}>
-        COZA
+        MadeIn
       </Text>
     </KeyboardAwareScrollView>
   );
