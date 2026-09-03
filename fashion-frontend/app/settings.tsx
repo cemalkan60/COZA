@@ -1,5 +1,5 @@
 // frontend/app/settings.tsx
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -22,19 +22,44 @@ export default function Settings() {
   const [scraping, setScraping] = useState(false);
   const [scrapeMsg, setScrapeMsg] = useState("");
 
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const loadMeta = useCallback(async () => {
     try {
-      setMeta(await api.fashionMeta());
+      const m = await api.fashionMeta();
+      setMeta(m);
+      return m;
     } catch {
       // ignore
+      return null;
     }
   }, []);
 
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback(() => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      const m = await loadMeta();
+      if (!m?.scraping) stopPolling();
+    }, 3000);
+  }, [loadMeta, stopPolling]);
+
   useFocusEffect(
     useCallback(() => {
-      loadMeta();
-    }, [loadMeta]),
+      loadMeta().then((m) => {
+        if (m?.scraping) startPolling();
+      });
+      return stopPolling;
+    }, [loadMeta, startPolling, stopPolling]),
   );
+
+  useEffect(() => stopPolling, [stopPolling]);
 
   const triggerScrape = async () => {
     setScraping(true);
@@ -42,7 +67,8 @@ export default function Settings() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       await api.fashionScrape();
-      setScrapeMsg("Tarama başlatıldı — birkaç dakika sürebilir, bittiğinde bu sayfayı yenileyin.");
+      setScrapeMsg("Tarama başlatıldı, ilerleme aşağıda görünecek.");
+      startPolling();
     } catch {
       setScrapeMsg("Başlatılamadı, tekrar deneyin.");
     } finally {
@@ -103,6 +129,14 @@ export default function Settings() {
                 <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Son güncelleme</Text>
                 <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{formatDate(meta?.last_scrape)}</Text>
               </View>
+              {!!meta?.scraping && (
+                <View style={[styles.metaRow, { marginTop: 10 }]}>
+                  <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Tarama sürüyor</Text>
+                  <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
+                    {meta?.groups_done ?? 0} / {meta?.groups_total ?? "?"}
+                  </Text>
+                </View>
+              )}
             </View>
 
             <Pressable
