@@ -26,8 +26,21 @@ HEADERS = {
     "Accept-Language": "ja,en;q=0.8",
 }
 
-# Women's runway collections feed (clean, corporate, on-topic for Zara Woman).
-COLLECTIONS_PATH = "/collections/search/womens"
+# Runway collections feeds, by gender path segment. No dedicated haute-couture
+# search path exists on this site — those are reached via the brand index
+# instead (see HAUTE_COUTURE_BRANDS_PATH below).
+COLLECTIONS_PATH_BY_GENDER = {
+    "women": "/collections/search/womens",
+    "men": "/collections/search/mens",
+}
+
+# Index of haute-couture houses; each brand's own archive (COLLECTIONS_BY_BRAND_PATH)
+# is crawled to find their couture collections specifically (a couture house's
+# archive can still mix in ready-to-wear seasons, so results are filtered by
+# the couture marker in the title — see scrape_haute_couture()).
+HAUTE_COUTURE_BRANDS_PATH = "/brands/all/haute"
+COLLECTIONS_BY_BRAND_PATH = "/collections/brand/{brand_id}"
+HAUTE_COUTURE_MARKER = "オートクチュール"  # "haute couture" in Japanese
 
 # Coordinate search ("kombin arama") — single runway photos tagged by item,
 # color, material and pattern. Query params match the site's own filter form
@@ -117,14 +130,12 @@ def _looks_japanese(text: str) -> bool:
     return bool(_JP_RE.search(text))
 
 
-def scrape_collections(limit: int = 40):
-    """Scrape women's runway collections. Returns a list of dicts.
-
-    Each item: {source_id, url, image, title_ja, title_tr, brand_tr, season, season_label}
+def _parse_collection_links(html: str, limit: int) -> list:
+    """Extract {source_id, url, image, title_ja} from any page that lists
+    collections via <a href="/collections/{id}" title="..."> — the same markup
+    shape is used on the gender search pages and on a brand's own archive page.
     """
-    html = _fetch(COLLECTIONS_PATH)
     soup = BeautifulSoup(html, "html.parser")
-
     href_re = re.compile(r"^/collections/\d+$")
     seen = set()
     raw = []
@@ -155,23 +166,27 @@ def scrape_collections(limit: int = 40):
         )
         if len(raw) >= limit:
             break
+    return raw
 
-    # Translate titles JA -> TR in one pass.
+
+def _brand_tr_from_title(title_tr: str) -> str:
+    brand_tr = title_tr
+    for token in ["Koleksiyonu", "Koleksiyon", "Kadın & Erkek", "Kadın", "Erkek", "Haute couture", "Haute Couture"]:
+        brand_tr = brand_tr.replace(token, "")
+    brand_tr = re.sub(r"\d{4}(?:-\d{2})?\s*(AW|SS)?", "", brand_tr, flags=re.IGNORECASE)
+    brand_tr = re.sub(r"(Sonbahar/Kış|İlkbahar/Yaz|Resort|Rezort)", "", brand_tr)
+    # Fallback: strip leftover Japanese collection words if translation failed.
+    for jp in ["コレクション", "ウィメンズ&メンズ", "ウィメンズ", "メンズ", "オートクチュール", "年秋冬", "年春夏", "秋冬", "春夏", "年"]:
+        brand_tr = brand_tr.replace(jp, "")
+    return re.sub(r"\s{2,}", " ", brand_tr).strip(" -–—&・").strip()
+
+
+def _finish_items(raw: list, category: str) -> list:
+    """Translate titles JA->TR and shape raw link dicts into full fashion items."""
     titles_tr = _translate_batch([r["title_ja"] for r in raw])
-
     items = []
     for r, title_tr in zip(raw, titles_tr):
         season = _normalize_season(r["title_ja"])
-        # Brand = title with the season/collection words stripped.
-        brand_tr = title_tr
-        for token in ["Koleksiyonu", "Koleksiyon", "Kadın & Erkek", "Kadın", "Erkek"]:
-            brand_tr = brand_tr.replace(token, "")
-        brand_tr = re.sub(r"\d{4}(?:-\d{2})?\s*(AW|SS)?", "", brand_tr, flags=re.IGNORECASE)
-        brand_tr = re.sub(r"(Sonbahar/Kış|İlkbahar/Yaz|Resort|Rezort)", "", brand_tr)
-        # Fallback: strip leftover Japanese collection words if translation failed.
-        for jp in ["コレクション", "ウィメンズ&メンズ", "ウィメンズ", "メンズ", "年秋冬", "年春夏", "秋冬", "春夏", "年"]:
-            brand_tr = brand_tr.replace(jp, "")
-        brand_tr = re.sub(r"\s{2,}", " ", brand_tr).strip(" -–—&・").strip()
         items.append(
             {
                 "source_id": r["source_id"],
@@ -179,12 +194,67 @@ def scrape_collections(limit: int = 40):
                 "image": r["image"],
                 "title_ja": r["title_ja"],
                 "title_tr": title_tr,
-                "brand_tr": brand_tr,
+                "brand_tr": _brand_tr_from_title(title_tr),
                 "season": season,
                 "season_label": _season_label_tr(season),
+                "category": category,
+                "city": None,  # not exposed anywhere on this site
+                "source": "fashion-press",
             }
         )
-    logger.info("fashion: scraped %d collections", len(items))
+    return items
+
+
+def scrape_collections(limit: int = 40, gender: str = "women"):
+    """Scrape runway collections for one gender ("women" or "men")."""
+    path = COLLECTIONS_PATH_BY_GENDER[gender]
+    raw = _parse_collection_links(_fetch(path), limit)
+    items = _finish_items(raw, category=gender)
+    logger.info("fashion: scraped %d %s collections", len(items), gender)
+    return items
+
+
+def scrape_haute_couture(limit: int = 40, max_brands: int = 25):
+    """Scrape haute-couture collections via the couture-house brand index.
+
+    There's no dedicated couture search path, so this walks
+    /brands/all/haute -> each house's own /collections/brand/{id} archive,
+    keeping only collections whose title carries the couture marker (a
+    house's archive can otherwise mix in its ready-to-wear seasons too).
+    Best-effort: a brand whose archive page doesn't parse is skipped rather
+    than failing the whole run.
+    """
+    brand_href_re = re.compile(r"^/collections/brand/(\d+)$")
+    try:
+        index_soup = BeautifulSoup(_fetch(HAUTE_COUTURE_BRANDS_PATH), "html.parser")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("fashion: haute couture brand index failed: %s", exc)
+        return []
+
+    brand_ids = []
+    seen_brands = set()
+    for a in index_soup.find_all("a", href=True):
+        m = brand_href_re.match(a["href"])
+        if m and m.group(1) not in seen_brands:
+            seen_brands.add(m.group(1))
+            brand_ids.append(m.group(1))
+        if len(brand_ids) >= max_brands:
+            break
+
+    raw = []
+    for brand_id in brand_ids:
+        try:
+            path = COLLECTIONS_BY_BRAND_PATH.format(brand_id=brand_id)
+            for link in _parse_collection_links(_fetch(path), limit=limit):
+                if HAUTE_COUTURE_MARKER in link["title_ja"]:
+                    raw.append(link)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fashion: haute couture brand %s failed: %s", brand_id, exc)
+        if len(raw) >= limit:
+            break
+
+    items = _finish_items(raw[:limit], category="haute-couture")
+    logger.info("fashion: scraped %d haute couture collections from %d brands", len(items), len(brand_ids))
     return items
 
 
