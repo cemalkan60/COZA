@@ -1185,6 +1185,10 @@ async def on_startup():
     await _seed_if_empty()
     await _migrate_fashion_schema()
     await _seed_fashion_if_empty()
+    # Let browsers load fashion photos straight from the R2 bucket (see
+    # image_store.ensure_cors_configured's docstring for why this is
+    # needed). Blocking network call, so keep it off the event loop.
+    await asyncio.to_thread(image_store.ensure_cors_configured)
 
 
 @app.on_event("shutdown")

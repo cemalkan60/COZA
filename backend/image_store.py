@@ -84,6 +84,50 @@ def _key_for(source_url: str) -> str:
     return f"fashion/{digest}.{ext}"
 
 
+_cors_checked = False
+
+
+def ensure_cors_configured() -> None:
+    """Allow browsers to load photos straight from the R2 bucket.
+
+    The app wants photos served directly from R2 (fastest — no extra hop
+    through our own backend), but a browser only allows a web page to load
+    an image cross-origin (a different domain than the page itself) if the
+    bucket says it's OK, via CORS headers. R2 buckets don't send those by
+    default, which silently breaks image loading in some browser image
+    components (expo-image's web renderer, notably) even though the same
+    URL loads fine in a plain <img> tag.
+
+    This sets that permission on the bucket itself, once per process
+    (`_cors_checked`) — cheap, idempotent, and safe to call on every
+    startup, so no separate manual setup step is ever needed. Best-effort:
+    on any failure we log and move on, since a failure here should never
+    stop the app from starting (photos would just fall back to whatever
+    they were doing before).
+    """
+    global _cors_checked
+    if _cors_checked or not ENABLED:
+        return
+    _cors_checked = True
+    try:
+        client = _get_client()
+        client.put_bucket_cors(
+            Bucket=_BUCKET,
+            CORSConfiguration={
+                "CORSRules": [
+                    {
+                        "AllowedOrigins": ["*"],
+                        "AllowedMethods": ["GET", "HEAD"],
+                        "AllowedHeaders": ["*"],
+                        "MaxAgeSeconds": 86400,
+                    }
+                ]
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("image_store: failed to set bucket CORS policy: %s", exc)
+
+
 def cache_image(source_url: str) -> str:
     """Return a URL to a copy of `source_url` hosted on our own R2 bucket,
     uploading it first if this is the first time we've seen it. Falls back

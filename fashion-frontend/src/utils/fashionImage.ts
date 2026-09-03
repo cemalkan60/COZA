@@ -77,15 +77,19 @@ export async function resolveBestImage(original: string): Promise<string> {
 // src through our own backend on web, which fetches the bytes server-side
 // and re-serves them from our own origin.
 //
-// Most photos, though, are already re-hosted on our own Cloudflare R2
-// bucket by the time they reach here (see image_store.py) — that's a CDN
-// we control, with no Referer restriction, so proxying those through our
-// backend too would be pure waste (an extra hop re-downloading/re-streaming
-// a photo that's already sitting on a fast public CDN) and, until the
-// backend's host allowlist knew about the R2 domain, actively broke every
-// R2-cached photo on web (400 from /fashion/image-proxy). Load those, and
-// anything else that isn't one of the known Referer-sensitive hosts,
-// directly.
+// Everything else — in practice, every photo already re-hosted on our own
+// Cloudflare R2 bucket by the time it reaches here (see image_store.py) —
+// loads directly from R2, which is a CDN we control and the fastest path
+// (no extra backend hop, no waiting on our server to relay bytes).
+//
+// R2 direct-loading briefly shipped without the bucket having CORS
+// permissions configured, which silently broke every R2 thumbnail in
+// expo-image's web renderer (crossOrigin="anonymous" + a response with no
+// Access-Control-Allow-Origin = the browser refuses to show it, even
+// though the same URL loads fine in a plain <img>). That's now fixed at
+// the source: the backend sets the bucket's CORS policy itself on every
+// startup (see image_store.ensure_cors_configured), so direct R2 loading
+// is safe again — no per-request proxy needed for it.
 const REFERER_SENSITIVE_HOSTS = [/(^|\.)fashion-press\.net$/i, /(^|\.)firstview\.com$/i];
 
 function needsProxy(url: string): boolean {
