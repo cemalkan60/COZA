@@ -1,6 +1,19 @@
 import { storage } from "@/src/utils/storage";
 
-const BASE = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api`;
+// EXPO_PUBLIC_* env vars are baked into the JS bundle at BUILD time, not read
+// at runtime — so if a particular EAS build profile/environment doesn't have
+// EXPO_PUBLIC_BACKEND_URL configured on Expo's side when the build runs, this
+// silently comes back as `undefined` in that build forever (rebuilding the
+// backend or the app later doesn't fix it — only rebuilding the app WITH the
+// variable set does). That turned BASE into the literal string
+// "undefined/api", so every request — including login — failed instantly
+// with "Network request failed" and no more specific error, which was hard
+// to tell apart from an actual connectivity problem. Falling back to our own
+// production backend here means a build missing that variable still works,
+// instead of shipping unusable until someone notices and fixes the Expo
+// project's environment variables and rebuilds.
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "https://coza-production.up.railway.app";
+const BASE = `${BACKEND_URL}/api`;
 export const TOKEN_KEY = "coza.auth.token";
 
 // ---- COZA Fashion (runway collections aggregated from multiple sources) ----
