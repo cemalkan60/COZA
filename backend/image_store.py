@@ -26,6 +26,7 @@ R2 is actually configured and cache_image() is called.
 import os
 import hashlib
 import logging
+from urllib.parse import urlparse
 
 import requests
 
@@ -36,6 +37,11 @@ _ACCESS_KEY = os.environ.get("R2_ACCESS_KEY_ID", "")
 _SECRET_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 _BUCKET = os.environ.get("R2_BUCKET_NAME", "")
 _PUBLIC_BASE = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
+
+# Hostname photos get served from once cache_image() has re-hosted them —
+# exposed so other modules (the image-proxy host allowlist in server.py)
+# can recognize our own CDN URLs without hardcoding the bucket's domain.
+PUBLIC_HOSTNAME = (urlparse(_PUBLIC_BASE).hostname or "").lower() if _PUBLIC_BASE else None
 
 ENABLED = bool(_ACCOUNT_ID and _ACCESS_KEY and _SECRET_KEY and _BUCKET and _PUBLIC_BASE)
 

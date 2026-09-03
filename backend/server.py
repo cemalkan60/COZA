@@ -282,9 +282,14 @@ def _dedupe_images_phash(urls: list, threshold: int = 6) -> list:
     return [u for u, _, _ in kept]
 
 
-def _merge_fashion_items(raw_items: list) -> list:
-    """Group same brand+season+category across sources into one collection,
-    combining photos and dropping near-duplicate shots between sources.
+def _group_fashion_items(raw_items: list) -> list:
+    """Group same brand+season+category across sources into one collection.
+
+    Pure, in-memory, no network calls — safe to run synchronously up front.
+    Each group's photo list still needs _finalize_fashion_group() (phash
+    dedup + R2 caching) before it's ready to save; that part is what's slow,
+    so it's kept separate and run with bounded concurrency per group instead
+    of sequentially for the whole batch (see run_fashion_scrape).
     """
     groups: dict = {}
     for raw in raw_items:
@@ -315,22 +320,53 @@ def _merge_fashion_items(raw_items: list) -> list:
             g["sources"].append(item["source"])
         if item["source"] == "fashion-press" and g["fp_source_id"] is None:
             g["fp_source_id"] = item["raw_source_id"]
+    return list(groups.values())
 
-    merged = []
-    for g in groups.values():
-        seen: set = set()
-        unique_urls = [u for u in g["images"] if not (u in seen or seen.add(u))]
-        if len(g["sources"]) > 1:
-            unique_urls = _dedupe_images_phash(unique_urls)
-        if image_store.ENABLED:
-            # Re-host each photo on our own R2 bucket so the app serves it
-            # instantly instead of live-proxying the source site per view.
-            # No-op (returns the original URL) until R2 is configured.
-            unique_urls = [image_store.cache_image(u) for u in unique_urls]
-        g["images"] = unique_urls
-        g["image"] = unique_urls[0] if unique_urls else None
-        merged.append(g)
-    return merged
+
+def _finalize_fashion_group(g: dict) -> dict:
+    """Resolve one merge group's final photo list: drop cross-source
+    duplicate shots (phash) then re-host each photo on R2. Blocking/network
+    work — always called via asyncio.to_thread, bounded by a semaphore so
+    only a handful of groups do this at once (see run_fashion_scrape).
+    """
+    seen: set = set()
+    unique_urls = [u for u in g["images"] if not (u in seen or seen.add(u))]
+    if len(g["sources"]) > 1:
+        unique_urls = _dedupe_images_phash(unique_urls)
+    if image_store.ENABLED:
+        # Re-host each photo on our own R2 bucket so the app serves it
+        # instantly instead of live-proxying the source site per view.
+        # No-op (returns the original URL) until R2 is configured.
+        unique_urls = [image_store.cache_image(u) for u in unique_urls]
+    g["images"] = unique_urls
+    g["image"] = unique_urls[0] if unique_urls else None
+    return g
+
+
+async def _finalize_and_save_group(g: dict, sem: asyncio.Semaphore, now_iso: str) -> bool:
+    """Finish one merge group and upsert it immediately — so collections
+    show up in the feed as each one finishes instead of only after every
+    single one of the ~90+ groups in a scrape is done. `sem` caps how many
+    of these run at once (each is a blocking thread doing network I/O).
+    """
+    ok = False
+    try:
+        async with sem:
+            finalized = await asyncio.to_thread(_finalize_fashion_group, g)
+        finalized["updated_at"] = now_iso
+        await db.fashion.update_one(
+            {"source_id": finalized["source_id"]},
+            {"$set": finalized, "$setOnInsert": {"first_seen": now_iso}},
+            upsert=True,
+        )
+        ok = True
+    except Exception:
+        logger.exception("Fashion scrape: group %s failed to finalize/save", g.get("source_id"))
+    finally:
+        # Counts every attempt (success or fail) so a progress indicator
+        # ("N / total taranıyor") advances even past a handful of failures.
+        await db.meta.update_one({"_id": "fashion"}, {"$inc": {"groups_done": 1}})
+    return ok
 
 
 async def run_fashion_scrape(reason: str = "manual") -> dict:
@@ -372,37 +408,56 @@ async def run_fashion_scrape(reason: str = "manual") -> dict:
 
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
-            merged = await asyncio.to_thread(_merge_fashion_items, raw_items)
-            for it in merged:
-                it["updated_at"] = now_iso
-                await db.fashion.update_one(
-                    {"source_id": it["source_id"]},
-                    {"$set": it, "$setOnInsert": {"first_seen": now_iso}},
-                    upsert=True,
-                )
+            groups = _group_fashion_items(raw_items)
+            await db.meta.update_one(
+                {"_id": "fashion"},
+                {
+                    "$set": {
+                        "scraping": True,
+                        "scrape_started_at": now_iso,
+                        "reason": reason,
+                        "groups_total": len(groups),
+                        "groups_done": 0,
+                    }
+                },
+                upsert=True,
+            )
+            # Finalize (phash dedup + R2 cache) and save each group as soon
+            # as it's ready. Bounded concurrency (not 90+ at once, not one
+            # at a time) — sequential per-photo network calls here are what
+            # made a full scrape take 30-90+ minutes before, with nothing
+            # visible in the app until every single group was done.
+            sem = asyncio.Semaphore(8)
+            results = await asyncio.gather(
+                *(_finalize_and_save_group(g, sem, now_iso) for g in groups)
+            )
+            saved = sum(1 for ok in results if ok)
+            meta = {
+                "last_scrape": now_iso,
+                "item_count": await db.fashion.count_documents({}),
+                "raw_item_count": len(raw_items),
+                "reason": reason,
+                "scraping": False,
+                "groups_total": len(groups),
+                "groups_done": saved,
+            }
+            await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
         except Exception:
             logger.exception("Fashion scrape (%s): merge/save failed", reason)
-            merged = []
             meta = {
                 "last_scrape": now_iso,
                 "item_count": await db.fashion.count_documents({}),
                 "raw_item_count": len(raw_items),
                 "reason": reason,
                 "error": "merge_or_save_failed",
+                "scraping": False,
             }
             await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
             return {"status": "error", **meta}
 
-        meta = {
-            "last_scrape": now_iso,
-            "item_count": await db.fashion.count_documents({}),
-            "raw_item_count": len(raw_items),
-            "reason": reason,
-        }
-        await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
         logger.info(
-            "Fashion scrape done (%s): %d raw items -> %d merged collections, %.1fs",
-            reason, len(raw_items), len(merged),
+            "Fashion scrape done (%s): %d raw items -> %d/%d groups saved, %.1fs",
+            reason, len(raw_items), saved, len(groups),
             (datetime.now(timezone.utc) - started).total_seconds(),
         )
         return {"status": "ok", **meta}
@@ -421,7 +476,7 @@ async def _migrate_fashion_schema():
     """One-time cleanup: drop leftover documents from before the multi-source
     merge system (this session's split of COZA into MadeIn + Fashion). Those
     were keyed by the raw fashion-press numeric id directly, carry no
-    "sources" field (only ever set by _merge_fashion_items), and can never be
+    "sources" field (only ever set by _group_fashion_items), and can never be
     upserted-over again since the merge key format changed — so they'd
     otherwise sit forever as orphaned, stale, image-less entries mixed into
     the feed.
@@ -866,8 +921,23 @@ async def remove_favorite(product_id: str, user: Annotated[dict, Depends(get_cur
 
 # ----------------------------- COZA Fashion routes -----------------------------
 def _fashion_image_host_allowed(hostname: str) -> bool:
+    """Hosts the proxy will fetch from. Originally fashion-press.net only
+    (see docstring below) — extended to firstview.com (our other live
+    source) and our own R2 public host, since a photo that failed to cache
+    to R2 (image_store.cache_image() falls back to the original URL on any
+    error) still needs to load through here on web. R2 URLs themselves
+    don't actually need proxying — see fashionImageUri() on the frontend,
+    which now only routes fashion-press.net/firstview.com through this
+    endpoint and loads our own CDN URLs directly.
+    """
     hostname = (hostname or "").lower()
-    return hostname == "fashion-press.net" or hostname.endswith(".fashion-press.net")
+    if hostname == "fashion-press.net" or hostname.endswith(".fashion-press.net"):
+        return True
+    if hostname == "firstview.com" or hostname.endswith(".firstview.com"):
+        return True
+    if image_store.PUBLIC_HOSTNAME and hostname == image_store.PUBLIC_HOSTNAME:
+        return True
+    return False
 
 
 @api.get("/fashion/image-proxy")
