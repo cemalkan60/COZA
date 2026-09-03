@@ -104,7 +104,11 @@ export default function BrandGallery() {
     let cancelled = false;
     async function fetchImages() {
       try {
-        const base = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+        // Falls back to our own production backend if this build's env var
+        // wasn't set (see the matching comment in src/api/client.ts) — same
+        // bug, different call site, since this screen fetches the gallery
+        // directly instead of going through the shared api client.
+        const base = process.env.EXPO_PUBLIC_BACKEND_URL || "https://coza-production.up.railway.app";
         const fetchedImgs: string[] = [];
         if (base) {
           try {
