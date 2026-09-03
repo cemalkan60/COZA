@@ -892,7 +892,7 @@ async def fashion_collections(
         ]
     cursor = (
         db.fashion.find(query, {"_id": 0})
-        .sort([("source_id", -1)])
+        .sort([("updated_at", -1), ("source_id", -1)])
         .skip(skip)
         .limit(limit)
     )
