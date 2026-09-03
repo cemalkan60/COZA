@@ -14,7 +14,6 @@ const NAV: { route: string; label: string; icon: any; external?: boolean }[] = [
   { route: "analytics", label: "Analiz", icon: "pie-chart" },
   { route: "favorites", label: "Favoriler", icon: "heart" },
   { route: "profile", label: "Profil", icon: "user" },
-  { route: "/hub", label: "Ana Sayfa", icon: "home", external: true },
 ];
 
 export function DrawerContent(props: any) {
