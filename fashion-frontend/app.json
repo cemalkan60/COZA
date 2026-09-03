@@ -14,7 +14,8 @@
     "updates": {
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/698482bd-5238-4d3e-82ed-f332cc16d8b2"
     },
     "ios": {
       "supportsTablet": true,
@@ -50,6 +51,11 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "698482bd-5238-4d3e-82ed-f332cc16d8b2"
+      }
     }
   }
 }
