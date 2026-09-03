@@ -1,6 +1,6 @@
-# COZA — Zara Woman Tedarik İzleyici
+# MadeIn — Zara Woman Tedarik İzleyici
 
-COZA, Zara Woman koleksiyonunu izleyen; ürün kataloğu, kapsamlı arama, gerçek
+MadeIn, Zara Woman koleksiyonunu izleyen; ürün kataloğu, kapsamlı arama, gerçek
 üretim yeri ("Made in") bilgisi, üretici kodu bazlı analiz, favoriler ve ürün
 karşılaştırma sunan **Türkçe** bir mobil uygulamadır. Kapalı bir giriş sistemi
 (auth wall) ile yalnızca önceden tanımlı 5 kullanıcı erişebilir.

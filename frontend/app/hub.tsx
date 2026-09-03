@@ -50,7 +50,7 @@ export default function Hub() {
       )}
 
       <Pressable testID="hub-analysis" onPress={() => go("/(tabs)")} style={[styles.zone, styles.analysisZone]} hitSlop={20}>
-        <Text style={[styles.brand, { fontSize: brandSize, letterSpacing: brandSize * 0.5 }]}>COZA</Text>
+        <Text style={[styles.brand, { fontSize: brandSize, letterSpacing: brandSize * 0.5 }]}>MadeIn</Text>
         <Text
           style={[
             styles.analysisWord,
