@@ -25,6 +25,7 @@ import scraper
 import fashion_scraper
 import nowfashion_scraper
 import firstview_scraper
+import image_store
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -321,6 +322,11 @@ def _merge_fashion_items(raw_items: list) -> list:
         unique_urls = [u for u in g["images"] if not (u in seen or seen.add(u))]
         if len(g["sources"]) > 1:
             unique_urls = _dedupe_images_phash(unique_urls)
+        if image_store.ENABLED:
+            # Re-host each photo on our own R2 bucket so the app serves it
+            # instantly instead of live-proxying the source site per view.
+            # No-op (returns the original URL) until R2 is configured.
+            unique_urls = [image_store.cache_image(u) for u in unique_urls]
         g["images"] = unique_urls
         g["image"] = unique_urls[0] if unique_urls else None
         merged.append(g)
@@ -909,6 +915,8 @@ async def fashion_collection_detail(source_id: str):
         return {"images": []}
     try:
         images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, fp_id)
+        if image_store.ENABLED:
+            images = await asyncio.to_thread(lambda: [image_store.cache_image(u) for u in images])
     except Exception:
         images = []
     if images:
