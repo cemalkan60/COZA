@@ -230,10 +230,23 @@ def scrape_collections(limit: int = 40, gender: str = "women", season: Optional[
     With `season` set to one of fashion-press.net's own season slugs (e.g.
     "2026-27aw", "2027ss" — same spelling as their URLs), this instead walks
     that season's own listing page by page (their pagination, ~42 items per
-    page) until a page comes back empty, up to `limit`. That's how a full
-    historical pull for a specific season (a backfill) is done — the
-    unfiltered listing alone can't reach older items once enough newer ones
-    have pushed them past page 1.
+    page) until a page stops contributing anything NEW, up to `limit`.
+    That's how a full historical pull for a specific season (a backfill) is
+    done — the unfiltered listing alone can't reach older items once enough
+    newer ones have pushed them past page 1.
+
+    Termination is by "no new items", not "empty page": past the real last
+    page, fashion-press.net keeps rendering a handful of "related
+    collections" links in a sidebar widget on every page, so a literally
+    empty page never actually arrives — confirmed live during a 2026-27aw
+    backfill, where this kept the loop paging (1248 pages, ~2-3 items each)
+    all the way to the 3000-item safety cap instead of stopping once the
+    real listing (a few dozen pages) ran out. Tracking source_ids already
+    seen across pages and stopping the moment a page adds none we didn't
+    already have catches that — the sidebar reshuffles the same related
+    items rather than producing an endless stream of new ones. A hard page
+    cap is kept too, belt-and-suspenders, in case some other listing shape
+    keeps dribbling out genuinely-new-looking links forever.
     """
     if season:
         gender_slug = "womens" if gender == "women" else "mens"
@@ -241,9 +254,12 @@ def scrape_collections(limit: int = 40, gender: str = "women", season: Optional[
     else:
         path_root = COLLECTIONS_PATH_BY_GENDER[gender]
 
+    MAX_PAGES = 150  # ~6300 items at ~42/page — generous for one season+gender, but bounded
+
     raw: list = []
+    seen_ids: set = set()
     page = 1
-    while len(raw) < limit:
+    while len(raw) < limit and page <= MAX_PAGES:
         suffix = "" if page == 1 else f"?page={page}"
         try:
             html = _fetch(path_root + suffix)
@@ -251,9 +267,12 @@ def scrape_collections(limit: int = 40, gender: str = "women", season: Optional[
             logger.warning("fashion: page %d fetch failed for %s/%s: %s", page, season or "latest", gender, exc)
             break
         page_items = _parse_collection_links(html, limit=limit - len(raw))
-        if not page_items:
-            break  # past the last page (or nothing matched) — stop
-        raw.extend(page_items)
+        new_items = [it for it in page_items if it["source_id"] not in seen_ids]
+        if not new_items:
+            break  # past the last real page — only already-seen (or no) links left
+        for it in new_items:
+            seen_ids.add(it["source_id"])
+        raw.extend(new_items)
         if not season:
             break  # unfiltered "latest" mode stays single-page, as before
         page += 1
