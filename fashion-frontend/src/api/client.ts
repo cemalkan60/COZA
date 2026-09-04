@@ -130,4 +130,9 @@ export const api = {
   // source's latest page) — much slower than fashionScrape, see its comment
   // in server.py. Separate button in Settings, not part of the schedule.
   fashionBackfill: () => request("/admin/fashion-backfill", { method: "POST" }, true),
+  // One-off sweep that gives every fashion-press collection a real cover
+  // photo (instead of the low-res listing-page thumbnail) by fetching its
+  // gallery early instead of waiting for someone to open it. See
+  // run_fashion_cover_fix in server.py.
+  fashionFixCovers: () => request("/admin/fashion-fix-covers", { method: "POST" }, true),
 };
