@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { forwardRef, useImperativeHandle, useState } from "react";
 import { Image, type ImageContentFit } from "expo-image";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -11,29 +11,39 @@ import Animated, {
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
 const DOUBLE_TAP_SCALE = 2.5;
+// How much one press of the +/- zoom button changes the scale (see
+// ZoomableImageHandle below) — independent of pinch/double-tap, which use
+// their own gesture-driven scale and DOUBLE_TAP_SCALE respectively.
+const BUTTON_ZOOM_STEP = 1;
 
 function clamp(value: number, min: number, max: number) {
   "worklet";
   return Math.min(Math.max(value, min), max);
 }
 
+// Imperative +/- zoom controls for a click-based UI (buttons), alongside the
+// gesture-based pinch/double-tap this component already supports — a parent
+// screen holds a ref per visible page and calls these from its own +/-
+// buttons (see app/fashion/brand/[id].tsx's viewer toolbar).
+export type ZoomableImageHandle = {
+  zoomIn: () => void;
+  zoomOut: () => void;
+};
+
 // Pinch-to-zoom + pan + double-tap image, meant for a full-screen viewer page.
 // `onZoomChange` lets the parent (e.g. a paging FlatList) disable its own
 // horizontal swipe while the image is zoomed in, so panning moves the photo
 // instead of flipping to the next one.
-export function ZoomableImage({
-  uri,
-  width,
-  height,
-  contentFit = "contain",
-  onZoomChange,
-}: {
-  uri: string;
-  width: number;
-  height: number;
-  contentFit?: ImageContentFit;
-  onZoomChange?: (zoomed: boolean) => void;
-}) {
+export const ZoomableImage = forwardRef<
+  ZoomableImageHandle,
+  {
+    uri: string;
+    width: number;
+    height: number;
+    contentFit?: ImageContentFit;
+    onZoomChange?: (zoomed: boolean) => void;
+  }
+>(function ZoomableImage({ uri, width, height, contentFit = "contain", onZoomChange }, ref) {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -68,6 +78,47 @@ export function ZoomableImage({
       y: Math.max(0, (height * (s - 1)) / 2),
     };
   };
+
+  // Plain JS-thread version of the above, for the +/- button handlers below
+  // (a Pressable's onPress always runs on the JS thread already, so this
+  // sets shared values directly rather than going through a gesture
+  // worklet). `boundsFor`/`clamp` are also callable directly like this —
+  // "worklet" only matters when the reanimated babel plugin needs a
+  // UI-thread copy for a gesture callback — but keeping this path visibly
+  // separate from `reset` (used by the gesture handlers below) makes the
+  // two call sites easy to tell apart at a glance.
+  const zoomTo = (nextScale: number) => {
+    const target = clamp(nextScale, MIN_SCALE, MAX_SCALE);
+    if (target <= MIN_SCALE) {
+      scale.value = withTiming(1);
+      translateX.value = withTiming(0);
+      translateY.value = withTiming(0);
+      savedScale.value = 1;
+      savedTranslateX.value = 0;
+      savedTranslateY.value = 0;
+      notifyZoom(false);
+      return;
+    }
+    const bounds = boundsFor(target);
+    const tx = clamp(translateX.value, -bounds.x, bounds.x);
+    const ty = clamp(translateY.value, -bounds.y, bounds.y);
+    scale.value = withTiming(target);
+    translateX.value = withTiming(tx);
+    translateY.value = withTiming(ty);
+    savedScale.value = target;
+    savedTranslateX.value = tx;
+    savedTranslateY.value = ty;
+    notifyZoom(true);
+  };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      zoomIn: () => zoomTo(savedScale.value + BUTTON_ZOOM_STEP),
+      zoomOut: () => zoomTo(savedScale.value - BUTTON_ZOOM_STEP),
+    }),
+    [], // shared values are stable refs — this handle never needs to change
+  );
 
   const pinch = Gesture.Pinch()
     .onUpdate((e) => {
@@ -131,4 +182,4 @@ export function ZoomableImage({
       </Animated.View>
     </GestureDetector>
   );
-}
+});
