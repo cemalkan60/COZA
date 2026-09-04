@@ -5,9 +5,23 @@ This module powers the *separate* "COZA Fashion" section of the app. It ONLY
 collects corporate / editorial fashion data — women's runway collections with
 brand, season and title — never user-generated or personal content.
 
-Source: https://www.fashion-press.net (Japanese). Titles are translated JA -> TR
-at scrape time via deep-translator (free Google endpoint). Runs Mondays and
-Wednesdays (see the scheduled job in server.py).
+Source: https://www.fashion-press.net (Japanese). Runs Mondays and Wednesdays
+(see the scheduled job in server.py).
+
+Brand names used to be "translated" JA->TR via deep-translator (a free Google
+Translate endpoint) by feeding it the WHOLE title — including the brand name
+itself, written in katakana (a phonetic rendering, not a word with a
+"meaning" to translate). That's exactly backwards for a proper noun: it
+produced nonsense translations, and frequently just failed outright ("No
+translation was found") under the free endpoint's rate limits. Dropped
+entirely (not just supplemented) in favor of: (1) _romanize_ja(), a free,
+always-available mechanical kana/kanji->romaji reading (pykakasi) computed
+here at scrape time as a floor value that's never blank and never Japanese;
+(2) a cached Gemini text-lookup in server.py (_resolve_brand_names) that
+upgrades that reading to the brand's real Latin-script spelling where it can
+before items are grouped into collections. See _romanize_ja's docstring for
+why the pykakasi reading alone isn't good enough for a foreign-word brand
+name.
 """
 import re
 import time
@@ -93,37 +107,39 @@ def _fetch(path: str) -> str:
     return resp.text
 
 
-def _translate_batch(texts, source="ja", target="tr"):
-    """Translate a list of strings JA->TR. Falls back to original on any error."""
-    try:
-        from deep_translator import GoogleTranslator
-    except Exception as exc:  # pragma: no cover - dependency guard
-        logger.warning("deep-translator unavailable (%s); keeping original text", exc)
-        return list(texts)
+_kakasi = None
 
-    out = []
-    translator = GoogleTranslator(source=source, target=target)
-    for t in texts:
-        if not t:
-            out.append(t)
-            continue
-        result = None
-        # Retry a few times — the free endpoint occasionally rate-limits and
-        # returns the original (untranslated) string.
-        for attempt in range(3):
-            try:
-                cand = translator.translate(t)
-            except Exception as exc:
-                logger.warning("translate attempt %d failed for %r: %s", attempt + 1, t, exc)
-                cand = None
-            # Reject a result that is still (mostly) Japanese.
-            if cand and not _looks_japanese(cand):
-                result = cand
-                break
-            time.sleep(0.6 * (attempt + 1))
-        out.append(result or t)
-        time.sleep(0.15)  # be polite to the free endpoint
-    return out
+
+def _romanize_ja(text: str) -> str:
+    """Phonetic Latin-alphabet reading of a Japanese string (pykakasi), title
+    cased word-by-word -- e.g. "Yoshiokubo" from the brand name "Yoshiokubo"
+    written in katakana.
+
+    This is a mechanical kana/kanji -> romaji reading, not a lookup of the
+    brand's actual spelling -- it gets a Japanese-origin name right by
+    coincidence (the reading IS the name), but a katakana rendering of a
+    foreign word (e.g. "Andaakabaa" instead of "Undercover") comes out wrong
+    just as often as it comes out close. It's the always-on floor everything
+    gets at scrape time (never blank, never Japanese, never the nonsense
+    running it through a translator produced); server.py's
+    _resolve_brand_names then upgrades it to the real name where an AI
+    lookup succeeds. Falls back to the original text on any error (e.g.
+    pykakasi missing) so a broken import here never breaks scraping.
+    """
+    if not text:
+        return text
+    global _kakasi
+    try:
+        if _kakasi is None:
+            import pykakasi
+
+            _kakasi = pykakasi.kakasi()
+        words = [w["hepburn"] for w in _kakasi.convert(text) if w.get("hepburn", "").strip()]
+        romanized = " ".join(w[:1].upper() + w[1:] for w in words)
+        return romanized or text
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("pykakasi romanization failed for %r: %s", text, exc)
+        return text
 
 
 _JP_RE = re.compile(r"[\u3040-\u30ff\u4e00-\u9faf]")
@@ -173,20 +189,26 @@ def _parse_collection_links(html: str, limit: int) -> list:
     return raw
 
 
-def _brand_tr_from_title(title_tr: str) -> str:
-    brand_tr = title_tr
-    for token in ["Koleksiyonu", "Koleksiyon", "Kadın & Erkek", "Kadın", "Erkek", "Haute couture", "Haute Couture"]:
-        brand_tr = brand_tr.replace(token, "")
-    brand_tr = re.sub(r"\d{4}(?:-\d{2})?\s*(AW|SS)?", "", brand_tr, flags=re.IGNORECASE)
-    brand_tr = re.sub(r"(Sonbahar/Kış|İlkbahar/Yaz|Resort|Rezort)", "", brand_tr)
-    # Fallback: strip leftover Japanese collection words if translation failed.
-    for jp in ["コレクション", "ウィメンズ&メンズ", "ウィメンズ", "メンズ", "オートクチュール", "年秋冬", "年春夏", "秋冬", "春夏", "年"]:
-        brand_tr = brand_tr.replace(jp, "")
-    return re.sub(r"\s{2,}", " ", brand_tr).strip(" -–—&・").strip()
+_TITLE_SUFFIX_RE = re.compile(
+    r"\s*(?:オートクチュール\s*)?"
+    r"\d{4}(?:-\d{2})?年?(?:秋冬|春夏|春|秋|リゾート|プレフォール)?\s*"
+    r"(?:ウィメンズ&メンズ|ウィメンズ|メンズ)?\s*"
+    r"(?:コレクション)?\s*$"
+)
+
+
+def _brand_ja_from_title(title_ja: str) -> str:
+    """Strip the trailing year/season/gender/"collection" suffix from a raw
+    fashion-press title, leaving just the brand/designer name (still in
+    Japanese/katakana -- romanizing it is _romanize_ja's job, resolving it to
+    the brand's real name is server.py's).
+    """
+    brand = _TITLE_SUFFIX_RE.sub("", title_ja).strip()
+    return brand or title_ja
 
 
 def _finish_items(raw: list, category: str) -> list:
-    """Translate titles JA->TR and shape raw link dicts into full fashion items.
+    """Extract the brand name and shape raw link dicts into full fashion items.
 
     NOTE: only the listing-page thumbnail is captured here — an earlier
     version of this function also fetched each collection's full gallery
@@ -196,19 +218,28 @@ def _finish_items(raw: list, category: str) -> list:
     first). Reverted: the full gallery is still fetched and R2-cached, just
     lazily on first view via GET /fashion/collections/{source_id} (see
     fetch_collection_images() below and its caller in server.py).
+
+    brand_tr starts out as just the romanized reading (_romanize_ja) of the
+    brand name extracted from the title (_brand_ja_from_title) — brand_ja is
+    carried along on the item specifically so server.py's _resolve_brand_names
+    can upgrade it to the brand's real name via a cached AI lookup before
+    items get grouped into collections (see run_fashion_scrape).
     """
-    titles_tr = _translate_batch([r["title_ja"] for r in raw])
     items = []
-    for r, title_tr in zip(raw, titles_tr):
-        season = _normalize_season(r["title_ja"])
+    for r in raw:
+        title_ja = r["title_ja"]
+        season = _normalize_season(title_ja)
+        brand_ja = _brand_ja_from_title(title_ja)
+        brand_tr = _romanize_ja(brand_ja)
         items.append(
             {
                 "source_id": r["source_id"],
                 "url": r["url"],
                 "image": r["image"],
-                "title_ja": r["title_ja"],
-                "title_tr": title_tr,
-                "brand_tr": _brand_tr_from_title(title_tr),
+                "title_ja": title_ja,
+                "brand_ja": brand_ja,
+                "title_tr": brand_tr,
+                "brand_tr": brand_tr,
                 "season": season,
                 "season_label": _season_label_tr(season),
                 "category": category,
@@ -563,19 +594,25 @@ def fetch_looks(params: dict, limit: int = 40) -> list:
         if len(raw) >= limit:
             break
 
-    # Translate brand + season caption text JA -> TR in one batch each.
-    brands_tr = _translate_batch([r["brand_ja"] for r in raw])
-    seasons_tr = _translate_batch([r["season_text_ja"] for r in raw])
-
+    # Romanize the brand caption (already brand-only text on this card, no
+    # title suffix to strip); the season caption goes through the same
+    # season parser as everywhere else when it matches one of the known
+    # patterns, falling back to a plain romanized reading otherwise. This is
+    # a live per-request call (no scrape-time batching to cache across), so
+    # unlike _finish_items it stays at the free pykakasi reading rather than
+    # also paying for an AI brand-name lookup on every search.
     items = [
         {
             "source_id": r["source_id"],
             "url": r["url"],
             "image": r["image"],
-            "brand_tr": brand_tr,
-            "season_text_tr": season_tr,
+            "brand_tr": _romanize_ja(r["brand_ja"]),
+            "season_text_tr": (
+                _season_label_tr(_normalize_season(r["season_text_ja"]))
+                or _romanize_ja(r["season_text_ja"])
+            ),
         }
-        for r, brand_tr, season_tr in zip(raw, brands_tr, seasons_tr)
+        for r in raw
     ]
     logger.info("fashion: fetched %d looks for %r", len(items), qs)
     return items

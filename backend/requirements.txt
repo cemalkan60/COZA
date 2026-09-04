@@ -31,9 +31,10 @@ tzdata==2026.3
 requests==2.34.2
 
 # COZA Fashion (fashion-press.net / nowfashion.com / firstview.com scrape,
-# JA->TR translation, and perceptual-hash photo de-duplication across sources)
+# JA->TR brand-name romanization, and perceptual-hash photo de-duplication
+# across sources)
 beautifulsoup4==4.12.3
-deep-translator==1.11.4
+pykakasi==2.3.0
 Pillow>=11.3
 ImageHash>=4.3
 

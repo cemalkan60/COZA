@@ -26,6 +26,7 @@ import fashion_scraper
 import nowfashion_scraper
 import firstview_scraper
 import image_store
+import gemini_client
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -244,6 +245,87 @@ def _fashion_merge_key(item: dict) -> str:
     return key or f"item-{abs(hash(item['url']))}"
 
 
+async def _resolve_brand_names(raw_items: list) -> None:
+    """Upgrade fashion-press items' brand_tr/title_tr from pykakasi's
+    romanized guess (see fashion_scraper._romanize_ja) to the brand's real
+    Latin-script name, via a cached Gemini text lookup — in place, on the
+    raw items list, before _group_fashion_items runs (brand_tr feeds the
+    merge key, so this has to happen first; a consistent resolved name
+    across items also keeps different scrapes of the same collection
+    merging together, the same invariant the old translate-based code
+    depended on).
+
+    Only fashion-press items carry a brand_ja (the original Japanese brand
+    string) to look up — firstview items already have real English brand_tr
+    text from their own parser and are left untouched. Results are cached
+    in db.brand_names, keyed by brand_ja, so a given brand is only ever sent
+    to Gemini once no matter how many collections/scrapes reference it
+    (including a brand Gemini couldn't resolve — that's cached too, so a
+    backfill re-scrape doesn't keep re-asking about it).
+
+    Safe to call even when gemini_client.ENABLED is False (GEMINI_API_KEY
+    not configured) — it's then a no-op and every item keeps its pykakasi
+    fallback value, exactly as before this function existed.
+    """
+    if not gemini_client.ENABLED:
+        return
+
+    candidates: dict = {}
+    for r in raw_items:
+        brand_ja = (r.get("brand_ja") or "").strip()
+        if brand_ja and r.get("source") == "fashion-press":
+            candidates.setdefault(brand_ja, []).append(r)
+    if not candidates:
+        return
+
+    resolved: dict = {}
+    to_lookup = []
+    for brand_ja in candidates:
+        cached = await db.brand_names.find_one({"_id": brand_ja})
+        if cached is None:
+            to_lookup.append(brand_ja)
+        elif cached.get("brand_tr"):
+            resolved[brand_ja] = cached["brand_tr"]
+
+    if to_lookup:
+        sem = asyncio.Semaphore(5)
+
+        async def _lookup(brand_ja: str) -> None:
+            async with sem:
+                name = await asyncio.to_thread(gemini_client.resolve_brand_name, brand_ja)
+            await db.brand_names.update_one(
+                {"_id": brand_ja},
+                {"$set": {"brand_tr": name, "resolved_at": datetime.now(timezone.utc).isoformat()}},
+                upsert=True,
+            )
+            if name:
+                resolved[brand_ja] = name
+
+        await asyncio.gather(*(_lookup(b) for b in to_lookup))
+
+    if not resolved:
+        return
+
+    upgraded = 0
+    for brand_ja, items in candidates.items():
+        new_brand = resolved.get(brand_ja)
+        if not new_brand:
+            continue
+        for r in items:
+            old_brand = r.get("brand_tr") or ""
+            r["brand_tr"] = new_brand
+            # title_tr is set equal to brand_tr in fashion_scraper's
+            # _finish_items (fashion-press items have no other title text
+            # of their own), so it upgrades the same way.
+            if r.get("title_tr") == old_brand:
+                r["title_tr"] = new_brand
+            upgraded += 1
+    logger.info(
+        "Fashion scrape: resolved %d brand name(s) via Gemini, applied to %d item(s)",
+        len(resolved), upgraded,
+    )
+
+
 def _dedupe_images_phash(urls: list, threshold: int = 6) -> list:
     """Drop near-duplicate photos (the same shot syndicated by two sources),
     keeping the higher-resolution copy. Downloads each candidate to hash it —
@@ -418,16 +500,44 @@ def _finalize_fashion_group(g: dict) -> dict:
     return g
 
 
+_FINALIZE_TIMEOUT_S = 90
+
+
 async def _finalize_and_save_group(g: dict, sem: asyncio.Semaphore, now_iso: str) -> bool:
     """Finish one merge group and upsert it immediately — so collections
     show up in the feed as each one finishes instead of only after every
     single one of the ~90+ groups in a scrape is done. `sem` caps how many
     of these run at once (each is a blocking thread doing network I/O).
+
+    Wrapped in a hard wall-clock timeout (_FINALIZE_TIMEOUT_S): `requests`'
+    own `timeout=` (used throughout _dedupe_images_phash/image_store) only
+    resets on each byte received, so a source server that trickles data
+    very slowly — rather than dropping the connection outright — can stall
+    a download indefinitely without ever raising its own timeout error.
+    Seen live on a since-Jan-2026 backfill: 906 of 908 groups finished in
+    ~2 hours, then the last 2 sat stuck for 5+ hours with zero log output
+    (no exception, because nothing ever technically timed out). This outer
+    `asyncio.wait_for` guarantees the whole scrape can always finish within
+    a bounded time regardless of what a single misbehaving connection does
+    — the abandoned group just gets skipped and naturally retried on the
+    next scrape. (The orphaned worker thread itself can't be force-killed
+    and keeps running until its underlying call eventually gives up on its
+    own; harmless — it holds no lock afterward and is thrown away.)
     """
     ok = False
     try:
         async with sem:
-            finalized = await asyncio.to_thread(_finalize_fashion_group, g)
+            try:
+                finalized = await asyncio.wait_for(
+                    asyncio.to_thread(_finalize_fashion_group, g), timeout=_FINALIZE_TIMEOUT_S
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Fashion scrape: group %s timed out finalizing (>%ds, likely a "
+                    "stalled download) — skipping, will retry next scrape",
+                    g.get("source_id"), _FINALIZE_TIMEOUT_S,
+                )
+                return False
         finalized["updated_at"] = now_iso
         await db.fashion.update_one(
             {"source_id": finalized["source_id"]},
@@ -542,6 +652,14 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
         for r in raw_items:
             by_source[r.get("source", "?")] = by_source.get(r.get("source", "?"), 0) + 1
         logger.info("Fashion scrape (%s): %d raw items collected (%s)", reason, len(raw_items), by_source)
+
+        try:
+            await _resolve_brand_names(raw_items)
+        except Exception:
+            # Best-effort upgrade only — every item already has its pykakasi
+            # fallback value from fashion_scraper, so a failure here should
+            # never stop the scrape itself.
+            logger.exception("Fashion scrape (%s): brand-name resolution failed", reason)
 
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
