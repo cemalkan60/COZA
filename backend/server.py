@@ -1487,6 +1487,13 @@ async def fashion_collection_detail(source_id: str):
     update = {"gallery_fetched": True}
     if images:
         update["images"] = images
+        # doc["image"] (singular, the feed's cover photo) was never touched
+        # here -- it stayed the low-res fashion-press listing-page thumbnail
+        # from scrape time (see _parse_collection_links) forever, no matter
+        # how many times a collection's full gallery got fetched. Use the
+        # first real photo instead, same as a freshly-finalized scrape group
+        # does (see _finalize_fashion_group).
+        update["image"] = images[0]
     # Mark fetched even on failure/empty so a broken collection doesn't
     # re-trigger this fetch (and re-hit fashion-press.net) on every view —
     # the existing thumbnail stays as the fallback.
@@ -1623,6 +1630,92 @@ async def admin_fashion_backfill(admin: Annotated[dict, Depends(require_admin)])
     if _fashion_lock.locked():
         return {"status": "already_running"}
     asyncio.create_task(run_fashion_scrape("backfill_2026", backfill=True))
+    return {"status": "started"}
+
+
+_COVER_FIX_TIMEOUT_S = 30  # per-collection fetch+cache budget, see _fix_one_cover
+
+
+async def _fix_one_cover(doc: dict, sem: asyncio.Semaphore) -> bool:
+    """Replace one fashion-press collection's low-res listing-thumbnail cover
+    with a real full-resolution photo pulled from its own gallery page —
+    the same fetch GET /fashion/collections/{id} does lazily on first view,
+    just run proactively here so the feed's cover doesn't stay stuck on the
+    low-res thumbnail for a collection nobody has opened yet. Best-effort:
+    any failure just leaves the doc's existing cover in place and it's
+    retried on the next sweep (only success marks gallery_fetched).
+    """
+    async with sem:
+        try:
+            images = await asyncio.wait_for(
+                asyncio.to_thread(fashion_scraper.fetch_collection_images, doc["fp_source_id"]),
+                timeout=_COVER_FIX_TIMEOUT_S,
+            )
+        except Exception:
+            images = []
+        if not images:
+            return False
+        if image_store.ENABLED:
+            try:
+                images = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: [image_store.cache_image(u) for u in images]),
+                    timeout=_COVER_FIX_TIMEOUT_S,
+                )
+            except Exception:
+                return False
+        await db.fashion.update_one(
+            {"source_id": doc["source_id"]},
+            {"$set": {"gallery_fetched": True, "images": images, "image": images[0]}},
+        )
+        return True
+
+
+async def run_fashion_cover_fix() -> dict:
+    """One-off sweep, mirrors run_fashion_scrape's shape: give every
+    fashion-press collection that's never had its gallery fetched a real
+    cover photo instead of the low-res listing-page thumbnail
+    scrape_collections saves initially (see _parse_collection_links).
+    Shares _fashion_lock with the regular scrape/backfill so they never
+    race each other over the same documents.
+    """
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        docs = await db.fashion.find(
+            {"fp_source_id": {"$ne": None}, "gallery_fetched": {"$ne": True}},
+            {"_id": 0, "source_id": 1, "fp_source_id": 1},
+        ).to_list(length=None)
+        logger.info("Fashion cover fix: %d fashion-press collection(s) still on their low-res cover.", len(docs))
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"scraping": True, "phase": "fixing_covers", "covers_total": len(docs), "covers_done": 0}},
+            upsert=True,
+        )
+
+        fixed = 0
+        sem = asyncio.Semaphore(6)
+
+        async def _run_one(d: dict):
+            nonlocal fixed
+            ok = await _fix_one_cover(d, sem)
+            if ok:
+                fixed += 1
+            await db.meta.update_one({"_id": "fashion"}, {"$inc": {"covers_done": 1}})
+
+        await asyncio.gather(*(_run_one(d) for d in docs))
+        logger.info("Fashion cover fix: done, %d/%d cover(s) upgraded.", fixed, len(docs))
+        await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        return {"status": "ok", "total": len(docs), "fixed": fixed}
+
+
+@api.post("/admin/fashion-fix-covers")
+async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)]):
+    # Fire-and-forget, same reasoning as /admin/fashion-scrape: with
+    # hundreds of fashion-press collections potentially still stuck on
+    # their low-res cover, this can run well past typical HTTP timeouts.
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_cover_fix())
     return {"status": "started"}
 
 
