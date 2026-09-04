@@ -106,6 +106,21 @@ export default function Settings() {
     }
   };
 
+  const triggerMergeDuplicates = async () => {
+    setScraping(true);
+    setScrapeMsg("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await api.fashionMergeDuplicates();
+      setScrapeMsg("Aynı gösteri farklı kaynaklardan birleştiriliyor — ilerleme aşağıda görünecek.");
+      startPolling();
+    } catch {
+      setScrapeMsg("Başlatılamadı, tekrar deneyin.");
+    } finally {
+      setScraping(false);
+    }
+  };
+
   const logout = async () => {
     await signOut();
     router.replace("/(auth)/login");
@@ -162,18 +177,22 @@ export default function Settings() {
               {!!meta?.scraping && (
                 <View style={[styles.metaRow, { marginTop: 10 }]}>
                   <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
-                    {meta?.phase === "fixing_covers"
-                      ? "Kapaklar düzeltiliyor"
-                      : meta?.phase === "finalizing"
-                        ? "Kaydediliyor"
-                        : "Kaynaklar taranıyor"}
+                    {meta?.phase === "merging_duplicates"
+                      ? "Yinelenenler birleştiriliyor"
+                      : meta?.phase === "fixing_covers"
+                        ? "Kapaklar düzeltiliyor"
+                        : meta?.phase === "finalizing"
+                          ? "Kaydediliyor"
+                          : "Kaynaklar taranıyor"}
                   </Text>
                   <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
-                    {meta?.phase === "fixing_covers"
-                      ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
-                      : meta?.phase === "finalizing"
-                        ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
-                        : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
+                    {meta?.phase === "merging_duplicates"
+                      ? `${meta?.merge_done ?? 0} / ${meta?.merge_total ?? "?"}`
+                      : meta?.phase === "fixing_covers"
+                        ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
+                        : meta?.phase === "finalizing"
+                          ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
+                          : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
                   </Text>
                 </View>
               )}
@@ -210,6 +229,17 @@ export default function Settings() {
               <Feather name="image" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
                 {scraping ? "Başlatılıyor…" : "Kapak Fotoğraflarını Düzelt"}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="fashion-merge-duplicates"
+              onPress={triggerMergeDuplicates}
+              disabled={scraping}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+            >
+              <Feather name="git-merge" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {scraping ? "Başlatılıyor…" : "Yinelenen Koleksiyonları Birleştir"}
               </Text>
             </Pressable>
             {!!scrapeMsg && (
