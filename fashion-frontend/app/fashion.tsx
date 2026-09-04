@@ -1,7 +1,8 @@
 // frontend/app/fashion.tsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -42,6 +43,7 @@ export default function Fashion() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [openModal, setOpenModal] = useState<"city" | "season" | null>(null);
 
   const PAGE_SIZE = 40;
 
@@ -91,21 +93,13 @@ export default function Fashion() {
     load();
   }, [load]);
 
-  const seasonChips = useMemo(() => {
-    const map = new Map<string, string>();
-    items.forEach((it) => {
-      if (it.season && it.season_label) map.set(it.season, it.season_label);
-    });
-    return Array.from(map.entries()).map(([code, label]) => ({ code, label }));
-  }, [items]);
-
-  const cityChips = useMemo(() => {
-    const set = new Set<string>();
-    items.forEach((it) => {
-      if (it.city) set.add(it.city);
-    });
-    return Array.from(set).sort();
-  }, [items]);
+  // Unfiltered option lists straight from the backend (see fashion_analytics
+  // in server.py) rather than derived from the currently-loaded `items` —
+  // deriving from items meant picking a city silently emptied every other
+  // city out of its own picker, since the feed was already filtered to just
+  // that city by the time the list was rebuilt.
+  const seasonChips = analytics?.season_options || [];
+  const cityChips = analytics?.cities || [];
 
   // show all items (no 6-limit)
   const slots = items;
@@ -165,22 +159,29 @@ export default function Fashion() {
             ))}
           </ScrollView>
 
-          {cityChips.length > 0 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingBottom: 14 }}>
-              <Chip label="Tüm Şehirler" active={!city} onPress={() => setCity(undefined)} colors={colors} />
-              {cityChips.map((c) => (
-                <Chip key={c} label={c} active={city === c} onPress={() => setCity((cur) => (cur === c ? undefined : c))} colors={colors} />
-              ))}
-            </ScrollView>
-          )}
-
-          {seasonChips.length > 0 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingBottom: 14 }}>
-              <Chip label="Tüm Sezonlar" active={!season} onPress={() => setSeason(undefined)} colors={colors} />
-              {seasonChips.map((s) => (
-                <Chip key={s.code} label={s.label} active={season === s.code} onPress={() => setSeason((cur) => (cur === s.code ? undefined : s.code))} colors={colors} />
-              ))}
-            </ScrollView>
+          {(cityChips.length > 0 || seasonChips.length > 0) && (
+            <View style={{ flexDirection: "row", paddingHorizontal: spacing.xl, gap: 8, paddingBottom: 14 }}>
+              {cityChips.length > 0 && (
+                <FilterPill
+                  testID="fashion-filter-city"
+                  label="Şehir"
+                  value={city}
+                  active={!!city}
+                  onPress={() => setOpenModal("city")}
+                  colors={colors}
+                />
+              )}
+              {seasonChips.length > 0 && (
+                <FilterPill
+                  testID="fashion-filter-season"
+                  label="Sezon"
+                  value={season ? seasonChips.find((s) => s.code === season)?.label : undefined}
+                  active={!!season}
+                  onPress={() => setOpenModal("season")}
+                  colors={colors}
+                />
+              )}
+            </View>
           )}
 
           {items.length === 0 ? (
@@ -220,6 +221,25 @@ export default function Fashion() {
           )}
         </ScrollView>
       )}
+
+      <FashionFilterModal
+        visible={openModal !== null}
+        onClose={() => setOpenModal(null)}
+        title={openModal === "city" ? "Şehir" : "Sezon"}
+        colors={colors}
+        bottomInset={insets.bottom}
+        options={
+          openModal === "city"
+            ? [{ value: "", label: "Tüm Şehirler" }, ...cityChips.map((c) => ({ value: c, label: c }))]
+            : [{ value: "", label: "Tüm Sezonlar" }, ...seasonChips.map((s) => ({ value: s.code, label: s.label }))]
+        }
+        selected={(openModal === "city" ? city : season) || ""}
+        onSelect={(v) => {
+          if (openModal === "city") setCity(v || undefined);
+          else if (openModal === "season") setSeason(v || undefined);
+          setOpenModal(null);
+        }}
+      />
     </View>
   );
 }
@@ -288,6 +308,92 @@ function Chip({ label, active, onPress, colors }: { label: string; active: boole
   );
 }
 
+// Pill button that opens a bottom-sheet option list (FashionFilterModal)
+// instead of spelling every option out as its own chip — same pattern as
+// the "Kombin Arama" screen's filter row (app/fashion/search.tsx), used here
+// so a filter with many values (season, city) doesn't turn into a wall of
+// chips across the top of the feed.
+function FilterPill({
+  label,
+  value,
+  active,
+  onPress,
+  colors,
+  testID,
+}: {
+  label: string;
+  value?: string;
+  active: boolean;
+  onPress: () => void;
+  colors: any;
+  testID?: string;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      style={[styles.filterBtn, { borderColor: active ? colors.brand : colors.border, backgroundColor: active ? colors.brand : colors.surfaceSecondary }]}
+    >
+      <Text numberOfLines={1} style={{ color: active ? colors.onBrand : colors.onSurface, fontSize: 12, fontWeight: "700", maxWidth: 140 }}>
+        {value || label}
+      </Text>
+      <Feather name="chevron-down" size={13} color={active ? colors.onBrand : colors.brandSecondary} />
+    </Pressable>
+  );
+}
+
+function FashionFilterModal({
+  visible,
+  onClose,
+  title,
+  colors,
+  bottomInset,
+  options,
+  selected,
+  onSelect,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  title: string;
+  colors: any;
+  bottomInset: number;
+  options: { value: string; label: string }[];
+  selected: string;
+  onSelect: (v: string) => void;
+}) {
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
+        <View style={[styles.modalSheet, { backgroundColor: colors.surface, paddingBottom: bottomInset + 16 }]}>
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: colors.onSurface }]}>{title}</Text>
+            <Pressable onPress={onClose} hitSlop={10}>
+              <Feather name="x" size={22} color={colors.onSurface} />
+            </Pressable>
+          </View>
+          <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+            {options.map((o) => {
+              const active = selected === o.value;
+              return (
+                <Pressable
+                  key={o.value || "all"}
+                  testID={`fashion-filter-option-${o.value || "all"}`}
+                  onPress={() => onSelect(o.value)}
+                  style={[styles.optionRow, active && { backgroundColor: colors.surfaceSecondary }]}
+                >
+                  <Text style={{ color: colors.onSurface, fontSize: 14, fontWeight: active ? "800" : "500", flex: 1 }}>{o.label}</Text>
+                  {active && <Feather name="check" size={16} color={colors.brand} />}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: {
@@ -313,6 +419,33 @@ const styles = StyleSheet.create({
     height: 34,
     alignItems: "center",
     justifyContent: "center",
+  },
+  filterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    height: 36,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  modalSheet: {
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    maxHeight: "80%",
+  },
+  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  modalTitle: { fontSize: 18, fontWeight: "800" },
+  optionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 11,
+    paddingHorizontal: 8,
+    borderRadius: 6,
   },
   grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
   // 6 columns layout
