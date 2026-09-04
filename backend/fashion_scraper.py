@@ -6,11 +6,13 @@ collects corporate / editorial fashion data — women's runway collections with
 brand, season and title — never user-generated or personal content.
 
 Source: https://www.fashion-press.net (Japanese). Titles are translated JA -> TR
-at scrape time via deep-translator (free Google endpoint). Runs weekly (Mondays).
+at scrape time via deep-translator (free Google endpoint). Runs Mondays and
+Wednesdays (see the scheduled job in server.py).
 """
 import re
 import time
 import logging
+from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -217,12 +219,50 @@ def _finish_items(raw: list, category: str) -> list:
     return items
 
 
-def scrape_collections(limit: int = 40, gender: str = "women"):
-    """Scrape runway collections for one gender ("women" or "men")."""
-    path = COLLECTIONS_PATH_BY_GENDER[gender]
-    raw = _parse_collection_links(_fetch(path), limit)
+def scrape_collections(limit: int = 40, gender: str = "women", season: Optional[str] = None):
+    """Scrape runway collections for one gender ("women" or "men").
+
+    Without `season`, this is the original fast path: a single fetch of the
+    unfiltered listing (sorted newest-first across whatever seasons are
+    currently active), capped at `limit` — what the regular twice-weekly
+    scrape uses to pick up new additions quickly.
+
+    With `season` set to one of fashion-press.net's own season slugs (e.g.
+    "2026-27aw", "2027ss" — same spelling as their URLs), this instead walks
+    that season's own listing page by page (their pagination, ~42 items per
+    page) until a page comes back empty, up to `limit`. That's how a full
+    historical pull for a specific season (a backfill) is done — the
+    unfiltered listing alone can't reach older items once enough newer ones
+    have pushed them past page 1.
+    """
+    if season:
+        gender_slug = "womens" if gender == "women" else "mens"
+        path_root = f"/collections/search/{season}/{gender_slug}"
+    else:
+        path_root = COLLECTIONS_PATH_BY_GENDER[gender]
+
+    raw: list = []
+    page = 1
+    while len(raw) < limit:
+        suffix = "" if page == 1 else f"?page={page}"
+        try:
+            html = _fetch(path_root + suffix)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("fashion: page %d fetch failed for %s/%s: %s", page, season or "latest", gender, exc)
+            break
+        page_items = _parse_collection_links(html, limit=limit - len(raw))
+        if not page_items:
+            break  # past the last page (or nothing matched) — stop
+        raw.extend(page_items)
+        if not season:
+            break  # unfiltered "latest" mode stays single-page, as before
+        page += 1
+        time.sleep(0.3)  # a backfill can be dozens of pages — be polite
+
     items = _finish_items(raw, category=gender)
-    logger.info("fashion: scraped %d %s collections", len(items), gender)
+    logger.info(
+        "fashion: scraped %d %s collections%s", len(items), gender, f" ({season}, {page} page(s))" if season else ""
+    )
     return items
 
 
