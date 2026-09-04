@@ -76,6 +76,21 @@ export default function Settings() {
     }
   };
 
+  const triggerBackfill = async () => {
+    setScraping(true);
+    setScrapeMsg("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await api.fashionBackfill();
+      setScrapeMsg("Tüm geçmiş taraması başlatıldı — bu çok daha uzun sürer (yüzlerce koleksiyon), ilerleme aşağıda görünecek.");
+      startPolling();
+    } catch {
+      setScrapeMsg("Başlatılamadı, tekrar deneyin.");
+    } finally {
+      setScraping(false);
+    }
+  };
+
   const logout = async () => {
     await signOut();
     router.replace("/(auth)/login");
@@ -148,6 +163,17 @@ export default function Settings() {
               <Feather name="refresh-cw" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
                 {scraping ? "Başlatılıyor…" : "Şimdi Güncelle"}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="fashion-backfill-data"
+              onPress={triggerBackfill}
+              disabled={scraping}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+            >
+              <Feather name="database" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {scraping ? "Başlatılıyor…" : "2026 Ocak'tan İtibaren Tümünü Tara"}
               </Text>
             </Pressable>
             {!!scrapeMsg && (
