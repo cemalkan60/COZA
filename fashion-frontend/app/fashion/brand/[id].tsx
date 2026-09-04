@@ -29,6 +29,9 @@ export default function BrandGallery() {
   const id = (params.id as string) || "";
   const titleParam = (params.title as string) || "";
   const title = titleParam ? decodeURIComponent(titleParam) : "";
+  const seasonParam = (params.season as string) || "";
+  const season = seasonParam ? decodeURIComponent(seasonParam) : "";
+  const headerLabel = season ? `${title} (${season})` : title;
 
   const [images, setImages] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -157,7 +160,7 @@ export default function BrandGallery() {
         <Feather name="chevron-left" size={26} color={colors.onSurface} />
       </Pressable>
       <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.onSurface }]}>
-        {title || "Koleksiyon"}
+        {headerLabel || "Koleksiyon"}
       </Text>
       <View style={{ width: 26 }} />
     </View>
