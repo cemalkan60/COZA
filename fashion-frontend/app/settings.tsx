@@ -146,9 +146,13 @@ export default function Settings() {
               </View>
               {!!meta?.scraping && (
                 <View style={[styles.metaRow, { marginTop: 10 }]}>
-                  <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Tarama sürüyor</Text>
+                  <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
+                    {meta?.phase === "finalizing" ? "Kaydediliyor" : "Kaynaklar taranıyor"}
+                  </Text>
                   <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
-                    {meta?.groups_done ?? 0} / {meta?.groups_total ?? "?"}
+                    {meta?.phase === "finalizing"
+                      ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
+                      : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
                   </Text>
                 </View>
               )}
