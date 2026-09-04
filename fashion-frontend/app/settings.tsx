@@ -91,6 +91,21 @@ export default function Settings() {
     }
   };
 
+  const triggerFixCovers = async () => {
+    setScraping(true);
+    setScrapeMsg("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await api.fashionFixCovers();
+      setScrapeMsg("Kapak fotoğrafları düzeltiliyor — bu da uzun sürebilir, ilerleme aşağıda görünecek.");
+      startPolling();
+    } catch {
+      setScrapeMsg("Başlatılamadı, tekrar deneyin.");
+    } finally {
+      setScraping(false);
+    }
+  };
+
   const logout = async () => {
     await signOut();
     router.replace("/(auth)/login");
@@ -147,12 +162,18 @@ export default function Settings() {
               {!!meta?.scraping && (
                 <View style={[styles.metaRow, { marginTop: 10 }]}>
                   <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
-                    {meta?.phase === "finalizing" ? "Kaydediliyor" : "Kaynaklar taranıyor"}
+                    {meta?.phase === "fixing_covers"
+                      ? "Kapaklar düzeltiliyor"
+                      : meta?.phase === "finalizing"
+                        ? "Kaydediliyor"
+                        : "Kaynaklar taranıyor"}
                   </Text>
                   <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
-                    {meta?.phase === "finalizing"
-                      ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
-                      : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
+                    {meta?.phase === "fixing_covers"
+                      ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
+                      : meta?.phase === "finalizing"
+                        ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
+                        : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
                   </Text>
                 </View>
               )}
@@ -178,6 +199,17 @@ export default function Settings() {
               <Feather name="database" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
                 {scraping ? "Başlatılıyor…" : "2026 Ocak'tan İtibaren Tümünü Tara"}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="fashion-fix-covers"
+              onPress={triggerFixCovers}
+              disabled={scraping}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+            >
+              <Feather name="image" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {scraping ? "Başlatılıyor…" : "Kapak Fotoğraflarını Düzelt"}
               </Text>
             </Pressable>
             {!!scrapeMsg && (
