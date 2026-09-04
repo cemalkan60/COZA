@@ -39,6 +39,10 @@ export type FashionAnalytics = {
   brands: { label: string; count: number }[];
   brand_count: number;
   last_scrape: string | null;
+  // Unfiltered option lists for the feed's city/season filter pickers —
+  // always the full set, regardless of any filter currently applied.
+  cities: string[];
+  season_options: { code: string; label: string }[];
 };
 
 // ---- COZA Fashion coordinate search ("kombin arama") ----
