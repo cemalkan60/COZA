@@ -1568,12 +1568,31 @@ async def fashion_analytics(user: Annotated[dict, Depends(get_current_user)]):
         {"$limit": 12},
     ]).to_list(length=12)
     meta = await db.meta.find_one({"_id": "fashion"}, {"_id": 0}) or {}
+
+    # Unfiltered option lists for the feed's city/season filter pickers (see
+    # fashion.tsx). These deliberately ignore any active season/category/city
+    # query the caller might also be applying elsewhere -- the picker has to
+    # keep showing every option even while one is selected, otherwise picking
+    # a city would make every *other* city disappear from its own dropdown.
+    city_dist = await db.fashion.distinct("city", {"city": {"$nin": ["", None]}})
+    season_pairs = await db.fashion.aggregate([
+        {"$match": {"season": {"$nin": ["", None]}, "season_label": {"$nin": ["", None]}}},
+        {"$group": {"_id": {"code": "$season", "label": "$season_label"}}},
+    ]).to_list(length=200)
+    season_options = sorted(
+        ({"code": r["_id"]["code"], "label": r["_id"]["label"]} for r in season_pairs),
+        key=lambda s: _season_rank(s["code"]),
+        reverse=True,
+    )
+
     return {
         "total": total,
         "seasons": [{"label": r["_id"], "count": r["count"]} for r in season_dist],
         "brands": [{"label": r["_id"], "count": r["count"]} for r in brand_dist],
         "brand_count": len(await db.fashion.distinct("brand_tr")),
         "last_scrape": meta.get("last_scrape"),
+        "cities": sorted(city_dist),
+        "season_options": season_options,
     }
 
 
