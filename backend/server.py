@@ -245,6 +245,33 @@ def _fashion_merge_key(item: dict) -> str:
     return key or f"item-{abs(hash(item['url']))}"
 
 
+# Chronological sort key for a season code, higher = shown more recently.
+#
+# fashion-press writes fall/winter as a year-span ("2026-27AW") and
+# firstview writes it as a single year ("2026AW") -- both name the same
+# real show, so only the first year in the code matters. Within one label
+# year Y, real-world show months run Resort Y (~May/Jun of Y-1) -> Spring/
+# Summer Y (~Sept/Oct of Y-1) -> Pre-Fall Y (~Nov/Dec of Y-1) -> Fall/
+# Winter Y (~Feb/Mar of Y itself, the only one of the four actually shown
+# in calendar year Y) -- so *10 + this offset stays monotonic in show-date
+# order across year boundaries too (e.g. Fall/Winter 2026 = 20263 sorts
+# below Resort 2027 = 20270, matching Feb 2026 < May 2026).
+_SEASON_RANK_RE = re.compile(r"^(\d{4})(?:-\d{2})?(AW|SS|RESORT|PREFALL)$", re.IGNORECASE)
+_SEASON_ERA_OFFSET = {"RESORT": 0, "SS": 1, "PREFALL": 2, "AW": 3}
+
+
+def _season_rank(season: str) -> float:
+    """Chronological sort key for `season` (see _SEASON_RANK_RE above).
+    Unparseable/missing seasons rank lowest so they sink to the bottom of a
+    "newest first" feed instead of landing in some arbitrary middle spot.
+    """
+    m = _SEASON_RANK_RE.match((season or "").strip())
+    if not m:
+        return -1.0
+    year = int(m.group(1))
+    return year * 10 + _SEASON_ERA_OFFSET.get(m.group(2).upper(), 0)
+
+
 async def _resolve_brand_names(raw_items: list) -> None:
     """Upgrade fashion-press items' brand_tr/title_tr from pykakasi's
     romanized guess (see fashion_scraper._romanize_ja) to the brand's real
@@ -428,6 +455,7 @@ def _group_fashion_items(raw_items: list) -> tuple:
                 "title_tr": item["title_tr"],
                 "season": item["season"],
                 "season_label": item["season_label"],
+                "season_rank": _season_rank(item["season"]),
                 "category": item["category"],
                 "city": None,
                 "images": [],
@@ -472,6 +500,7 @@ def _group_fashion_items(raw_items: list) -> tuple:
             if not canonical["season"] and other["season"]:
                 canonical["season"] = other["season"]
                 canonical["season_label"] = other["season_label"]
+                canonical["season_rank"] = other.get("season_rank", _season_rank(other["season"]))
             if _FASHION_CATEGORY_PRIORITY.get(other["category"], 9) < _FASHION_CATEGORY_PRIORITY.get(
                 canonical["category"], 9
             ):
@@ -792,6 +821,22 @@ async def _migrate_fashion_schema():
     if result.deleted_count:
         logger.info("Fashion: removed %d pre-migration legacy documents.", result.deleted_count)
 
+    # One-time backfill for season_rank (added for the unified newest-first
+    # feed sort) on any doc saved before this field existed — cheap since a
+    # missing season_rank is rare after the first run, and a full rescrape
+    # would set it anyway, but this makes the new sort correct immediately
+    # instead of only after the next scrape touches every document.
+    stale = await db.fashion.find(
+        {"season_rank": {"$exists": False}}, {"_id": 0, "source_id": 1, "season": 1}
+    ).to_list(length=None)
+    for d in stale:
+        await db.fashion.update_one(
+            {"source_id": d["source_id"]},
+            {"$set": {"season_rank": _season_rank(d.get("season"))}},
+        )
+    if stale:
+        logger.info("Fashion: backfilled season_rank on %d document(s).", len(stale))
+
 
 async def _dedupe_existing_fashion_docs():
     """Sweep db.fashion for duplicate collections that are already saved,
@@ -859,6 +904,7 @@ async def _dedupe_existing_fashion_docs():
                     "fp_source_id": fp_source_id,
                     "season": season,
                     "season_label": season_label,
+                    "season_rank": _season_rank(season),
                 }
             },
         )
@@ -1363,7 +1409,14 @@ async def fashion_collections(
     limit: int = Query(30, ge=1, le=60),
 ):
     """Runway collections (women/men/haute couture), aggregated from
-    multiple sources and merged by brand+season+category."""
+    multiple sources (fashion-press.net + firstview.com) and merged by
+    brand+season+category into a single feed, newest show first.
+
+    Sorted by season_rank (see _season_rank) rather than updated_at/scrape
+    time: both sources get scraped in the same run and would otherwise tie
+    on updated_at, so the two sources ended up visually clustered into
+    separate blocks (whichever was scraped/saved first) instead of truly
+    interleaved by which collection actually showed most recently."""
     query: dict = {}
     if season:
         query["season"] = season
@@ -1379,7 +1432,7 @@ async def fashion_collections(
         ]
     cursor = (
         db.fashion.find(query, {"_id": 0})
-        .sort([("updated_at", -1), ("source_id", -1)])
+        .sort([("season_rank", -1), ("updated_at", -1), ("source_id", -1)])
         .skip(skip)
         .limit(limit)
     )
