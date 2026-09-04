@@ -225,7 +225,11 @@ def _normalize_fashion_item(raw: dict) -> Optional[dict]:
         return None
     images = raw.get("images") or ([raw["image"]] if raw.get("image") else [])
     images = [u for u in images if u]
-    season = raw.get("season") or ""
+    # Canonicalize here, once, so every downstream consumer (the merge key,
+    # season_label, season_rank, the saved doc's own `season` field) sees
+    # the same spelling regardless of which source this item came from —
+    # see _season_merge_code.
+    season = _season_merge_code(raw.get("season") or "")
     return {
         "source": raw.get("source") or "",
         "raw_source_id": raw.get("source_id") or "",
@@ -271,6 +275,34 @@ def _season_rank(season: str) -> float:
         return -1.0
     year = int(m.group(1))
     return year * 10 + _SEASON_ERA_OFFSET.get(m.group(2).upper(), 0)
+
+
+def _season_merge_code(season: str) -> str:
+    """Canonical spelling of a season code, for both cross-source matching
+    and display -- always fashion-press's richer year-span AW form
+    ('2026-27AW'), even for a firstview-sourced show that only ever wrote
+    the single-year form ('2026AW'). Both name the same real show (see
+    _season_rank's docstring above), so collapsing them to one shared
+    spelling is what lets a fashion-press and a firstview listing of the
+    same show actually match in _fashion_merge_key -- before this, a
+    firstview "Fall/Winter 2026" show and fashion-press's own listing of
+    the identical show never merged, because "2026AW" != "2026-27AW" as
+    plain strings. It's also what stops the feed's season filter from
+    showing "2026-27 Sonbahar/Kış" and "2026 Sonbahar/Kış" side by side as
+    if they were two different seasons.
+
+    SS/RESORT/PREFALL are already single-year on both sides, so this only
+    ever rewrites AW codes; anything already in span form, or unparseable,
+    passes through unchanged (idempotent either way).
+    """
+    m = _SEASON_RANK_RE.match((season or "").strip())
+    if not m:
+        return (season or "").strip()
+    year, era = m.group(1), m.group(2).upper()
+    if era == "AW":
+        next_yy = f"{(int(year) + 1) % 100:02d}"
+        return f"{year}-{next_yy}AW"
+    return f"{year}{era}"
 
 
 async def _resolve_brand_names(raw_items: list) -> None:
@@ -821,6 +853,25 @@ async def _migrate_fashion_schema():
     result = await db.fashion.delete_many({"sources": {"$exists": False}})
     if result.deleted_count:
         logger.info("Fashion: removed %d pre-migration legacy documents.", result.deleted_count)
+
+    # firstview.com's collection pages used to carry "Brand - Season - Category"
+    # in their <title> tag; as of 2026-09 that tag is just the generic site
+    # title "firstVIEW" on every page (site markup change, see
+    # firstview_scraper._parse_collection_page), so every firstview item
+    # silently parsed with no real brand/season and collapsed into the same
+    # few garbage documents, upserting over themselves forever instead of
+    # ever accumulating real collections. Precise match on the exact
+    # signature those garbage docs share (confirmed live: exactly 3 of them,
+    # one per category) so this can never touch a real, correctly-parsed
+    # collection.
+    result_fv = await db.fashion.delete_many(
+        {"sources": ["firstview"], "brand_tr": "firstVIEW", "season": {"$in": ["", None]}}
+    )
+    if result_fv.deleted_count:
+        logger.info(
+            "Fashion: removed %d stale firstview placeholder document(s) "
+            "(pre brand/season-parsing fix).", result_fv.deleted_count,
+        )
 
     # One-time backfill for season_rank (added for the unified newest-first
     # feed sort) on any doc saved before this field existed, bounded by a
@@ -1716,6 +1767,213 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
     if _fashion_lock.locked():
         return {"status": "already_running"}
     asyncio.create_task(run_fashion_cover_fix())
+    return {"status": "started"}
+
+
+def _fashion_doc_merge_key(doc: dict) -> str:
+    """Same shape as _fashion_merge_key, but for an already-saved doc rather
+    than a freshly-scraped raw item -- and always canonicalizes the doc's
+    stored season first (see _season_merge_code). A doc saved before that
+    canonicalization existed may still carry the old spelling ('2026AW'),
+    which is exactly what makes two really-identical collections compute
+    different keys and never find each other -- this is what
+    run_fashion_merge_duplicates groups by instead.
+    """
+    season = _season_merge_code(doc.get("season") or "")
+    key = f"{_brand_slug(doc.get('brand_tr') or '')}-{(season or 'unk').lower()}-{doc.get('category') or ''}"
+    key = re.sub(r"-+", "-", key).strip("-")
+    return key or f"item-{abs(hash(doc.get('url') or doc.get('source_id') or ''))}"
+
+
+_MERGE_TIMEOUT_S = 90  # per-group budget for phash downloads + R2 deletes, mirrors _FINALIZE_TIMEOUT_S
+
+
+async def _merge_one_doc_group_inner(key: str, group: list) -> tuple:
+    """Fold one canonical-key group of already-saved docs (all the same
+    real-world show, previously split across sources because their season
+    codes didn't string-match) into a single surviving document. Returns
+    (docs_removed, images_dropped).
+    """
+    # Most-complete-first, same tie-break as _dedupe_existing_fashion_docs.
+    group = sorted(group, key=lambda d: (-len(d.get("images") or []), d["source_id"]))
+    canonical, *dups = group
+    images = list(canonical.get("images") or [])
+    seen = set(images)
+    sources = list(canonical.get("sources") or [])
+    brand_tr, title_tr = canonical.get("brand_tr", ""), canonical.get("title_tr", "")
+    category = canonical.get("category", "")
+    city = canonical.get("city")
+    fp_source_id = canonical.get("fp_source_id")
+    first_seen = canonical.get("first_seen")
+    for d in dups:
+        for u in d.get("images") or []:
+            if u not in seen:
+                seen.add(u)
+                images.append(u)
+        for s in d.get("sources") or []:
+            if s not in sources:
+                sources.append(s)
+        if d.get("city") and not city:
+            city = d["city"]
+        if not fp_source_id:
+            fp_source_id = d.get("fp_source_id")
+        if d.get("first_seen") and (not first_seen or d["first_seen"] < first_seen):
+            first_seen = d["first_seen"]
+        brand_tr = _looks_better_text(brand_tr, d.get("brand_tr", ""))
+        title_tr = _looks_better_text(title_tr, d.get("title_tr", ""))
+        if _FASHION_CATEGORY_PRIORITY.get(d.get("category", ""), 9) < _FASHION_CATEGORY_PRIORITY.get(category, 9):
+            category = d["category"]
+
+    # These docs are only grouped together because they come from more than
+    # one source (that's the whole bug this sweep fixes) -- run phash dedup
+    # to drop the same shot syndicated twice, then actually free the R2
+    # storage for whichever copy loses (see image_store.delete_image).
+    deduped = await asyncio.to_thread(_dedupe_images_phash, images) if len(sources) > 1 else images
+    dropped = [u for u in images if u not in set(deduped)]
+    if dropped:
+        await asyncio.to_thread(lambda: [image_store.delete_image(u) for u in dropped])
+
+    season = _season_merge_code(canonical.get("season") or "")
+    merged_doc = {
+        **canonical,
+        "source_id": key,
+        "images": deduped,
+        "image": deduped[0] if deduped else None,
+        "sources": sources,
+        "brand_tr": brand_tr,
+        "title_tr": title_tr,
+        "category": category,
+        "city": city,
+        "fp_source_id": fp_source_id,
+        "season": season,
+        "season_label": fashion_scraper._season_label_tr(season),
+        "season_rank": _season_rank(season),
+        "first_seen": first_seen,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.fashion.update_one({"source_id": key}, {"$set": merged_doc}, upsert=True)
+
+    old_ids = {d["source_id"] for d in group}
+    delete_ids = old_ids - {key}
+    if delete_ids:
+        await db.fashion.delete_many({"source_id": {"$in": list(delete_ids)}})
+    return len(delete_ids), len(dropped)
+
+
+async def _merge_one_doc_group(key: str, group: list, sem: asyncio.Semaphore) -> tuple:
+    async with sem:
+        try:
+            return await asyncio.wait_for(_merge_one_doc_group_inner(key, group), timeout=_MERGE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Fashion merge: group %s timed out (>%ds, likely a stalled photo "
+                "download) — skipped, will retry on the next sweep.", key, _MERGE_TIMEOUT_S,
+            )
+            return 0, 0
+        except Exception:
+            logger.exception("Fashion merge: group %s failed to merge", key)
+            return 0, 0
+
+
+async def run_fashion_merge_duplicates() -> dict:
+    """One-off admin-triggered sweep that finds collections which are really
+    the same real-world show scraped from fashion-press AND firstview but
+    got saved as two separate documents, because the two sites spell an
+    Autumn/Winter season code differently as plain strings ('2026-27AW' vs
+    '2026AW' -- see _season_merge_code) and the merge key used to be built
+    straight from that unnormalized string. Confirmed live before writing
+    this: 0 of 917 saved collections had ever merged across sources.
+
+    Any collection scraped from now on already merges correctly at save
+    time (_normalize_fashion_item canonicalizes the season before the merge
+    key is ever computed), so this sweep only exists to clean up the
+    historical backlog -- it never needs to run automatically. Unlike
+    _dedupe_existing_fashion_docs (URL-matching only, no network calls,
+    safe on every startup/scrape), this one downloads photos to compare
+    them and permanently deletes the loser's copy from R2 -- destructive
+    and slower, so it deliberately only ever runs when an admin presses the
+    button, exactly like run_fashion_cover_fix. Shares _fashion_lock with
+    the other fashion admin actions so none of them race each other.
+    """
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        docs = await db.fashion.find({}, {"_id": 0}).to_list(length=None)
+        groups: dict = {}
+        for d in docs:
+            groups.setdefault(_fashion_doc_merge_key(d), []).append(d)
+        multi = {k: g for k, g in groups.items() if len(g) > 1}
+        # A singleton doc can still carry a stale, uncanonicalized season
+        # spelling (nothing to merge it WITH, so the grouping above doesn't
+        # touch it) -- catch those too, so the feed's season filter and
+        # labels are consistent everywhere, not just on merged collections.
+        singles_to_relabel = [
+            d for g in groups.values() if len(g) == 1
+            for d in g
+            if _season_merge_code(d.get("season") or "") != (d.get("season") or "")
+        ]
+
+        logger.info(
+            "Fashion merge: %d cross-source duplicate group(s) found (%d doc(s) total), "
+            "%d singleton(s) need only a season relabel.",
+            len(multi), sum(len(g) for g in multi.values()), len(singles_to_relabel),
+        )
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"scraping": True, "phase": "merging_duplicates", "merge_total": len(multi), "merge_done": 0}},
+            upsert=True,
+        )
+
+        sem = asyncio.Semaphore(6)
+        docs_removed = 0
+        images_dropped = 0
+
+        async def _run_one(key: str, group: list):
+            nonlocal docs_removed, images_dropped
+            removed, dropped = await _merge_one_doc_group(key, group, sem)
+            docs_removed += removed
+            images_dropped += dropped
+            await db.meta.update_one({"_id": "fashion"}, {"$inc": {"merge_done": 1}})
+
+        await asyncio.gather(*(_run_one(k, g) for k, g in multi.items()))
+
+        if singles_to_relabel:
+            ops = []
+            for d in singles_to_relabel:
+                season = _season_merge_code(d.get("season") or "")
+                ops.append(UpdateOne(
+                    {"source_id": d["source_id"]},
+                    {"$set": {
+                        "season": season,
+                        "season_label": fashion_scraper._season_label_tr(season),
+                        "season_rank": _season_rank(season),
+                    }},
+                ))
+            await db.fashion.bulk_write(ops, ordered=False)
+
+        logger.info(
+            "Fashion merge: done — %d group(s) merged (%d duplicate doc(s) removed, "
+            "%d redundant photo(s) dropped from R2), %d singleton(s) relabeled.",
+            len(multi), docs_removed, images_dropped, len(singles_to_relabel),
+        )
+        await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        return {
+            "status": "ok",
+            "groups_merged": len(multi),
+            "docs_removed": docs_removed,
+            "images_dropped": images_dropped,
+            "singles_relabeled": len(singles_to_relabel),
+        }
+
+
+@api.post("/admin/fashion-merge-duplicates")
+async def admin_fashion_merge_duplicates(admin: Annotated[dict, Depends(require_admin)]):
+    # Fire-and-forget, same reasoning as the other one-off fashion sweeps —
+    # can run well past typical HTTP timeouts with hundreds of collections
+    # to compare.
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_merge_duplicates())
     return {"status": "started"}
 
 

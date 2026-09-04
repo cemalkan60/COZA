@@ -157,6 +157,27 @@ def _wait_until_publicly_readable(public_url: str, attempts: int = 5, delay: flo
         time.sleep(delay)
 
 
+def delete_image(public_url: str) -> None:
+    """Permanently remove one previously-cached photo from R2 -- used when
+    two collections turn out to be the same real-world show scraped from
+    different sources and get merged, leaving one of their two near-
+    identical photos redundant (see _dedupe_images_phash's caller in
+    server.py). Best-effort and silent: a URL that was never one of ours
+    (not under R2_PUBLIC_BASE_URL, e.g. still a live source-site URL
+    because R2 wasn't enabled when it was cached) or that's already gone is
+    a no-op either way -- never raises, since a stray orphaned object costs
+    nothing but a few KB of storage, while raising here would fail the
+    merge that's already committed its DB write.
+    """
+    if not ENABLED or not public_url or not public_url.startswith(_PUBLIC_BASE + "/"):
+        return
+    key = public_url[len(_PUBLIC_BASE) + 1:]
+    try:
+        _get_client().delete_object(Bucket=_BUCKET, Key=key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("image_store: failed to delete %s: %s", public_url, exc)
+
+
 def cache_image(source_url: str) -> str:
     """Return a URL to a copy of `source_url` hosted on our own R2 bucket,
     uploading it first if this is the first time we've seen it. Falls back

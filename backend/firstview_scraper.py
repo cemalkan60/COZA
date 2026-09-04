@@ -79,22 +79,70 @@ def _extract_collection_ids(html: str, limit: int) -> list:
 _SEASON_RE = re.compile(r"\b(Spring\s*/\s*Summer|Fall\s*/\s*Winter|Resort|Pre-?[Ff]all)\s*((?:19|20)\d{2})\b")
 
 
+def _season_from_text(text: str) -> Optional[str]:
+    m = _SEASON_RE.search(text or "")
+    if not m:
+        return None
+    kind, year = m.group(1).lower(), m.group(2)
+    if "fall" in kind or "winter" in kind:
+        return f"{year}AW"
+    if "spring" in kind or "summer" in kind:
+        return f"{year}SS"
+    if "resort" in kind:
+        return f"{year}RESORT"
+    if "pre" in kind:
+        return f"{year}PREFALL"
+    return None
+
+
 def _parse_title(title: str) -> dict:
-    """firstview page titles read like 'Brand - Fall / Winter 2026 - Women'."""
+    """Legacy fallback: firstview page titles used to read like 'Brand -
+    Fall / Winter 2026 - Women'. Kept as a fallback for _parse_collection_page
+    below, in case some page type still uses it or the site changes shape
+    again — but as of 2026-09 the live <title> tag is just the generic
+    'firstVIEW' site title on every page, so this alone returns
+    {brand: None, season: None} in practice now.
+    """
     parts = [p.strip() for p in title.split("-") if p.strip()]
     brand = parts[0] if parts else None
+    return {"brand": brand, "season": _season_from_text(title)}
+
+
+def _parse_collection_page(soup: "BeautifulSoup", title: str) -> dict:
+    """Brand + season for one collection gallery page.
+
+    Confirmed live (2026-09) that firstview's <title> tag is now just the
+    generic site title 'firstVIEW' on every page — _parse_title above,
+    which this scraper originally relied on, silently returned {brand:
+    None, season: None} for every single item as a result. Every firstview
+    item then fell back to `f"FirstView #{cid}"` / empty season in
+    _fetch_one_collection below, which made every real, distinct designer
+    collapse into the exact same merge key (see _fashion_merge_key in
+    server.py) and overwrite the same handful of garbage documents forever
+    — confirmed live: after months of scraping, db.fashion held exactly 3
+    firstview-sourced documents total, one per category, all still
+    literally branded "firstVIEW".
+
+    The real brand/season text moved into the page body instead: a
+    `span.pageTitle` element ('Brand -  Ready-to-Wear - Bridal Collection
+    - Women') and a separate `span.season` element ('Spring / Summer
+    2027'), both confirmed present and consistent across women's, men's
+    and haute-couture collection pages. This reads those directly, with
+    the old <title>-based parsing kept only as a last-resort fallback.
+    """
+    brand = None
     season = None
-    m = _SEASON_RE.search(title)
-    if m:
-        kind, year = m.group(1).lower(), m.group(2)
-        if "fall" in kind or "winter" in kind:
-            season = f"{year}AW"
-        elif "spring" in kind or "summer" in kind:
-            season = f"{year}SS"
-        elif "resort" in kind:
-            season = f"{year}RESORT"
-        elif "pre" in kind:
-            season = f"{year}PREFALL"
+    page_title_el = soup.select_one("span.pageTitle")
+    if page_title_el:
+        parts = [p.strip() for p in page_title_el.get_text().split("-") if p.strip()]
+        brand = parts[0] if parts else None
+    season_el = soup.select_one("span.season")
+    if season_el:
+        season = _season_from_text(season_el.get_text())
+    if not brand or not season:
+        legacy = _parse_title(title)
+        brand = brand or legacy["brand"]
+        season = season or legacy["season"]
     return {"brand": brand, "season": season}
 
 
@@ -134,7 +182,7 @@ def _fetch_one_collection(cid: str, category: str) -> Optional[dict]:
         return None
     soup = BeautifulSoup(html, "html.parser")
     title = (soup.title.string if soup.title and soup.title.string else "").strip()
-    parsed = _parse_title(title)
+    parsed = _parse_collection_page(soup, title)
     return {
         "source_id": f"firstview-{cid}",
         "url": url,
