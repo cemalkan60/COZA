@@ -122,4 +122,8 @@ export const api = {
   fashionLooks: (params: FashionLookQuery = {}): Promise<{ items: FashionLookItem[] }> =>
     request(`/fashion/looks${toQuery(params as Record<string, unknown>)}`, {}, true),
   fashionScrape: () => request("/admin/fashion-scrape", { method: "POST" }, true),
+  // One-off full historical pull (everything since Jan 2026, not just each
+  // source's latest page) — much slower than fashionScrape, see its comment
+  // in server.py. Separate button in Settings, not part of the schedule.
+  fashionBackfill: () => request("/admin/fashion-backfill", { method: "POST" }, true),
 };
