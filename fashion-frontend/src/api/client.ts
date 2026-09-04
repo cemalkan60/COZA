@@ -135,4 +135,9 @@ export const api = {
   // gallery early instead of waiting for someone to open it. See
   // run_fashion_cover_fix in server.py.
   fashionFixCovers: () => request("/admin/fashion-fix-covers", { method: "POST" }, true),
+  // One-off sweep that merges collections saved twice under different keys
+  // because fashion-press and firstview spelled the same season
+  // differently, and deletes the now-redundant duplicate photo from R2.
+  // See run_fashion_merge_duplicates in server.py.
+  fashionMergeDuplicates: () => request("/admin/fashion-merge-duplicates", { method: "POST" }, true),
 };
