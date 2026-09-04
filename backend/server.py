@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import UpdateOne
 from pydantic import BaseModel, EmailStr, Field
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -822,19 +823,21 @@ async def _migrate_fashion_schema():
         logger.info("Fashion: removed %d pre-migration legacy documents.", result.deleted_count)
 
     # One-time backfill for season_rank (added for the unified newest-first
-    # feed sort) on any doc saved before this field existed — cheap since a
-    # missing season_rank is rare after the first run, and a full rescrape
-    # would set it anyway, but this makes the new sort correct immediately
-    # instead of only after the next scrape touches every document.
+    # feed sort) on any doc saved before this field existed. A fresh
+    # since-Jan-2026 backfill can leave hundreds/thousands of docs missing
+    # it at once, so this is sent as a single bulk_write instead of one
+    # update_one per document — one network round-trip instead of
+    # hundreds, since this runs inline in app startup (Uvicorn won't finish
+    # "startup complete" — and start accepting requests — until it returns).
     stale = await db.fashion.find(
         {"season_rank": {"$exists": False}}, {"_id": 0, "source_id": 1, "season": 1}
     ).to_list(length=None)
-    for d in stale:
-        await db.fashion.update_one(
-            {"source_id": d["source_id"]},
-            {"$set": {"season_rank": _season_rank(d.get("season"))}},
-        )
     if stale:
+        ops = [
+            UpdateOne({"source_id": d["source_id"]}, {"$set": {"season_rank": _season_rank(d.get("season"))}})
+            for d in stale
+        ]
+        await db.fashion.bulk_write(ops, ordered=False)
         logger.info("Fashion: backfilled season_rank on %d document(s).", len(stale))
 
 
