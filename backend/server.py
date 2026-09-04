@@ -444,16 +444,36 @@ async def _finalize_and_save_group(g: dict, sem: asyncio.Semaphore, now_iso: str
     return ok
 
 
-async def run_fashion_scrape(reason: str = "manual") -> dict:
+#  The two fashion-press.net season slugs, and the firstview.com show-year,
+# that between them cover "everything shown since January 2026": ready-to-wear
+# runway/lookbook seasons are announced roughly 6 months ahead of their name,
+# so a collection actually shown Jan-Sep 2026 carries the season name
+# "2026-27 Autumn/Winter" (shown Feb/Mar 2026) or "2027 Spring/Summer" (shown
+# Sept/Oct 2026 — the latter still ongoing as of this writing, so a backfill
+# run today won't yet have all of it; re-running later picks up the rest).
+BACKFILL_FASHION_PRESS_SEASONS = ("2026-27aw", "2027ss")
+BACKFILL_FIRSTVIEW_YEAR = 2026
+
+
+async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> dict:
     """Scrape runway collections (women / men / haute couture) from
     fashion-press.net and firstview.com (nowfashion.com temporarily disabled,
     see below), merging the same brand+season+category found across sources
     into one entry.
+
+    Regular runs (`backfill=False`, the twice-weekly schedule and the manual
+    "tara" button) only fetch each source's single "newest first" page —
+    fast, and enough to catch new additions since the last run. `backfill=True`
+    (see /admin/fashion-backfill) instead walks every source's full
+    pagination for the seasons/year defined above, to pull in everything
+    published since January 2026 — not just what's still on page 1 by the
+    time this runs. It's slower (many more requests) but only needs to run
+    once; afterwards the regular scrape keeps things current.
     """
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
-        logger.info("Fashion scrape started (%s)", reason)
+        logger.info("Fashion scrape started (%s, backfill=%s)", reason, backfill)
         started = datetime.now(timezone.utc)
         raw_items: list = []
 
@@ -464,17 +484,34 @@ async def run_fashion_scrape(reason: str = "manual") -> dict:
             except Exception:
                 logger.exception("Fashion scrape source failed (%s)", label)
 
-        await collect("fashion-press/women", fashion_scraper.scrape_collections, 40, "women")
-        await collect("fashion-press/men", fashion_scraper.scrape_collections, 40, "men")
-        await collect("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, 40)
-        # nowfashion.com is disabled for now: it blocks direct requests (403) and
-        # also fails through the plain ScraperAPI proxy (500), which points to a
-        # JS-based bot challenge — fixable with ScraperAPI's render=true mode, but
-        # that costs ~10x credits per request, so left off pending a decision.
-        # for cat in FASHION_CATEGORIES:
-        #     await collect(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, cat, 30)
-        for cat in FASHION_CATEGORIES:
-            await collect(f"firstview/{cat}", firstview_scraper.scrape_category, cat, 30)
+        if backfill:
+            for season in BACKFILL_FASHION_PRESS_SEASONS:
+                for gender in ("women", "men"):
+                    await collect(
+                        f"fashion-press/{gender}/{season}",
+                        fashion_scraper.scrape_collections, 3000, gender, season,
+                    )
+            await collect(
+                "fashion-press/haute-couture",
+                fashion_scraper.scrape_haute_couture, 500, 200,
+            )
+            for cat in FASHION_CATEGORIES:
+                await collect(
+                    f"firstview/{cat}/{BACKFILL_FIRSTVIEW_YEAR}",
+                    firstview_scraper.scrape_category, cat, 3000, BACKFILL_FIRSTVIEW_YEAR, 60, 6,
+                )
+        else:
+            await collect("fashion-press/women", fashion_scraper.scrape_collections, 40, "women")
+            await collect("fashion-press/men", fashion_scraper.scrape_collections, 40, "men")
+            await collect("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, 40)
+            # nowfashion.com is disabled for now: it blocks direct requests (403) and
+            # also fails through the plain ScraperAPI proxy (500), which points to a
+            # JS-based bot challenge — fixable with ScraperAPI's render=true mode, but
+            # that costs ~10x credits per request, so left off pending a decision.
+            # for cat in FASHION_CATEGORIES:
+            #     await collect(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, cat, 30)
+            for cat in FASHION_CATEGORIES:
+                await collect(f"firstview/{cat}", firstview_scraper.scrape_category, cat, 30)
 
         by_source: dict = {}
         for r in raw_items:
@@ -561,6 +598,43 @@ async def _seed_fashion_if_empty():
         asyncio.create_task(run_fashion_scrape("initial_seed"))
     else:
         logger.info("Fashion feed present: %d items.", count)
+
+
+async def _backfill_fashion_if_needed():
+    """One-time: pull everything since January 2026 (run_fashion_scrape's
+    `backfill=True` path), not just whatever was on each source's front page
+    the day the regular scrape happened to run. Guarded by a marker doc in
+    `meta` so this only ever fires once — a later restart/redeploy won't
+    kick it off again. (The Settings screen's "2026 Ocak'tan İtibaren
+    Tümünü Tara" button / POST /admin/fashion-backfill runs the same thing
+    on demand, e.g. to pick up the rest of 2027SS once more of it airs — that
+    path doesn't touch this marker, so it's always available regardless.)
+    """
+    marker = await db.meta.find_one({"_id": "fashion_backfill_2026"})
+    if marker and marker.get("done"):
+        return
+    logger.info("Fashion backfill (everything since Jan 2026) hasn't run yet — starting it in the background.")
+    await db.meta.update_one(
+        {"_id": "fashion_backfill_2026"},
+        {"$set": {"started_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+
+    async def _run():
+        result = await run_fashion_scrape("auto_backfill_2026", backfill=True)
+        if result.get("status") == "already_running":
+            # Something else (the regular scrape, a manual trigger) was
+            # already running at startup — don't mark this done, so it's
+            # retried on the next restart instead of being skipped forever.
+            logger.info("Fashion backfill: deferred, another scrape was already running.")
+            return
+        await db.meta.update_one(
+            {"_id": "fashion_backfill_2026"},
+            {"$set": {"done": True, "finished_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+
+    asyncio.create_task(_run())
 
 
 async def _migrate_fashion_schema():
@@ -1312,6 +1386,19 @@ async def admin_fashion_scrape(admin: Annotated[dict, Depends(require_admin)]):
     return {"status": "started"}
 
 
+@api.post("/admin/fashion-backfill")
+async def admin_fashion_backfill(admin: Annotated[dict, Depends(require_admin)]):
+    # One-off full historical pull (see run_fashion_scrape's `backfill=True`
+    # path) — everything since January 2026, not just each source's latest
+    # page. Much slower than a regular scrape (hundreds of extra requests),
+    # so this is a separate button from the regular "tara" one, not something
+    # the twice-weekly schedule ever runs on its own.
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_scrape("backfill_2026", backfill=True))
+    return {"status": "started"}
+
+
 @api.get("/")
 async def root():
     return {"app": "COZA", "status": "ok"}
@@ -1352,13 +1439,14 @@ async def on_startup():
         args=["scheduled_mon_thu_08:00"],
         id="scheduled_scrape", replace_existing=True,
     )
-    # COZA Fashion: refresh runway collections every day at 07:00. Re-scraping
-    # daily doesn't create duplicates — items upsert by brand+season+category,
+    # COZA Fashion: refresh runway collections Mondays and Wednesdays at
+    # 07:00 (was every day — cut back to twice a week). Re-scraping doesn't
+    # create duplicates either way — items upsert by brand+season+category,
     # so an unchanged collection just gets its updated_at bumped and only
     # genuinely new collections add a new entry.
     scheduler.add_job(
-        run_fashion_scrape, CronTrigger(hour=7, minute=0, timezone="Europe/Istanbul"),
-        args=["scheduled_daily_07:00"],
+        run_fashion_scrape, CronTrigger(day_of_week="mon,wed", hour=7, minute=0, timezone="Europe/Istanbul"),
+        args=["scheduled_mon_wed_07:00"],
         id="scheduled_fashion_scrape", replace_existing=True,
     )
     scheduler.start()
@@ -1366,6 +1454,7 @@ async def on_startup():
     await _migrate_fashion_schema()
     await _dedupe_existing_fashion_docs()
     await _seed_fashion_if_empty()
+    await _backfill_fashion_if_needed()
     # Let browsers load fashion photos straight from the R2 bucket (see
     # image_store.ensure_cors_configured's docstring for why this is
     # needed). Blocking network call, so keep it off the event loop.

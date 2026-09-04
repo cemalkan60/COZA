@@ -14,9 +14,17 @@ Structure (confirmed by manual inspection, 2026-09):
     other best-effort source.
   - Viewing is free; FirstView requires contacting them for hi-res/licensed
     use, which doesn't apply to this personal-use aggregation.
+  - The listing also takes `&filter_year={YYYY}` (the year a show actually
+    took place, confirmed against the site's own "Year:" filter) and
+    `&page={N}` for pagination (~20 results/page) — used by scrape_category's
+    `year`/`max_pages` args for a full historical pull; the regular scrape
+    doesn't set them and keeps fetching just page 1 of the unfiltered
+    "newest first" listing.
 """
 import re
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -63,11 +71,16 @@ def _extract_collection_ids(html: str, limit: int) -> list:
     return ids
 
 
-_SEASON_RE = re.compile(r"\b(Spring/Summer|Fall/Winter|Resort|Pre-?[Ff]all)\s*((?:19|20)\d{2})\b")
+# The site's own titles space the slash out ("Fall / Winter 2026", "Spring /
+# Summer 2027" — confirmed by browsing the live listing), which the original
+# `Fall/Winter` (no spaces) pattern never matched — every firstview item was
+# silently coming back with an empty `season`, all along. `\s*/\s*` covers
+# both spaced and unspaced forms.
+_SEASON_RE = re.compile(r"\b(Spring\s*/\s*Summer|Fall\s*/\s*Winter|Resort|Pre-?[Ff]all)\s*((?:19|20)\d{2})\b")
 
 
 def _parse_title(title: str) -> dict:
-    """firstview page titles read like 'Brand - Ready-to-Wear - Fall 2026 - Women'."""
+    """firstview page titles read like 'Brand - Fall / Winter 2026 - Women'."""
     parts = [p.strip() for p in title.split("-") if p.strip()]
     brand = parts[0] if parts else None
     season = None
@@ -106,47 +119,94 @@ def _extract_images(html: str, collection_id: str, limit: int = 40) -> list:
     return images
 
 
-def scrape_category(category: str, limit: int = 30) -> list:
+def _fetch_one_collection(cid: str, category: str) -> Optional[dict]:
+    """Fetch and parse a single collection's gallery page. Returns None on
+    any failure or an empty gallery — best-effort, same as before.
+    """
+    url = f"{BASE}/collection_images.php?id={cid}"
+    try:
+        html = _fetch(url)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("firstview: collection fetch failed %s: %s", url, exc)
+        return None
+    images = _extract_images(html, cid)
+    if not images:
+        return None
+    soup = BeautifulSoup(html, "html.parser")
+    title = (soup.title.string if soup.title and soup.title.string else "").strip()
+    parsed = _parse_title(title)
+    return {
+        "source_id": f"firstview-{cid}",
+        "url": url,
+        "image": images[0],
+        "images": images,
+        "brand_tr": parsed["brand"] or f"FirstView #{cid}",
+        "season": parsed["season"] or "",
+        "city": None,  # not confirmed to be shown on the gallery page itself
+        "category": category,
+        "source": "firstview",
+    }
+
+
+def scrape_category(
+    category: str, limit: int = 30, year: Optional[int] = None, max_pages: int = 1, workers: int = 1
+) -> list:
     """Scrape firstview.com galleries for one of our categories
     ("women" | "men" | "haute-couture"). Best-effort per item.
+
+    Without `year`, this is the original fast path: a single fetch of the
+    unfiltered "newest first" listing, capped at `limit` — what the regular
+    twice-weekly scrape uses to pick up new additions quickly.
+
+    With `year` set, the listing is filtered to that calendar year (matching
+    firstview's own "Year:" search filter — the year a show actually took
+    place, not a season name) and walked page by page (`max_pages`, ~20
+    items per page) to collect every id, up to `limit`. That's how a full
+    historical pull for a given year (a backfill) is done. `workers` > 1
+    fetches that year's individual collection galleries concurrently (a
+    small thread pool, not one request at a time) — with hundreds of
+    collections in a backfill, doing them one by one would take far too
+    long.
     """
     gender, s_n = CATEGORY_TO_QUERY[category]
-    query = f"/collection_results.php?s_g={gender}&b=date&clear=1"
+    base_query = f"/collection_results.php?s_g={gender}&b=date&clear=1"
     if s_n:
-        query += f"&s_n={s_n}"
-    try:
-        listing_html = _fetch(query)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("firstview: listing fetch failed for %s: %s", category, exc)
-        return []
+        base_query += f"&s_n={s_n}"
+    if year:
+        base_query += f"&filter_year={year}"
 
-    collection_ids = _extract_collection_ids(listing_html, limit)
-    items = []
-    for cid in collection_ids:
-        url = f"{BASE}/collection_images.php?id={cid}"
+    collection_ids: list = []
+    seen_ids = set()
+    for page in range(1, max_pages + 1):
+        page_query = base_query if page == 1 else f"{base_query}&page={page}"
         try:
-            html = _fetch(url)
+            listing_html = _fetch(page_query)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("firstview: collection fetch failed %s: %s", url, exc)
-            continue
-        images = _extract_images(html, cid)
-        if not images:
-            continue
-        soup = BeautifulSoup(html, "html.parser")
-        title = (soup.title.string if soup.title and soup.title.string else "").strip()
-        parsed = _parse_title(title)
-        items.append(
-            {
-                "source_id": f"firstview-{cid}",
-                "url": url,
-                "image": images[0],
-                "images": images,
-                "brand_tr": parsed["brand"] or f"FirstView #{cid}",
-                "season": parsed["season"] or "",
-                "city": None,  # not confirmed to be shown on the gallery page itself
-                "category": category,
-                "source": "firstview",
-            }
-        )
-    logger.info("firstview: scraped %d %s collections", len(items), category)
+            logger.error("firstview: listing fetch failed for %s page %d: %s", category, page, exc)
+            break
+        page_ids = _extract_collection_ids(listing_html, limit=limit - len(collection_ids))
+        new_ids = [cid for cid in page_ids if cid not in seen_ids]
+        if not new_ids:
+            break  # past the last page — stop
+        for cid in new_ids:
+            seen_ids.add(cid)
+            collection_ids.append(cid)
+        if len(collection_ids) >= limit:
+            break
+
+    items: list = []
+    if workers > 1 and len(collection_ids) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for result in pool.map(lambda cid: _fetch_one_collection(cid, category), collection_ids):
+                if result:
+                    items.append(result)
+    else:
+        for cid in collection_ids:
+            result = _fetch_one_collection(cid, category)
+            if result:
+                items.append(result)
+
+    logger.info(
+        "firstview: scraped %d %s collections%s", len(items), category, f" (year {year}, {page} page(s))" if year else ""
+    )
     return items
