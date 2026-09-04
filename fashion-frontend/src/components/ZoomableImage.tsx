@@ -1,4 +1,5 @@
 import React, { forwardRef, useImperativeHandle, useState } from "react";
+import { View } from "react-native";
 import { Image, type ImageContentFit } from "expo-image";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -176,10 +177,22 @@ export const ZoomableImage = forwardRef<
   }));
 
   return (
-    <GestureDetector gesture={composed}>
-      <Animated.View style={[{ width, height }, animatedStyle]}>
-        <Image source={{ uri }} style={{ width, height }} contentFit={contentFit} />
-      </Animated.View>
-    </GestureDetector>
+    // Fixed-size clipping window, deliberately NOT the element that gets the
+    // scale transform below -- if it were the same element, its own clip
+    // rect would grow right along with the zoom (scale(2) would make a
+    // "clipped to width x height" box visually 2x too), defeating the
+    // clip. Needed on web: confirmed live that expo-image's underlying
+    // <img> can render at its native intrinsic size rather than being
+    // constrained to the `width`/`height` style, leaving an invisible
+    // oversized hit area that swallowed clicks meant for anything
+    // overlapping it -- including the +/- zoom buttons the parent screen
+    // overlays on top of this component.
+    <View style={{ width, height, overflow: "hidden" }}>
+      <GestureDetector gesture={composed}>
+        <Animated.View style={[{ width, height }, animatedStyle]}>
+          <Image source={{ uri }} style={{ width, height }} contentFit={contentFit} />
+        </Animated.View>
+      </GestureDetector>
+    </View>
   );
 });
