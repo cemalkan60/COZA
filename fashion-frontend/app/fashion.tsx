@@ -242,12 +242,13 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
   }, [item?.image]);
 
   const openInternal = (it: FashionItem) => {
-    // Only pass id + title — the gallery screen fetches images itself.
-    // (Used to also pass the raw fashion-press.net image URL here so the
-    // first photo could paint before that fetch resolved, but it leaked the
-    // source domain straight into the visible/shareable URL.)
+    // Only pass id + title(+season) — the gallery screen fetches images
+    // itself. (Used to also pass the raw fashion-press.net image URL here
+    // so the first photo could paint before that fetch resolved, but it
+    // leaked the source domain straight into the visible/shareable URL.)
     const title = encodeURIComponent(it.brand_tr || it.title_tr || "");
-    router.push(`/fashion/brand/${encodeURIComponent(it.source_id)}?title=${title}`);
+    const season = encodeURIComponent(it.season_label || "");
+    router.push(`/fashion/brand/${encodeURIComponent(it.source_id)}?title=${title}&season=${season}`);
   };
 
   if (!item) {
@@ -271,6 +272,9 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
       </View>
       <Text numberOfLines={1} style={[styles.cardBrand, { color: colors.onSurface }]}>
         {item.brand_tr || item.title_tr}
+        {item.season_label ? (
+          <Text style={[styles.cardSeason, { color: colors.brandSecondary }]}> ({item.season_label})</Text>
+        ) : null}
       </Text>
     </Pressable>
   );
@@ -324,6 +328,7 @@ const styles = StyleSheet.create({
   image: { width: "100%", height: "100%" },
   imagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
   cardBrand: { fontSize: 13, fontWeight: "700", letterSpacing: -0.2 },
+  cardSeason: { fontSize: 12, fontWeight: "600" },
   loadMoreBtn: {
     height: 44,
     borderWidth: 1,
