@@ -477,41 +477,66 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
         started = datetime.now(timezone.utc)
         raw_items: list = []
 
-        async def collect(label: str, fn, *args):
+        # Build the list of sources to hit up front (instead of firing each
+        # collect() inline) so the total is known *before* any fetching
+        # starts — that's what lets the "scraping" meta doc below report
+        # real progress through this whole phase. A plain backfill run can
+        # spend 30-60+ minutes just fetching listings/galleries before a
+        # single collection is ready to save; without this, the Settings
+        # screen showed nothing at all until that entire phase finished,
+        # which looked identical to the button having silently failed.
+        if backfill:
+            tasks = []
+            for season in BACKFILL_FASHION_PRESS_SEASONS:
+                for gender in ("women", "men"):
+                    tasks.append((
+                        f"fashion-press/{gender}/{season}",
+                        fashion_scraper.scrape_collections, (3000, gender, season),
+                    ))
+            tasks.append(("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, (500, 200)))
+            for cat in FASHION_CATEGORIES:
+                tasks.append((
+                    f"firstview/{cat}/{BACKFILL_FIRSTVIEW_YEAR}",
+                    firstview_scraper.scrape_category, (cat, 3000, BACKFILL_FIRSTVIEW_YEAR, 60, 6),
+                ))
+        else:
+            tasks = [
+                ("fashion-press/women", fashion_scraper.scrape_collections, (40, "women")),
+                ("fashion-press/men", fashion_scraper.scrape_collections, (40, "men")),
+                ("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, (40,)),
+                # nowfashion.com is disabled for now: it blocks direct requests (403) and
+                # also fails through the plain ScraperAPI proxy (500), which points to a
+                # JS-based bot challenge — fixable with ScraperAPI's render=true mode, but
+                # that costs ~10x credits more per request, so left off pending a decision.
+                # *[(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES],
+            ]
+            tasks += [(f"firstview/{cat}", firstview_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES]
+
+        start_iso = started.isoformat()
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {
+                "$set": {
+                    "scraping": True,
+                    "phase": "collecting",
+                    "scrape_started_at": start_iso,
+                    "reason": reason,
+                    "sources_total": len(tasks),
+                    "sources_done": 0,
+                    "groups_total": 0,
+                    "groups_done": 0,
+                }
+            },
+            upsert=True,
+        )
+
+        for label, fn, args in tasks:
             try:
                 got = await asyncio.to_thread(fn, *args)
                 raw_items.extend(got or [])
             except Exception:
                 logger.exception("Fashion scrape source failed (%s)", label)
-
-        if backfill:
-            for season in BACKFILL_FASHION_PRESS_SEASONS:
-                for gender in ("women", "men"):
-                    await collect(
-                        f"fashion-press/{gender}/{season}",
-                        fashion_scraper.scrape_collections, 3000, gender, season,
-                    )
-            await collect(
-                "fashion-press/haute-couture",
-                fashion_scraper.scrape_haute_couture, 500, 200,
-            )
-            for cat in FASHION_CATEGORIES:
-                await collect(
-                    f"firstview/{cat}/{BACKFILL_FIRSTVIEW_YEAR}",
-                    firstview_scraper.scrape_category, cat, 3000, BACKFILL_FIRSTVIEW_YEAR, 60, 6,
-                )
-        else:
-            await collect("fashion-press/women", fashion_scraper.scrape_collections, 40, "women")
-            await collect("fashion-press/men", fashion_scraper.scrape_collections, 40, "men")
-            await collect("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, 40)
-            # nowfashion.com is disabled for now: it blocks direct requests (403) and
-            # also fails through the plain ScraperAPI proxy (500), which points to a
-            # JS-based bot challenge — fixable with ScraperAPI's render=true mode, but
-            # that costs ~10x credits per request, so left off pending a decision.
-            # for cat in FASHION_CATEGORIES:
-            #     await collect(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, cat, 30)
-            for cat in FASHION_CATEGORIES:
-                await collect(f"firstview/{cat}", firstview_scraper.scrape_category, cat, 30)
+            await db.meta.update_one({"_id": "fashion"}, {"$inc": {"sources_done": 1}})
 
         by_source: dict = {}
         for r in raw_items:
@@ -537,8 +562,7 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 {
                     "$set": {
                         "scraping": True,
-                        "scrape_started_at": now_iso,
-                        "reason": reason,
+                        "phase": "finalizing",
                         "groups_total": len(groups),
                         "groups_done": 0,
                     }
