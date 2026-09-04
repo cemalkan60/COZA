@@ -823,12 +823,22 @@ async def _migrate_fashion_schema():
         logger.info("Fashion: removed %d pre-migration legacy documents.", result.deleted_count)
 
     # One-time backfill for season_rank (added for the unified newest-first
-    # feed sort) on any doc saved before this field existed. A fresh
-    # since-Jan-2026 backfill can leave hundreds/thousands of docs missing
-    # it at once, so this is sent as a single bulk_write instead of one
-    # update_one per document — one network round-trip instead of
-    # hundreds, since this runs inline in app startup (Uvicorn won't finish
-    # "startup complete" — and start accepting requests — until it returns).
+    # feed sort) on any doc saved before this field existed, bounded by a
+    # hard timeout: this runs inline in app startup, and Uvicorn won't
+    # finish "startup complete" -- meaning the app serves NO requests at
+    # all, not even login -- until the startup handler returns. A slow or
+    # stuck DB round-trip here must never be able to take the whole app
+    # down with it; a doc that misses this pass just sorts to the bottom
+    # of "newest first" until the next startup or scrape touches it.
+    try:
+        await asyncio.wait_for(_backfill_season_rank(), timeout=20)
+    except asyncio.TimeoutError:
+        logger.warning("Fashion: season_rank backfill timed out (>20s) — skipping, will retry next startup.")
+    except Exception:
+        logger.exception("Fashion: season_rank backfill failed.")
+
+
+async def _backfill_season_rank():
     stale = await db.fashion.find(
         {"season_rank": {"$exists": False}}, {"_id": 0, "source_id": 1, "season": 1}
     ).to_list(length=None)
