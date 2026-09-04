@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { fashionImageUri } from "@/src/utils/fashionImage";
-import { ZoomableImage } from "@/src/components/ZoomableImage";
+import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/ZoomableImage";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
@@ -43,6 +43,17 @@ export default function BrandGallery() {
   imagesLengthRef.current = images.length;
   const viewerListRef = useRef<FlatList<string>>(null);
   const wasViewerOpenRef = useRef(false);
+  // One ZoomableImage ref per currently-mounted viewer page (FlatList only
+  // keeps a handful of pages mounted at once), keyed by index, so the +/-
+  // zoom buttons below can always reach whichever page is actually visible
+  // right now (see the "Kombin Arama"-style toolbar in the viewer overlay).
+  const zoomRefs = useRef<Map<number, ZoomableImageHandle>>(new Map());
+  const handleZoomIn = useCallback(() => {
+    if (viewerIndexRef.current !== null) zoomRefs.current.get(viewerIndexRef.current)?.zoomIn();
+  }, []);
+  const handleZoomOut = useCallback(() => {
+    if (viewerIndexRef.current !== null) zoomRefs.current.get(viewerIndexRef.current)?.zoomOut();
+  }, []);
 
   const goPrev = useCallback(() => {
     setViewerIndex((i) => {
@@ -248,9 +259,13 @@ export default function BrandGallery() {
                   const idx = Math.round(e.nativeEvent.contentOffset.x / width);
                   setViewerIndex(idx);
                 }}
-                renderItem={({ item }) => (
+                renderItem={({ item, index }) => (
                   <View style={{ width, height, alignItems: "center", justifyContent: "center" }}>
                     <ZoomableImage
+                      ref={(handle) => {
+                        if (handle) zoomRefs.current.set(index, handle);
+                        else zoomRefs.current.delete(index);
+                      }}
                       uri={fashionImageUri(item)}
                       width={width * 0.92}
                       height={height * 0.8}
@@ -285,6 +300,25 @@ export default function BrandGallery() {
               <Text style={styles.viewerCounter}>
                 {viewerIndex + 1} / {images.length}
               </Text>
+
+              <View style={[styles.viewerZoomControls, { bottom: insets.bottom + 24 }]}>
+                <Pressable
+                  testID="brand-viewer-zoom-out"
+                  onPress={handleZoomOut}
+                  style={styles.viewerZoomBtn}
+                  hitSlop={10}
+                >
+                  <Feather name="zoom-out" size={20} color="#fff" />
+                </Pressable>
+                <Pressable
+                  testID="brand-viewer-zoom-in"
+                  onPress={handleZoomIn}
+                  style={styles.viewerZoomBtn}
+                  hitSlop={10}
+                >
+                  <Feather name="zoom-in" size={20} color="#fff" />
+                </Pressable>
+              </View>
             </>
           )}
         </View>
@@ -340,5 +374,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
+  },
+  viewerZoomControls: {
+    position: "absolute",
+    right: 16,
+    flexDirection: "row",
+    gap: 10,
+    zIndex: 10,
+  },
+  viewerZoomBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.15)",
   },
 });
