@@ -1931,6 +1931,120 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
     return {"status": "started"}
 
 
+# Per-photo Gemini vision-tagging budget (download the already-cached photo
+# from our own R2 bucket + the gemini_client.tag_image call itself, which
+# internally throttles to stay under the free API tier's per-minute request
+# cap -- see gemini_client._throttle). Generous on purpose: a photo that's
+# waiting out someone *else's* throttle delay when this fires can otherwise
+# look like it timed out when it was really just queued.
+_TAG_TIMEOUT_S = 30
+
+
+async def _tag_one_doc(doc: dict, sem: asyncio.Semaphore) -> int:
+    """Tag every not-yet-tagged photo in one collection's gallery via Gemini
+    vision (item/color/pattern/material — see gemini_client.tag_image),
+    preferring the small thumbnail over the full-resolution photo (plenty
+    for this level of classification, cheaper/faster to upload).
+
+    `image_tags` is always kept as a contiguous prefix of `images`, same
+    index order — so resuming later (a fresh sweep, or this one picking back
+    up after a Railway redeploy killed it mid-run) is just "start at
+    len(image_tags)", no need to track which specific photos succeeded.
+    Stops at the first failed photo in a doc rather than skipping over it,
+    for exactly that reason; the sweep just retries it next time. Returns
+    how many photos got a new tag this run.
+    """
+    async with sem:
+        images = doc.get("images") or ([doc["image"]] if doc.get("image") else [])
+        images_thumb = doc.get("images_thumb") or images
+        tags = list(doc.get("image_tags") or [])
+        added = 0
+        for i in range(len(tags), len(images)):
+            url = images_thumb[i] if i < len(images_thumb) else images[i]
+            try:
+                tag = await asyncio.wait_for(
+                    asyncio.to_thread(gemini_client.tag_image, url), timeout=_TAG_TIMEOUT_S
+                )
+            except Exception:
+                tag = None
+            if tag is None:
+                break
+            tags.append(tag)
+            added += 1
+            await db.fashion.update_one({"source_id": doc["source_id"]}, {"$set": {"image_tags": tags}})
+            await db.meta.update_one({"_id": "fashion"}, {"$inc": {"tags_done": 1}})
+        return added
+
+
+async def run_fashion_tag_firstview() -> dict:
+    """One-off sweep (pilot phase): tag every FirstView-sourced photo across
+    the whole feed via Gemini vision, so those photos can be filtered by
+    garment/color/pattern/material regardless of which source they came
+    from — fashion-press.net and nowfashion.com don't carry that metadata on
+    our own documents the way FirstView will once this runs, but a later
+    sweep can extend the same _tag_one_doc/image_tags mechanism to them.
+    Paced by gemini_client's own global throttle to stay on the free API
+    tier (no billing), so this can take a while for a large backlog — see
+    the progress counters this writes to db.meta (phase "tagging_firstview",
+    tags_total/tags_done), same shape as the other fashion sweeps. Shares
+    _fashion_lock with them so nothing races over the same documents.
+    """
+    if not gemini_client.ENABLED:
+        return {"status": "gemini_disabled"}
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        all_docs = await db.fashion.find(
+            {"sources": "firstview"},
+            {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_tags": 1},
+        ).to_list(length=None)
+        docs = [d for d in all_docs if len(d.get("image_tags") or []) < len(d.get("images") or [])]
+        total_photos = sum(len(d.get("images") or []) - len(d.get("image_tags") or []) for d in docs)
+        logger.info(
+            "Fashion tagging (firstview): %d collection(s), %d photo(s) still untagged.",
+            len(docs),
+            total_photos,
+        )
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {
+                "$set": {
+                    "scraping": True,
+                    "phase": "tagging_firstview",
+                    "tags_total": total_photos,
+                    "tags_done": 0,
+                }
+            },
+            upsert=True,
+        )
+
+        # Modest doc-level concurrency: the real request rate to Gemini is
+        # capped globally by gemini_client._throttle regardless of this
+        # number, so this just lets image downloads/DB writes for a few
+        # documents overlap with each other's throttle wait instead of
+        # sitting fully idle.
+        sem = asyncio.Semaphore(3)
+        results = await asyncio.gather(*(_tag_one_doc(d, sem) for d in docs))
+        tagged = sum(results)
+        logger.info("Fashion tagging (firstview): done, %d/%d photo(s) tagged.", tagged, total_photos)
+        await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        return {"status": "ok", "total_photos": total_photos, "tagged": tagged}
+
+
+@api.post("/admin/fashion-tag-firstview")
+async def admin_fashion_tag_firstview(admin: Annotated[dict, Depends(require_admin)]):
+    # Fire-and-forget, same reasoning as /admin/fashion-fix-covers -- with
+    # over a thousand FirstView photos and a deliberately-throttled request
+    # rate (see gemini_client._MIN_INTERVAL_S), this can run for well over
+    # an hour.
+    if not gemini_client.ENABLED:
+        raise HTTPException(400, "Gemini API anahtarı yapılandırılmamış.")
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_tag_firstview())
+    return {"status": "started"}
+
+
 def _fashion_doc_merge_key(doc: dict) -> str:
     """Same shape as _fashion_merge_key, but for an already-saved doc rather
     than a freshly-scraped raw item -- and always canonicalizes the doc's
