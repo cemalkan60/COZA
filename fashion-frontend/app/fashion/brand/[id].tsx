@@ -34,6 +34,12 @@ export default function BrandGallery() {
   const headerLabel = season ? `${title} (${season})` : title;
 
   const [images, setImages] = useState<string[]>([]);
+  // Small resized copies of `images`, same order/length -- used only for
+  // the grid tiles below (see renderItem), never for the fullscreen viewer,
+  // which always shows the full-resolution photo. Falls back to `images`
+  // itself (index-for-index) for any collection the thumbnail backfill
+  // hasn't reached yet -- see the merge in fetchImages below.
+  const [imagesThumb, setImagesThumb] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [viewerZoomed, setViewerZoomed] = useState(false);
@@ -124,16 +130,35 @@ export default function BrandGallery() {
         // directly instead of going through the shared api client.
         const base = process.env.EXPO_PUBLIC_BACKEND_URL || "https://coza-production.up.railway.app";
         const fetchedImgs: string[] = [];
+        // Parallel to fetchedImgs (same index) -- the small resized copy of
+        // each full-res photo, for the grid tiles below. Falls back to the
+        // full-res URL itself wherever no thumbnail exists yet.
+        const fetchedThumbs: string[] = [];
         if (base) {
           try {
             const res = await fetch(`${base}/api/fashion/collections/${encodeURIComponent(id)}`);
             if (res.ok) {
               const data = await res.json();
-              if (Array.isArray(data.images)) fetchedImgs.push(...data.images);
+              if (Array.isArray(data.images)) {
+                const thumbs = Array.isArray(data.images_thumb) ? data.images_thumb : [];
+                data.images.forEach((u: string, i: number) => {
+                  fetchedImgs.push(u);
+                  fetchedThumbs.push(thumbs[i] || u);
+                });
+              }
               if (Array.isArray(data.items)) {
                 data.items.forEach((it: any) => {
-                  if (it.image) fetchedImgs.push(it.image);
-                  if (Array.isArray(it.images)) fetchedImgs.push(...it.images);
+                  if (it.image) {
+                    fetchedImgs.push(it.image);
+                    fetchedThumbs.push(it.image_thumb || it.image);
+                  }
+                  if (Array.isArray(it.images)) {
+                    const thumbs = Array.isArray(it.images_thumb) ? it.images_thumb : [];
+                    it.images.forEach((u: string, i: number) => {
+                      fetchedImgs.push(u);
+                      fetchedThumbs.push(thumbs[i] || u);
+                    });
+                  }
                 });
               }
             }
@@ -142,8 +167,22 @@ export default function BrandGallery() {
           }
         }
 
-        const merged = Array.from(new Set(fetchedImgs.filter(Boolean)));
-        if (!cancelled) setImages(merged);
+        // De-dupe by full-res URL while keeping the thumb list paired to it
+        // index-for-index -- a plain Set (the original approach) can't
+        // carry a second parallel value along with it.
+        const seen = new Set<string>();
+        const mergedImgs: string[] = [];
+        const mergedThumbs: string[] = [];
+        fetchedImgs.forEach((u, i) => {
+          if (!u || seen.has(u)) return;
+          seen.add(u);
+          mergedImgs.push(u);
+          mergedThumbs.push(fetchedThumbs[i] || u);
+        });
+        if (!cancelled) {
+          setImages(mergedImgs);
+          setImagesThumb(mergedThumbs);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -214,7 +253,7 @@ export default function BrandGallery() {
             style={({ pressed }) => [{ width: cardWidth, marginBottom: gap, opacity: pressed ? 0.85 : 1 }]}
           >
             <Image
-              source={{ uri: fashionImageUri(item) }}
+              source={{ uri: fashionImageUri(imagesThumb[index] || item) }}
               style={{ width: cardWidth, aspectRatio: 3 / 4, backgroundColor: colors.surfaceTertiary, borderRadius: 4 }}
               contentFit="cover"
               transition={220}
