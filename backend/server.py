@@ -552,13 +552,22 @@ def _finalize_fashion_group(g: dict) -> dict:
     unique_urls = [u for u in g["images"] if not (u in seen or seen.add(u))]
     if len(g["sources"]) > 1:
         unique_urls = _dedupe_images_phash(unique_urls)
+    thumb_urls = list(unique_urls)
     if image_store.ENABLED:
         # Re-host each photo on our own R2 bucket so the app serves it
-        # instantly instead of live-proxying the source site per view.
-        # No-op (returns the original URL) until R2 is configured.
-        unique_urls = [image_store.cache_image(u) for u in unique_urls]
+        # instantly instead of live-proxying the source site per view, and
+        # also generate a small thumbnail alongside it for grid/list display
+        # (see image_store._THUMB_MAX_WIDTH) -- grids were downloading full
+        # runway-resolution photos just to paint a ~180px tile, which is
+        # what made the feed feel slow/blank on first load. No-op (returns
+        # the original URL for both) until R2 is configured.
+        cached = [image_store.cache_image_with_thumb(u) for u in unique_urls]
+        unique_urls = [full for full, _ in cached]
+        thumb_urls = [thumb for _, thumb in cached]
     g["images"] = unique_urls
     g["image"] = unique_urls[0] if unique_urls else None
+    g["images_thumb"] = thumb_urls
+    g["image_thumb"] = thumb_urls[0] if thumb_urls else None
     return g
 
 
@@ -1528,13 +1537,17 @@ async def fashion_collection_detail(source_id: str):
         raise HTTPException(404, "Koleksiyon bulunamadı.")
     fp_id = doc.get("fp_source_id")
     if not fp_id or doc.get("gallery_fetched"):
-        return {"images": doc.get("images") or []}
+        return {"images": doc.get("images") or [], "images_thumb": doc.get("images_thumb") or []}
     try:
         images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, fp_id)
+        images_thumb = images
         if image_store.ENABLED:
-            images = await asyncio.to_thread(lambda: [image_store.cache_image(u) for u in images])
+            cached = await asyncio.to_thread(lambda: [image_store.cache_image_with_thumb(u) for u in images])
+            images = [full for full, _ in cached]
+            images_thumb = [thumb for _, thumb in cached]
     except Exception:
         images = []
+        images_thumb = []
     update = {"gallery_fetched": True}
     if images:
         update["images"] = images
@@ -1545,11 +1558,16 @@ async def fashion_collection_detail(source_id: str):
         # first real photo instead, same as a freshly-finalized scrape group
         # does (see _finalize_fashion_group).
         update["image"] = images[0]
+        update["images_thumb"] = images_thumb
+        update["image_thumb"] = images_thumb[0] if images_thumb else images[0]
     # Mark fetched even on failure/empty so a broken collection doesn't
     # re-trigger this fetch (and re-hit fashion-press.net) on every view —
     # the existing thumbnail stays as the fallback.
     await db.fashion.update_one({"source_id": source_id}, {"$set": update})
-    return {"images": images or doc.get("images") or []}
+    return {
+        "images": images or doc.get("images") or [],
+        "images_thumb": images_thumb or doc.get("images_thumb") or [],
+    }
 
 
 @api.get("/fashion/looks/filters")
@@ -1706,17 +1724,28 @@ async def _fix_one_cover(doc: dict, sem: asyncio.Semaphore) -> bool:
             images = []
         if not images:
             return False
+        images_thumb = images
         if image_store.ENABLED:
             try:
-                images = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: [image_store.cache_image(u) for u in images]),
+                cached = await asyncio.wait_for(
+                    asyncio.to_thread(lambda: [image_store.cache_image_with_thumb(u) for u in images]),
                     timeout=_COVER_FIX_TIMEOUT_S,
                 )
             except Exception:
                 return False
+            images = [full for full, _ in cached]
+            images_thumb = [thumb for _, thumb in cached]
         await db.fashion.update_one(
             {"source_id": doc["source_id"]},
-            {"$set": {"gallery_fetched": True, "images": images, "image": images[0]}},
+            {
+                "$set": {
+                    "gallery_fetched": True,
+                    "images": images,
+                    "image": images[0],
+                    "images_thumb": images_thumb,
+                    "image_thumb": images_thumb[0] if images_thumb else images[0],
+                }
+            },
         )
         return True
 
@@ -1770,6 +1799,98 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
     return {"status": "started"}
 
 
+_THUMB_FIX_TIMEOUT_S = 20  # per-photo download(from our own R2)+resize+upload budget
+
+
+async def _fix_one_doc_thumbs(doc: dict, sem: asyncio.Semaphore) -> bool:
+    """Backfill grid/list thumbnails for one collection whose full-resolution
+    photos are already cached on R2 but predate thumbnails existing at all
+    (see image_store._THUMB_MAX_WIDTH). Downloads each already-cached photo
+    from our own R2 bucket -- never the original source site, so this never
+    touches fashion-press.net/firstview.com and can run with more
+    concurrency than the cover-fix/merge sweeps. Best-effort per photo: one
+    that can't be thumbnailed just falls back to its own full-resolution URL
+    (see the zip below), so a single bad photo never blocks the rest of the
+    collection.
+    """
+    async with sem:
+        images = doc.get("images") or ([doc["image"]] if doc.get("image") else [])
+        if not images:
+            return False
+
+        async def _one(u: str):
+            try:
+                return await asyncio.wait_for(
+                    asyncio.to_thread(image_store.backfill_thumb, u), timeout=_THUMB_FIX_TIMEOUT_S
+                )
+            except Exception:
+                return None
+
+        thumbs = await asyncio.gather(*(_one(u) for u in images))
+        images_thumb = [t or u for t, u in zip(thumbs, images)]
+        await db.fashion.update_one(
+            {"source_id": doc["source_id"]},
+            {"$set": {"images_thumb": images_thumb, "image_thumb": images_thumb[0] if images_thumb else None}},
+        )
+        return True
+
+
+async def run_fashion_thumbnails_backfill() -> dict:
+    """One-off sweep: give every existing collection (any source, any prior
+    sweep) a small grid/list thumbnail alongside its already-cached
+    full-resolution photos -- covers everything scraped/merged/cover-fixed
+    before thumbnails existed. Much cheaper than the other sweeps: every
+    photo here is already on our own R2 bucket, so nothing here waits on or
+    loads fashion-press.net/firstview.com. Shares _fashion_lock with the
+    other sweeps so they never race each other over the same documents.
+    """
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        all_docs = await db.fashion.find(
+            {"images.0": {"$exists": True}},
+            {"_id": 0, "source_id": 1, "images": 1, "image": 1, "images_thumb": 1},
+        ).to_list(length=None)
+        docs = [d for d in all_docs if len(d.get("images_thumb") or []) < len(d.get("images") or [])]
+        logger.info("Fashion thumbnails: %d collection(s) missing a thumbnail for at least one photo.", len(docs))
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {
+                "$set": {
+                    "scraping": True,
+                    "phase": "generating_thumbnails",
+                    "thumbs_total": len(docs),
+                    "thumbs_done": 0,
+                }
+            },
+            upsert=True,
+        )
+
+        fixed = 0
+        sem = asyncio.Semaphore(8)
+
+        async def _run_one(d: dict):
+            nonlocal fixed
+            ok = await _fix_one_doc_thumbs(d, sem)
+            if ok:
+                fixed += 1
+            await db.meta.update_one({"_id": "fashion"}, {"$inc": {"thumbs_done": 1}})
+
+        await asyncio.gather(*(_run_one(d) for d in docs))
+        logger.info("Fashion thumbnails: done, %d/%d collection(s) updated.", fixed, len(docs))
+        await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        return {"status": "ok", "total": len(docs), "fixed": fixed}
+
+
+@api.post("/admin/fashion-fix-thumbnails")
+async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_admin)]):
+    # Fire-and-forget, same reasoning as /admin/fashion-fix-covers.
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_thumbnails_backfill())
+    return {"status": "started"}
+
+
 def _fashion_doc_merge_key(doc: dict) -> str:
     """Same shape as _fashion_merge_key, but for an already-saved doc rather
     than a freshly-scraped raw item -- and always canonicalizes the doc's
@@ -1799,6 +1920,12 @@ async def _merge_one_doc_group_inner(key: str, group: list) -> tuple:
     canonical, *dups = group
     images = list(canonical.get("images") or [])
     seen = set(images)
+    # Full URL -> its thumbnail URL, so the merged doc's images_thumb can be
+    # rebuilt in the same order as the deduped full-res list below without
+    # re-deriving anything from image_store. A doc saved before thumbnails
+    # existed has no images_thumb of its own -- falls back to the full URL
+    # itself (same as everywhere else a thumbnail might be missing).
+    thumb_by_url = dict(zip(canonical.get("images") or [], canonical.get("images_thumb") or []))
     sources = list(canonical.get("sources") or [])
     brand_tr, title_tr = canonical.get("brand_tr", ""), canonical.get("title_tr", "")
     category = canonical.get("category", "")
@@ -1806,6 +1933,7 @@ async def _merge_one_doc_group_inner(key: str, group: list) -> tuple:
     fp_source_id = canonical.get("fp_source_id")
     first_seen = canonical.get("first_seen")
     for d in dups:
+        thumb_by_url.update(zip(d.get("images") or [], d.get("images_thumb") or []))
         for u in d.get("images") or []:
             if u not in seen:
                 seen.add(u)
@@ -1827,11 +1955,13 @@ async def _merge_one_doc_group_inner(key: str, group: list) -> tuple:
     # These docs are only grouped together because they come from more than
     # one source (that's the whole bug this sweep fixes) -- run phash dedup
     # to drop the same shot syndicated twice, then actually free the R2
-    # storage for whichever copy loses (see image_store.delete_image).
+    # storage for whichever copy loses (see image_store.delete_image, which
+    # also deletes that photo's paired thumbnail).
     deduped = await asyncio.to_thread(_dedupe_images_phash, images) if len(sources) > 1 else images
     dropped = [u for u in images if u not in set(deduped)]
     if dropped:
         await asyncio.to_thread(lambda: [image_store.delete_image(u) for u in dropped])
+    deduped_thumb = [thumb_by_url.get(u, u) for u in deduped]
 
     season = _season_merge_code(canonical.get("season") or "")
     merged_doc = {
@@ -1839,6 +1969,8 @@ async def _merge_one_doc_group_inner(key: str, group: list) -> tuple:
         "source_id": key,
         "images": deduped,
         "image": deduped[0] if deduped else None,
+        "images_thumb": deduped_thumb,
+        "image_thumb": deduped_thumb[0] if deduped_thumb else None,
         "sources": sources,
         "brand_tr": brand_tr,
         "title_tr": title_tr,

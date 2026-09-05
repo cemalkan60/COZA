@@ -27,6 +27,7 @@ import os
 import hashlib
 import logging
 import time
+from typing import Optional
 from urllib.parse import urlparse
 
 import requests
@@ -83,6 +84,54 @@ def _key_for(source_url: str) -> str:
             ext = candidate
             break
     return f"fashion/{digest}.{ext}"
+
+
+# Grid/list tiles never render a photo anywhere near full runway resolution
+# (a few hundred px wide at most, even on a large desktop grid), but every
+# photo was being cached and served at its original full size regardless —
+# confirmed live as the main cause of slow/blank-looking grids: the browser
+# was downloading full-resolution runway photos (often 1-2MB+) just to
+# paint a ~180px-wide thumbnail. 480px covers any grid tile with room for
+# a retina display; the full-resolution original is still cached and used
+# whenever a photo is actually opened (see cache_image/cache_image_with_thumb
+# callers in server.py).
+_THUMB_MAX_WIDTH = 480
+
+
+def _thumb_key_for(full_key: str) -> str:
+    """'fashion/<hash>.jpg' -> 'fashion-thumb/<hash>.jpg' — same digest,
+    parallel prefix, so a thumbnail and its full-resolution source are
+    always trivially derivable from one another without a DB lookup.
+    """
+    if full_key.startswith("fashion/"):
+        return "fashion-thumb/" + full_key[len("fashion/") :]
+    return "fashion-thumb/" + full_key
+
+
+def _make_thumbnail(content: bytes) -> bytes:
+    """Resize downloaded photo bytes to a small JPEG for grid/list display.
+    Runway photos are portrait-oriented, so capping width is what actually
+    matters — the generous height cap is just a safety bound for an
+    unusually wide source photo.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.open(BytesIO(content))
+    img = img.convert("RGB")
+    img.thumbnail((_THUMB_MAX_WIDTH, _THUMB_MAX_WIDTH * 3))
+    out = BytesIO()
+    img.save(out, format="JPEG", quality=78, optimize=True)
+    return out.getvalue()
+
+
+def _object_exists(client, key: str) -> bool:
+    try:
+        client.head_object(Bucket=_BUCKET, Key=key)
+        return True
+    except Exception:
+        return False
 
 
 _cors_checked = False
@@ -176,6 +225,14 @@ def delete_image(public_url: str) -> None:
         _get_client().delete_object(Bucket=_BUCKET, Key=key)
     except Exception as exc:  # noqa: BLE001
         logger.warning("image_store: failed to delete %s: %s", public_url, exc)
+    # Also drop the paired thumbnail, if one was ever generated for this
+    # photo (see _thumb_key_for) — best-effort and silent, same reasoning
+    # as the full-res delete above: a stray orphaned thumb costs nothing.
+    if key.startswith("fashion/"):
+        try:
+            _get_client().delete_object(Bucket=_BUCKET, Key=_thumb_key_for(key))
+        except Exception:
+            pass
 
 
 def cache_image(source_url: str) -> str:
@@ -207,3 +264,93 @@ def cache_image(source_url: str) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.warning("image_store: failed to cache %s: %s", source_url, exc)
         return source_url
+
+
+def cache_image_with_thumb(source_url: str) -> tuple:
+    """Like cache_image, but also produces a small resized thumbnail
+    alongside the full-resolution photo — one download of the source photo,
+    up to two uploads to R2 (full + thumb, each skipped if already cached).
+    Used wherever a photo is being cached for the first time (a fresh
+    scrape, a lazily-fetched gallery, the cover-fix sweep).
+
+    Returns (full_url, thumb_url). Degrades gracefully: a thumbnailing
+    failure (e.g. Pillow can't decode the file) still returns the working
+    full_url with thumb_url falling back to it, so a broken thumbnail never
+    costs the photo itself; a download/upload failure falls back to
+    (source_url, source_url), same as cache_image.
+    """
+    if not ENABLED or not source_url:
+        return source_url, source_url
+
+    full_key = _key_for(source_url)
+    thumb_key = _thumb_key_for(full_key)
+    full_url = f"{_PUBLIC_BASE}/{full_key}"
+    thumb_url = f"{_PUBLIC_BASE}/{thumb_key}"
+    client = _get_client()
+
+    full_exists = _object_exists(client, full_key)
+    thumb_exists = _object_exists(client, thumb_key)
+    if full_exists and thumb_exists:
+        return full_url, thumb_url
+
+    try:
+        resp = requests.get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
+        resp.raise_for_status()
+        content = resp.content
+        content_type = resp.headers.get("Content-Type", "image/jpeg")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("image_store: failed to download %s: %s", source_url, exc)
+        return source_url, source_url
+
+    if not full_exists:
+        try:
+            client.put_object(Bucket=_BUCKET, Key=full_key, Body=content, ContentType=content_type)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("image_store: failed to upload full %s: %s", source_url, exc)
+            return source_url, source_url
+
+    if not thumb_exists:
+        try:
+            thumb_bytes = _make_thumbnail(content)
+            client.put_object(Bucket=_BUCKET, Key=thumb_key, Body=thumb_bytes, ContentType="image/jpeg")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("image_store: failed to make/upload thumb for %s: %s", source_url, exc)
+            thumb_url = full_url  # degrade to full-res rather than fail the whole photo
+
+    if not full_exists:
+        _wait_until_publicly_readable(full_url)
+    return full_url, thumb_url
+
+
+def backfill_thumb(full_url: str) -> Optional[str]:
+    """Generate a thumbnail for a photo that's already been cached at full
+    resolution (an existing R2-hosted URL from before thumbnails existed),
+    without re-fetching it from its original source site. Downloads the
+    already-cached full-resolution copy from our own R2 bucket (cheap, no
+    load on fashion-press.net/firstview.com) and re-hosts a small version of
+    it alongside the original.
+
+    Returns the thumbnail's URL, or None if `full_url` isn't one of our own
+    R2 URLs, R2 isn't configured, or the fetch/resize/upload failed
+    (best-effort — a doc just keeps falling back to its full-res image
+    until a later sweep succeeds).
+    """
+    if not ENABLED or not full_url or not full_url.startswith(_PUBLIC_BASE + "/"):
+        return None
+    full_key = full_url[len(_PUBLIC_BASE) + 1:]
+    thumb_key = _thumb_key_for(full_key)
+    thumb_url = f"{_PUBLIC_BASE}/{thumb_key}"
+    client = _get_client()
+
+    if _object_exists(client, thumb_key):
+        return thumb_url
+
+    try:
+        resp = requests.get(full_url, headers=_DOWNLOAD_HEADERS, timeout=20)
+        resp.raise_for_status()
+        thumb_bytes = _make_thumbnail(resp.content)
+        client.put_object(Bucket=_BUCKET, Key=thumb_key, Body=thumb_bytes, ContentType="image/jpeg")
+        return thumb_url
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("image_store: failed to backfill thumb for %s: %s", full_url, exc)
+        return None
