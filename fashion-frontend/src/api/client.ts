@@ -22,6 +22,13 @@ export type FashionItem = {
   url: string;
   image: string | null;
   images?: string[];
+  // Small resized copies of `image`/`images`, for grid/list display — much
+  // faster to load than the full-resolution originals. Falls back to the
+  // full-resolution field wherever a thumbnail hasn't been generated yet
+  // (an older doc, or the backfill sweep hasn't reached it) — see callers
+  // of these fields for the fallback.
+  image_thumb?: string | null;
+  images_thumb?: string[];
   title_ja?: string;
   title_tr: string;
   brand_tr: string;
@@ -140,4 +147,10 @@ export const api = {
   // differently, and deletes the now-redundant duplicate photo from R2.
   // See run_fashion_merge_duplicates in server.py.
   fashionMergeDuplicates: () => request("/admin/fashion-merge-duplicates", { method: "POST" }, true),
+  // One-off sweep that generates a small grid/list thumbnail for every
+  // collection that only has full-resolution photos cached (saved before
+  // thumbnails existed) — never re-hits fashion-press.net/firstview.com,
+  // only re-reads photos already on our own R2 bucket. See
+  // run_fashion_thumbnails_backfill in server.py.
+  fashionFixThumbnails: () => request("/admin/fashion-fix-thumbnails", { method: "POST" }, true),
 };
