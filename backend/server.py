@@ -2313,6 +2313,19 @@ async def on_startup():
         args=["scheduled_mon_wed_07:00"],
         id="scheduled_fashion_scrape", replace_existing=True,
     )
+    # FirstView photo tagging (see run_fashion_tag_firstview / gemini_client.
+    # tag_image): the free Gemini tier caps gemini-3.5-flash-lite at 500
+    # requests/day (confirmed on aistudio.google.com/rate-limit), so tagging
+    # a backlog of 1000+ photos can't finish in one run -- image_tags is a
+    # resumable prefix of images specifically so a daily job like this one
+    # can just pick back up where the previous day's run hit that cap. Runs
+    # itself once a day; a no-op (returns immediately) once every FirstView
+    # photo is tagged. Self-guards on gemini_client.ENABLED, so this is a
+    # harmless no-op if GEMINI_API_KEY is ever removed.
+    scheduler.add_job(
+        run_fashion_tag_firstview, CronTrigger(hour=4, minute=0, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_tag_firstview", replace_existing=True,
+    )
     scheduler.start()
     await _seed_if_empty()
     await _migrate_fashion_schema()

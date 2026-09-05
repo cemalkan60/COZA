@@ -8,15 +8,18 @@ a lookup of the brand's actual spelling — for a katakana rendering of a
 foreign word (e.g. "アンダーカバー") the reading comes out wrong just as
 often as it comes out close ("Andaakabaa" instead of "Undercover").
 
-This module asks Gemini's text model, once per unique brand name (cached by
-the caller in db.brand_names — see server.py's _resolve_brand_names), what
-the brand's real Latin-script name is. Text-only: no images are sent, no
-vision pricing applies.
+This module asks Gemini, once per unique brand name (cached by the caller
+in db.brand_names — see server.py's _resolve_brand_names), what the
+brand's real Latin-script name is (resolve_brand_name, text-only). It also
+classifies a fashion photo's garment/color/pattern/material for
+cross-source filtering (tag_image, sends the image inline — see
+run_fashion_tag_firstview in server.py). Both share the same model/
+endpoint/throttle below.
 
 Configuration (all via env vars):
   GEMINI_API_KEY   Google AI Studio API key. Required to activate.
-  GEMINI_MODEL     Model name, e.g. "gemini-2.0-flash". Optional, defaults
-                    to a fast/free-tier-friendly model below.
+  GEMINI_MODEL     Model name, e.g. "gemini-3.5-flash-lite". Optional,
+                    defaults to a fast/free-tier-friendly model below.
 
 Deliberately all-optional: with GEMINI_API_KEY unset, ENABLED is False and
 resolve_brand_name() always returns None, so callers fall back to the
@@ -39,27 +42,35 @@ import requests
 logger = logging.getLogger("coza.gemini_client")
 
 _API_KEY = os.environ.get("GEMINI_API_KEY", "")
-# "gemini-2.0-flash" (the old default here) was shut down by Google on
+# "gemini-2.0-flash" (the original default here) was shut down by Google on
 # 2026-06-01 -- every call to this client had been silently 404ing and
 # falling back to the non-AI path ever since (resolve_brand_name to
 # pykakasi romanization, tag_image to an untagged photo), with nothing
 # user-visible to flag it since both callers catch-and-log-only by design.
 # Confirmed live 2026-09-05 via Railway deploy logs during the FirstView
-# tagging sweep's first run. "gemini-flash-latest" is an alias Google keeps
-# pointed at its current recommended Flash model, so this doesn't need a
-# manual bump every time a model generation is retired.
-_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+# tagging sweep's first run.
+#
+# Switching straight to "gemini-flash-latest" (the current full Flash
+# model) fixed the 404s but immediately surfaced a second problem: this
+# project's free tier gives that model line only 5 requests/minute and a
+# mere 20 requests/DAY (confirmed on aistudio.google.com/rate-limit,
+# project "coza") -- nowhere near enough for a sweep tagging over a
+# thousand photos. "gemini-3.5-flash-lite" is still fully multimodal
+# (accepts image input same as Flash) but sits in a much more generous
+# free bucket on the same dashboard: 15 RPM / 500 RPD. That's what backs
+# both resolve_brand_name and tag_image below now -- no separate vision
+# endpoint or config needed, same generateContent call either way.
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 # Minimum seconds between any two Gemini requests from this process (see
-# _throttle below) -- keeps the image-tagging sweep (run_fashion_tag_
-# firstview in server.py, which can fire hundreds of calls in one run)
-# under the free API tier's per-minute request cap, so it never needs a
-# paid key. Confirmed live (2026-09-05) that 4.5s wasn't conservative
-# enough on its own for gemini-flash-latest -- real 429 (Too Many
-# Requests)/503 (Service Unavailable) responses showed up during the
-# tagging sweep's first successful run against this model, so this pairs
-# with the retry-with-backoff in tag_image below rather than relying on
-# pacing alone. Override via env if the tier allows more (or less).
-_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "8"))
+# _throttle below) -- keeps this comfortably under gemini-3.5-flash-lite's
+# 15 RPM free-tier cap (see _MODEL's comment) without needing a paid key.
+# The image-tagging sweep (run_fashion_tag_firstview in server.py) is what
+# actually fires hundreds of calls in one run; a 429/503 still gets one
+# backoff-retry in tag_image below as a second line of defense, but the
+# real ceiling here is the 500/day cap, not the per-minute one -- a sweep
+# over ~500 untagged photos in a day will hit it and should just resume
+# the next day (image_tags is a resumable prefix of images either way).
+_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "4.5"))
 
 ENABLED = bool(_API_KEY)
 
@@ -176,10 +187,11 @@ def tag_image(image_url: str) -> "Optional[dict]":
     Downloads `image_url` itself (works with any publicly reachable URL,
     including our own R2-hosted thumbnails/full-res photos) and sends it
     inline as base64 alongside the prompt in one generateContent call — the
-    same multimodal support gemini-2.0-flash offers on this text endpoint,
-    no separate vision endpoint needed. Callers should prefer a small
-    thumbnail URL over the full-resolution photo where available: plenty for
-    this level of classification, and noticeably cheaper/faster to upload.
+    same multimodal support _MODEL (gemini-3.5-flash-lite) offers on this
+    text endpoint, no separate vision endpoint needed. Callers should
+    prefer a small thumbnail URL over the full-resolution photo where
+    available: plenty for this level of classification, and noticeably
+    cheaper/faster to upload.
     """
     if not ENABLED or not image_url:
         return None
