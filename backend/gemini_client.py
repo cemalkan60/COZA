@@ -29,6 +29,7 @@ import base64
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Optional
@@ -52,8 +53,13 @@ _MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 # _throttle below) -- keeps the image-tagging sweep (run_fashion_tag_
 # firstview in server.py, which can fire hundreds of calls in one run)
 # under the free API tier's per-minute request cap, so it never needs a
-# paid key. Conservative default; override via env if the tier allows more.
-_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "4.5"))
+# paid key. Confirmed live (2026-09-05) that 4.5s wasn't conservative
+# enough on its own for gemini-flash-latest -- real 429 (Too Many
+# Requests)/503 (Service Unavailable) responses showed up during the
+# tagging sweep's first successful run against this model, so this pairs
+# with the retry-with-backoff in tag_image below rather than relying on
+# pacing alone. Override via env if the tier allows more (or less).
+_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "8"))
 
 ENABLED = bool(_API_KEY)
 
@@ -189,43 +195,64 @@ def tag_image(image_url: str) -> "Optional[dict]":
         logger.warning("gemini_client: failed to download image to tag %r: %s", image_url, exc)
         return None
 
-    _throttle()
-    try:
-        resp = requests.post(
-            _ENDPOINT,
-            params={"key": _API_KEY},
-            json={
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": _TAG_PROMPT},
-                            {"inline_data": {"mime_type": mime_type, "data": image_b64}},
-                        ]
-                    }
-                ],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 128},
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
+    # A transient 429 (rate limit) or 503 (momentarily overloaded) is worth
+    # one retry after backing off further, rather than giving up on the
+    # photo immediately -- confirmed live that both show up in normal
+    # operation even with _throttle already pacing requests (the free tier's
+    # actual burst tolerance is tighter than the steady-state rate alone
+    # suggested). Anything else (a real error, a bad image, an invalid key)
+    # isn't retried -- it'll just fail the same way again.
+    for attempt in range(2):
+        _throttle()
+        try:
+            resp = requests.post(
+                _ENDPOINT,
+                params={"key": _API_KEY},
+                json={
+                    "contents": [
+                        {
+                            "parts": [
+                                {"text": _TAG_PROMPT},
+                                {"inline_data": {"mime_type": mime_type, "data": image_b64}},
+                            ]
+                        }
+                    ],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 256},
+                },
+                timeout=30,
+            )
+            if resp.status_code in (429, 503) and attempt == 0:
+                logger.warning(
+                    "gemini_client: %s tagging %r, backing off and retrying once",
+                    resp.status_code, image_url,
+                )
+                time.sleep(_MIN_INTERVAL_S * 3)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                return None
+            parts = (candidates[0].get("content") or {}).get("parts") or []
+            text = "".join(p.get("text", "") for p in parts).strip()
+            # Gemini sometimes adds a stray explanation sentence or a
+            # ```json ... ``` fence around the JSON despite the prompt
+            # asking it not to -- pull out the {...} substring itself
+            # rather than trusting the reply to be nothing else, which is
+            # far more robust than just stripping backticks/whitespace off
+            # the ends (confirmed live: plain strip() left unparseable text
+            # often enough to be the main failure mode on this model).
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if not match:
+                return None
+            parsed = json.loads(match.group(0))
+            if not isinstance(parsed, dict):
+                return None
+            return {
+                field: str(parsed.get(field) or "unknown").strip().lower()[:40]
+                for field in _TAG_FIELDS
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("gemini_client: failed to tag image %r: %s", image_url, exc)
             return None
-        parts = (candidates[0].get("content") or {}).get("parts") or []
-        text = "".join(p.get("text", "") for p in parts).strip()
-        # Gemini sometimes wraps JSON in a ```json ... ``` fence despite the
-        # prompt asking it not to -- strip that before parsing.
-        text = text.strip("` \n\t")
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-        parsed = json.loads(text)
-        if not isinstance(parsed, dict):
-            return None
-        return {
-            field: str(parsed.get(field) or "unknown").strip().lower()[:40]
-            for field in _TAG_FIELDS
-        }
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("gemini_client: failed to tag image %r: %s", image_url, exc)
-        return None
+    return None

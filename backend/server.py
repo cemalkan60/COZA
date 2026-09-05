@@ -1931,13 +1931,13 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
     return {"status": "started"}
 
 
-# Per-photo Gemini vision-tagging budget (download the already-cached photo
-# from our own R2 bucket + the gemini_client.tag_image call itself, which
-# internally throttles to stay under the free API tier's per-minute request
-# cap -- see gemini_client._throttle). Generous on purpose: a photo that's
-# waiting out someone *else's* throttle delay when this fires can otherwise
-# look like it timed out when it was really just queued.
-_TAG_TIMEOUT_S = 30
+# Per-photo Gemini vision-tagging budget (the gemini_client.tag_image call
+# itself, which internally throttles/retries to stay usable on the free API
+# tier -- see gemini_client._throttle and its one-retry backoff on 429/503).
+# Generous on purpose: a photo that's waiting out someone *else's* throttle
+# delay, or hit a transient 429/503 and is backing off for a retry, can
+# otherwise look like it timed out here when it was really just queued.
+_TAG_TIMEOUT_S = 45
 
 
 async def _tag_one_doc(doc: dict, sem: asyncio.Semaphore) -> int:
