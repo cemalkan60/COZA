@@ -136,6 +136,21 @@ export default function Settings() {
     }
   };
 
+  const triggerTagFirstview = async () => {
+    setScraping(true);
+    setScrapeMsg("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await api.fashionTagFirstview();
+      setScrapeMsg("FirstView fotoğrafları yapay zekayla etiketleniyor — ücretsiz kotaya uymak için yavaş ilerler, saatler sürebilir.");
+      startPolling();
+    } catch (e: any) {
+      setScrapeMsg(e?.message || "Başlatılamadı, tekrar deneyin.");
+    } finally {
+      setScraping(false);
+    }
+  };
+
   const logout = async () => {
     await signOut();
     router.replace("/(auth)/login");
@@ -198,9 +213,11 @@ export default function Settings() {
                         ? "Yinelenenler birleştiriliyor"
                         : meta?.phase === "fixing_covers"
                           ? "Kapaklar düzeltiliyor"
-                          : meta?.phase === "finalizing"
-                            ? "Kaydediliyor"
-                            : "Kaynaklar taranıyor"}
+                          : meta?.phase === "tagging_firstview"
+                            ? "FirstView fotoğrafları etiketleniyor"
+                            : meta?.phase === "finalizing"
+                              ? "Kaydediliyor"
+                              : "Kaynaklar taranıyor"}
                   </Text>
                   <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
                     {meta?.phase === "generating_thumbnails"
@@ -209,9 +226,11 @@ export default function Settings() {
                         ? `${meta?.merge_done ?? 0} / ${meta?.merge_total ?? "?"}`
                         : meta?.phase === "fixing_covers"
                           ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
-                          : meta?.phase === "finalizing"
-                            ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
-                            : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
+                          : meta?.phase === "tagging_firstview"
+                            ? `${meta?.tags_done ?? 0} / ${meta?.tags_total ?? "?"}`
+                            : meta?.phase === "finalizing"
+                              ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
+                              : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
                   </Text>
                 </View>
               )}
@@ -270,6 +289,17 @@ export default function Settings() {
               <Feather name="zap" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
                 {scraping ? "Başlatılıyor…" : "Küçük Resimleri Oluştur"}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="fashion-tag-firstview"
+              onPress={triggerTagFirstview}
+              disabled={scraping}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+            >
+              <Feather name="tag" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {scraping ? "Başlatılıyor…" : "FirstView Etiketleme Başlat"}
               </Text>
             </Pressable>
             {!!scrapeMsg && (
