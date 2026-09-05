@@ -121,6 +121,21 @@ export default function Settings() {
     }
   };
 
+  const triggerFixThumbnails = async () => {
+    setScraping(true);
+    setScrapeMsg("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await api.fashionFixThumbnails();
+      setScrapeMsg("Küçük resimler oluşturuluyor — listeler bundan sonra çok daha hızlı yüklenecek.");
+      startPolling();
+    } catch {
+      setScrapeMsg("Başlatılamadı, tekrar deneyin.");
+    } finally {
+      setScraping(false);
+    }
+  };
+
   const logout = async () => {
     await signOut();
     router.replace("/(auth)/login");
@@ -177,22 +192,26 @@ export default function Settings() {
               {!!meta?.scraping && (
                 <View style={[styles.metaRow, { marginTop: 10 }]}>
                   <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
-                    {meta?.phase === "merging_duplicates"
-                      ? "Yinelenenler birleştiriliyor"
-                      : meta?.phase === "fixing_covers"
-                        ? "Kapaklar düzeltiliyor"
-                        : meta?.phase === "finalizing"
-                          ? "Kaydediliyor"
-                          : "Kaynaklar taranıyor"}
+                    {meta?.phase === "generating_thumbnails"
+                      ? "Küçük resimler oluşturuluyor"
+                      : meta?.phase === "merging_duplicates"
+                        ? "Yinelenenler birleştiriliyor"
+                        : meta?.phase === "fixing_covers"
+                          ? "Kapaklar düzeltiliyor"
+                          : meta?.phase === "finalizing"
+                            ? "Kaydediliyor"
+                            : "Kaynaklar taranıyor"}
                   </Text>
                   <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
-                    {meta?.phase === "merging_duplicates"
-                      ? `${meta?.merge_done ?? 0} / ${meta?.merge_total ?? "?"}`
-                      : meta?.phase === "fixing_covers"
-                        ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
-                        : meta?.phase === "finalizing"
-                          ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
-                          : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
+                    {meta?.phase === "generating_thumbnails"
+                      ? `${meta?.thumbs_done ?? 0} / ${meta?.thumbs_total ?? "?"}`
+                      : meta?.phase === "merging_duplicates"
+                        ? `${meta?.merge_done ?? 0} / ${meta?.merge_total ?? "?"}`
+                        : meta?.phase === "fixing_covers"
+                          ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
+                          : meta?.phase === "finalizing"
+                            ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
+                            : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
                   </Text>
                 </View>
               )}
@@ -240,6 +259,17 @@ export default function Settings() {
               <Feather name="git-merge" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
                 {scraping ? "Başlatılıyor…" : "Yinelenen Koleksiyonları Birleştir"}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="fashion-fix-thumbnails"
+              onPress={triggerFixThumbnails}
+              disabled={scraping}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+            >
+              <Feather name="zap" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {scraping ? "Başlatılıyor…" : "Küçük Resimleri Oluştur"}
               </Text>
             </Pressable>
             {!!scrapeMsg && (

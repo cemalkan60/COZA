@@ -246,20 +246,28 @@ export default function Fashion() {
 
 function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }) {
   const router = useRouter();
-  const [displayImg, setDisplayImg] = useState<string | undefined>(item?.image);
+  // The grid only ever shows this card at a small fixed size, so it loads
+  // the small resized copy (image_thumb) instead of the full-resolution
+  // runway photo -- confirmed live as the main cause of slow/blank-looking
+  // grids (downloading a 1-2MB original just to paint a ~180px tile). Full
+  // resolution is still used once a collection is actually opened (see
+  // app/fashion/brand/[id].tsx). Falls back to the full image for any
+  // collection the thumbnail backfill hasn't reached yet.
+  const gridImg = item?.image_thumb || item?.image;
+  const [displayImg, setDisplayImg] = useState<string | undefined>(gridImg || undefined);
 
   useEffect(() => {
     let cancelled = false;
-    setDisplayImg(item?.image);
-    if (item?.image) {
-      resolveBestImage(item.image).then((best) => {
+    setDisplayImg(gridImg || undefined);
+    if (gridImg) {
+      resolveBestImage(gridImg).then((best) => {
         if (!cancelled) setDisplayImg(best);
       });
     }
     return () => {
       cancelled = true;
     };
-  }, [item?.image]);
+  }, [gridImg]);
 
   const openInternal = (it: FashionItem) => {
     // Only pass id + title(+season) — the gallery screen fetches images
