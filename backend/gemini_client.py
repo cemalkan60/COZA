@@ -38,7 +38,16 @@ import requests
 logger = logging.getLogger("coza.gemini_client")
 
 _API_KEY = os.environ.get("GEMINI_API_KEY", "")
-_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+# "gemini-2.0-flash" (the old default here) was shut down by Google on
+# 2026-06-01 -- every call to this client had been silently 404ing and
+# falling back to the non-AI path ever since (resolve_brand_name to
+# pykakasi romanization, tag_image to an untagged photo), with nothing
+# user-visible to flag it since both callers catch-and-log-only by design.
+# Confirmed live 2026-09-05 via Railway deploy logs during the FirstView
+# tagging sweep's first run. "gemini-flash-latest" is an alias Google keeps
+# pointed at its current recommended Flash model, so this doesn't need a
+# manual bump every time a model generation is retired.
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 # Minimum seconds between any two Gemini requests from this process (see
 # _throttle below) -- keeps the image-tagging sweep (run_fashion_tag_
 # firstview in server.py, which can fire hundreds of calls in one run)
