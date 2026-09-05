@@ -354,3 +354,35 @@ def backfill_thumb(full_url: str) -> Optional[str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("image_store: failed to backfill thumb for %s: %s", full_url, exc)
         return None
+
+
+def cache_images_with_thumb(urls: list, max_workers: int = 6) -> list:
+    """Run cache_image_with_thumb over a whole gallery concurrently instead
+    of one photo at a time.
+
+    A single runway gallery can hold 100+ photos (confirmed live: a
+    fashion-press.net collection page can list 120+ "look" shots), and
+    cache_image_with_thumb does a full download plus up to two uploads per
+    photo -- done sequentially, a big gallery blew straight through every
+    caller's timeout (30-90s) long before finishing, which is what left
+    large collections permanently stuck on just their first photo (the
+    caller's `except Exception: return False`/`[]` on timeout meant the doc
+    was either never updated or, worse, marked as fully fetched with
+    whatever partial list happened to exist first -- see callers in
+    server.py for how `gallery_fetched` is set only after this returns).
+
+    Returns a list of (full_url, thumb_url) tuples in the same order as
+    `urls`. `max_workers` is deliberately modest (not one thread per photo)
+    -- this runs inside a collection-level semaphore in server.py, so the
+    real concurrency hitting the source site is max_workers times however
+    many collections are being processed at once; keeping this modest
+    avoids tripping the source site's own rate limiting.
+    """
+    if not urls:
+        return []
+    if len(urls) == 1:
+        return [cache_image_with_thumb(urls[0])]
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(urls))) as pool:
+        return list(pool.map(cache_image_with_thumb, urls))

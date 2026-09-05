@@ -561,7 +561,7 @@ def _finalize_fashion_group(g: dict) -> dict:
         # runway-resolution photos just to paint a ~180px tile, which is
         # what made the feed feel slow/blank on first load. No-op (returns
         # the original URL for both) until R2 is configured.
-        cached = [image_store.cache_image_with_thumb(u) for u in unique_urls]
+        cached = image_store.cache_images_with_thumb(unique_urls)
         unique_urls = [full for full, _ in cached]
         thumb_urls = [thumb for _, thumb in cached]
     g["images"] = unique_urls
@@ -1514,6 +1514,13 @@ async def fashion_collections(
     return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
+# A gallery with this many photos or fewer is treated as suspiciously thin
+# rather than trusted as final -- see fashion_collection_detail and
+# run_fashion_cover_fix, both of which give a "gallery_fetched" doc this
+# thin one more real attempt instead of skipping it forever.
+_THIN_GALLERY_MAX = 2
+
+
 @api.get("/fashion/collections/{source_id}")
 async def fashion_collection_detail(source_id: str):
     """Full runway gallery (all photos) for one collection, fetched on demand and cached.
@@ -1536,13 +1543,23 @@ async def fashion_collection_detail(source_id: str):
     if not doc:
         raise HTTPException(404, "Koleksiyon bulunamadı.")
     fp_id = doc.get("fp_source_id")
-    if not fp_id or doc.get("gallery_fetched"):
+    # Bug fixed here: `gallery_fetched` was being treated as permanent, but
+    # fashion-press.net publishes a show's photos progressively -- a
+    # collection opened right when it went up could get "fetched" with
+    # just 1-2 photos, then sit stuck there forever even after the site
+    # published the other 100+ (confirmed live: Yoshiokubo's fp gallery had
+    # 121 photos on the live site while our doc had exactly 1, marked
+    # gallery_fetched). A doc with a suspiciously thin gallery gets one more
+    # real attempt instead of trusting the flag -- see _THIN_GALLERY_MAX's
+    # other use in run_fashion_cover_fix.
+    already_thin = len(doc.get("images") or []) <= _THIN_GALLERY_MAX
+    if not fp_id or (doc.get("gallery_fetched") and not already_thin):
         return {"images": doc.get("images") or [], "images_thumb": doc.get("images_thumb") or []}
     try:
         images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, fp_id)
         images_thumb = images
         if image_store.ENABLED:
-            cached = await asyncio.to_thread(lambda: [image_store.cache_image_with_thumb(u) for u in images])
+            cached = await asyncio.to_thread(image_store.cache_images_with_thumb, images)
             images = [full for full, _ in cached]
             images_thumb = [thumb for _, thumb in cached]
     except Exception:
@@ -1702,7 +1719,21 @@ async def admin_fashion_backfill(admin: Annotated[dict, Depends(require_admin)])
     return {"status": "started"}
 
 
-_COVER_FIX_TIMEOUT_S = 30  # per-collection fetch+cache budget, see _fix_one_cover
+_COVER_FIX_TIMEOUT_S = 30  # gallery-page fetch+parse budget (fast: one HTML fetch + regex), see _fix_one_cover
+# A collection's photo *download+cache* budget, separate from the above --
+# confirmed live that a real fashion-press.net gallery can hold 120+ photos
+# (Yoshiokubo's 2027SS collection: 121), which downloading and re-hosting
+# one at a time never finished inside a 30s budget. That's what left large
+# collections permanently stuck on a single photo: the old code fetched the
+# full 121-URL list fine, then timed out mid-way through caching them and
+# bailed out (`return False`) without ever saving what little it had -- but
+# a doc that instead got "gallery_fetched" set with 1-2 images (like
+# Yoshiokubo) came from some other request path entirely, most likely this
+# same lazy fetch happening the moment the show first went up on the source
+# site with only its first photo published so far. See image_store.
+# cache_images_with_thumb's docstring and _THIN_GALLERY_MAX for the other
+# half of this fix (re-attempting a doc that already looks "done" but thin).
+_COVER_FIX_CACHE_TIMEOUT_S = 180
 
 
 async def _fix_one_cover(doc: dict, sem: asyncio.Semaphore) -> bool:
@@ -1728,8 +1759,8 @@ async def _fix_one_cover(doc: dict, sem: asyncio.Semaphore) -> bool:
         if image_store.ENABLED:
             try:
                 cached = await asyncio.wait_for(
-                    asyncio.to_thread(lambda: [image_store.cache_image_with_thumb(u) for u in images]),
-                    timeout=_COVER_FIX_TIMEOUT_S,
+                    asyncio.to_thread(image_store.cache_images_with_thumb, images),
+                    timeout=_COVER_FIX_CACHE_TIMEOUT_S,
                 )
             except Exception:
                 return False
@@ -1752,20 +1783,29 @@ async def _fix_one_cover(doc: dict, sem: asyncio.Semaphore) -> bool:
 
 async def run_fashion_cover_fix() -> dict:
     """One-off sweep, mirrors run_fashion_scrape's shape: give every
-    fashion-press collection that's never had its gallery fetched a real
-    cover photo instead of the low-res listing-page thumbnail
-    scrape_collections saves initially (see _parse_collection_links).
-    Shares _fashion_lock with the regular scrape/backfill so they never
-    race each other over the same documents.
+    fashion-press collection that's never had its gallery fetched (or that
+    only got a suspiciously thin one -- see _THIN_GALLERY_MAX) a real cover
+    photo instead of the low-res listing-page thumbnail scrape_collections
+    saves initially (see _parse_collection_links). Shares _fashion_lock with
+    the regular scrape/backfill so they never race each other over the same
+    documents.
     """
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
-        docs = await db.fashion.find(
-            {"fp_source_id": {"$ne": None}, "gallery_fetched": {"$ne": True}},
-            {"_id": 0, "source_id": 1, "fp_source_id": 1},
+        all_docs = await db.fashion.find(
+            {"fp_source_id": {"$ne": None}},
+            {"_id": 0, "source_id": 1, "fp_source_id": 1, "gallery_fetched": 1, "images": 1},
         ).to_list(length=None)
-        logger.info("Fashion cover fix: %d fashion-press collection(s) still on their low-res cover.", len(docs))
+        docs = [
+            {"source_id": d["source_id"], "fp_source_id": d["fp_source_id"]}
+            for d in all_docs
+            if not d.get("gallery_fetched") or len(d.get("images") or []) <= _THIN_GALLERY_MAX
+        ]
+        logger.info(
+            "Fashion cover fix: %d fashion-press collection(s) still on their low-res cover or a thin gallery.",
+            len(docs),
+        )
         await db.meta.update_one(
             {"_id": "fashion"},
             {"$set": {"scraping": True, "phase": "fixing_covers", "covers_total": len(docs), "covers_done": 0}},
