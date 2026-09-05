@@ -29,6 +29,12 @@ export type FashionItem = {
   // of these fields for the fallback.
   image_thumb?: string | null;
   images_thumb?: string[];
+  // Per-photo AI tags (garment/color/pattern/material), same index order as
+  // `images` — see gemini_client.tag_image / run_fashion_tag_firstview.
+  // Filled in gradually by the tagging sweep (FirstView first), so this can
+  // be shorter than `images` or absent entirely on a doc that hasn't been
+  // reached yet.
+  image_tags?: { item: string; color: string; pattern: string; material: string }[];
   title_ja?: string;
   title_tr: string;
   brand_tr: string;
@@ -153,4 +159,5 @@ export const api = {
   // only re-reads photos already on our own R2 bucket. See
   // run_fashion_thumbnails_backfill in server.py.
   fashionFixThumbnails: () => request("/admin/fashion-fix-thumbnails", { method: "POST" }, true),
+  fashionTagFirstview: () => request("/admin/fashion-tag-firstview", { method: "POST" }, true),
 };
