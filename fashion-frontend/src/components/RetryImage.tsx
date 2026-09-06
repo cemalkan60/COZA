@@ -1,21 +1,29 @@
 import React, { useEffect, useState } from "react";
 import { Image, type ImageProps } from "expo-image";
 
-// expo-image's disk cache remembers a failed fetch for a given URL
-// indefinitely -- if a photo was requested even once during the few
-// seconds our R2 bucket briefly 503s a file right after upload (see
-// image_store.py's cache_image docstring on this), that exact URL then
-// keeps "failing" on THIS device forever after, even though the same URL
-// serves the photo fine on the web app, on a different phone, or on this
-// same phone for a collection it hasn't touched yet. Seen live as: grid
-// tiles blank on the unfiltered home feed (always the same handful of
-// newest-season URLs) while a filtered view -- which happens to load a
-// different, not-yet-poisoned set of URLs -- shows photos fine; also seen
-// as a fully blank detail/full-screen viewer. Force-closing the app does
-// NOT clear this (expo-image's cache is on disk); only clearing the app's
-// storage cache from Android Settings resets it, and only for images
-// touched since then.
+// Neither caching (query-bust retries, cachePolicy="none") nor a guaranteed
+// clean process (Force Stop from Android Settings, not just a task-switcher
+// swipe) fixed collections staying permanently blank in the app while the
+// exact same photo loaded fine in the phone's own browser at the same
+// moment, same network. That combination rules out anything client-side
+// cached -- it points at the REQUEST itself being treated differently.
 //
+// The one concrete difference: our backend (gemini_client.py's
+// _IMG_DOWNLOAD_HEADERS, used whenever it downloads a photo itself) always
+// sends a real browser User-Agent, and so does an actual browser tab --
+// but expo-image's native Android loader sends no User-Agent override at
+// all, which defaults to something like "okhttp/4.x". Cloudflare (fronting
+// our R2 bucket's public r2.dev domain) is known to bot-block/challenge
+// exactly that kind of generic HTTP-client signature while waving through
+// anything that looks like a browser, even though the object itself is
+// perfectly fine and public. Sending the same browser User-Agent the
+// backend already uses successfully is the fix this points to.
+export const FASHION_IMAGE_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 " +
+    "(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+};
+
 // Retrying on error with a cache-busting query param (instead of the same
 // URI) hands expo-image a fresh cache key, so a genuinely-transient
 // failure gets one or two real second chances at the network instead of
@@ -44,7 +52,7 @@ export default function RetryImage({ uri, ...rest }: Props) {
   return (
     <Image
       {...rest}
-      source={{ uri: bustedUri }}
+      source={{ uri: bustedUri, headers: FASHION_IMAGE_HEADERS }}
       // Bypass the disk cache entirely for these photos. A stale/failed
       // disk-cache entry from before the R2 object recovered was suspected
       // as one way this could keep failing forever on a given device even
