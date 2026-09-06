@@ -11,13 +11,13 @@ import {
   Modal,
   useWindowDimensions,
 } from "react-native";
-import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/ZoomableImage";
+import RetryImage from "@/src/components/RetryImage";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
@@ -252,8 +252,8 @@ export default function BrandGallery() {
             onPress={() => setViewerIndex(index)}
             style={({ pressed }) => [{ width: cardWidth, marginBottom: gap, opacity: pressed ? 0.85 : 1 }]}
           >
-            <Image
-              source={{ uri: fashionImageUri(imagesThumb[index] || item) }}
+            <RetryImage
+              uri={fashionImageUri(imagesThumb[index] || item)}
               style={{ width: cardWidth, aspectRatio: 3 / 4, backgroundColor: colors.surfaceTertiary, borderRadius: 4 }}
               contentFit="cover"
               transition={220}
