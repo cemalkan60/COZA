@@ -1,6 +1,13 @@
-import React, { forwardRef, useImperativeHandle, useState } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useState } from "react";
 import { View } from "react-native";
 import { Image, type ImageContentFit } from "expo-image";
+
+// See RetryImage's comment for why this retry-with-cache-bust dance is
+// needed -- this component can't just reuse RetryImage directly (it's
+// wrapped in the pan/pinch gesture view below and needs its own `uri`
+// prop name kept stable for callers), so the same handful of lines are
+// duplicated here instead.
+const MAX_IMAGE_RETRIES = 2;
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useAnimatedStyle,
@@ -55,6 +62,11 @@ export const ZoomableImage = forwardRef<
   // (not just a no-op) so a parent paging FlatList keeps owning horizontal
   // drags. Only re-enable single-finger panning once actually zoomed in.
   const [isZoomed, setIsZoomed] = useState(false);
+  const [imgAttempt, setImgAttempt] = useState(0);
+  useEffect(() => {
+    setImgAttempt(0);
+  }, [uri]);
+  const bustedUri = imgAttempt === 0 ? uri : `${uri}${uri.includes("?") ? "&" : "?"}_retry=${imgAttempt}`;
 
   const notifyZoom = (next: boolean) => {
     setIsZoomed(next);
@@ -190,7 +202,12 @@ export const ZoomableImage = forwardRef<
     <View style={{ width, height, overflow: "hidden" }}>
       <GestureDetector gesture={composed}>
         <Animated.View style={[{ width, height }, animatedStyle]}>
-          <Image source={{ uri }} style={{ width, height }} contentFit={contentFit} />
+          <Image
+            source={{ uri: bustedUri }}
+            style={{ width, height }}
+            contentFit={contentFit}
+            onError={() => setImgAttempt((a) => (a < MAX_IMAGE_RETRIES ? a + 1 : a))}
+          />
         </Animated.View>
       </GestureDetector>
     </View>
