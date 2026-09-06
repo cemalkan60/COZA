@@ -45,6 +45,14 @@ export default function RetryImage({ uri, ...rest }: Props) {
     <Image
       {...rest}
       source={{ uri: bustedUri }}
+      // Bypass the disk cache entirely for these photos. A stale/failed
+      // disk-cache entry from before the R2 object recovered was suspected
+      // as one way this could keep failing forever on a given device even
+      // after the underlying photo is fine again everywhere else; forcing
+      // every load through the network (no disk read, no disk write) rules
+      // that out completely rather than relying on the cache-busting query
+      // param above to always be enough on every OS/version.
+      cachePolicy="none"
       onError={() => {
         setAttempt((a) => (a < MAX_RETRIES ? a + 1 : a));
       }}

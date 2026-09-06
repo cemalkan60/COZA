@@ -206,6 +206,7 @@ export const ZoomableImage = forwardRef<
             source={{ uri: bustedUri }}
             style={{ width, height }}
             contentFit={contentFit}
+            cachePolicy="none"
             onError={() => setImgAttempt((a) => (a < MAX_IMAGE_RETRIES ? a + 1 : a))}
           />
         </Animated.View>
