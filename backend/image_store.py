@@ -13,14 +13,16 @@ re-scraping never re-uploads and every read/delete can find the right
 bucket from the URL alone.
 
 Configuration (env vars):
-  R2_ACCOUNTS_JSON   JSON array of accounts, each:
+  R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
+  R2_BUCKET_NAME / R2_PUBLIC_BASE_URL
+                     The first shard, if set (the app's original
+                     single-bucket config — left untouched).
+  R2_ACCOUNTS_JSON   JSON array of ADDITIONAL accounts, each:
                        {"account_id": "...", "access_key_id": "...",
                         "secret_access_key": "...", "bucket": "...",
                         "public_base_url": "https://xxx.r2.dev"}
-                     If unset, the legacy singular vars below are read as a
-                     single-account config (back-compat):
-  R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY /
-  R2_BUCKET_NAME / R2_PUBLIC_BASE_URL
+                     Merged after the singular-var account. Either or both
+                     may be set; de-duped by account_id + bucket.
   R2_FULLRES_MAX_WIDTH  Longest edge (px) a stored "full-res" photo is
                         downscaled to. Default 1600 — plenty for phone
                         viewing + pinch-zoom, and roughly halves storage
@@ -44,14 +46,26 @@ logger = logging.getLogger("coza.image_store")
 
 
 def _load_accounts() -> list:
+    """The original singular-var bucket (if set) as the first shard, then any
+    listed in R2_ACCOUNTS_JSON appended. De-duped by account_id + bucket so
+    the same bucket can't land in the list twice and skew the shard hash."""
+    accounts: list = []
+    if os.environ.get("R2_ACCOUNT_ID"):
+        accounts.append({
+            "account_id": os.environ.get("R2_ACCOUNT_ID", ""),
+            "access_key_id": os.environ.get("R2_ACCESS_KEY_ID", ""),
+            "secret_access_key": os.environ.get("R2_SECRET_ACCESS_KEY", ""),
+            "bucket": os.environ.get("R2_BUCKET_NAME", ""),
+            "public_base_url": os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/"),
+        })
+
     raw = os.environ.get("R2_ACCOUNTS_JSON", "").strip()
     if raw:
         try:
             parsed = json.loads(raw)
         except Exception as exc:  # noqa: BLE001
             logger.error("image_store: R2_ACCOUNTS_JSON is not valid JSON: %s", exc)
-            return []
-        accounts = []
+            parsed = []
         for a in parsed if isinstance(parsed, list) else []:
             try:
                 accounts.append({
@@ -63,16 +77,16 @@ def _load_accounts() -> list:
                 })
             except (KeyError, TypeError, AttributeError):
                 logger.error("image_store: skipping malformed R2 account entry: %r", a)
-        return accounts
-    if os.environ.get("R2_ACCOUNT_ID"):
-        return [{
-            "account_id": os.environ.get("R2_ACCOUNT_ID", ""),
-            "access_key_id": os.environ.get("R2_ACCESS_KEY_ID", ""),
-            "secret_access_key": os.environ.get("R2_SECRET_ACCESS_KEY", ""),
-            "bucket": os.environ.get("R2_BUCKET_NAME", ""),
-            "public_base_url": os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/"),
-        }]
-    return []
+
+    seen: set = set()
+    deduped: list = []
+    for a in accounts:
+        sig = (a["account_id"], a["bucket"])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        deduped.append(a)
+    return deduped
 
 
 _ACCOUNTS = [
