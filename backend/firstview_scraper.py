@@ -146,14 +146,28 @@ def _parse_collection_page(soup: "BeautifulSoup", title: str) -> dict:
     return {"brand": brand, "season": season}
 
 
-def _extract_images(html: str, collection_id: str, limit: int = 40) -> list:
+# collection_images.php renders only the first ~20 photos; the rest come
+# from collection_images_nextpage.php?id={id}&page={p}&list= (p 1-indexed,
+# offset past that first 20), which infinite scroll pulls on the live site.
+# A big runway gallery is 100-300+ shots, so a single-page fetch was
+# silently capping every FirstView collection at 20.
+_NEXTPAGE_URL = BASE + "/collection_images_nextpage.php?id={cid}&page={page}&list="
+_MAX_GALLERY_IMAGES = 400
+_MAX_NEXTPAGES = 30
+# grid src is /files/{id}/thumb_<name>.jpg; the same name without "thumb_"
+# is the full-resolution original (confirmed: ~3x the bytes, HTTP 200).
+_THUMB_PREFIX_RE = re.compile(r"(/files/\d+/)thumb_")
+
+
+def _extract_images(html: str, collection_id: str, limit: int = _MAX_GALLERY_IMAGES) -> list:
     soup = BeautifulSoup(html, "html.parser")
-    seen = set()
-    images = []
+    seen: set = set()
+    images: list = []
     for img in soup.find_all("img"):
         src = img.get("src") or img.get("data-src") or ""
         if f"/files/{collection_id}/" not in src:
             continue
+        src = _THUMB_PREFIX_RE.sub(r"\1", src)  # thumb -> full-res
         if src.startswith("//"):
             src = "https:" + src
         elif src.startswith("/"):
@@ -167,9 +181,45 @@ def _extract_images(html: str, collection_id: str, limit: int = 40) -> list:
     return images
 
 
+_PICCOUNT_RE = re.compile(r"(\d+)\s*picture\(s\)", re.I)
+
+
+def _all_gallery_images(cid: str, html_page1: str) -> list:
+    """Every photo in one FirstView collection: page 1's HTML plus as many
+    collection_images_nextpage.php pages as it takes (stop on the first page
+    that adds nothing new, or the caps above)."""
+    images = _extract_images(html_page1, cid)
+    seen = set(images)
+    want = None
+    m = _PICCOUNT_RE.search(html_page1)
+    if m:
+        want = int(m.group(1))
+
+    page = 1
+    while len(images) < _MAX_GALLERY_IMAGES and page <= _MAX_NEXTPAGES:
+        if want is not None and len(images) >= want:
+            break
+        try:
+            more_html = _fetch(_NEXTPAGE_URL.format(cid=cid, page=page))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("firstview: nextpage %d fetch failed for %s: %s", page, cid, exc)
+            break
+        new = [u for u in _extract_images(more_html, cid) if u not in seen]
+        if not new:
+            break
+        for u in new:
+            seen.add(u)
+        images.extend(new)
+        page += 1
+
+    if want and len(images) < want * 0.6:
+        logger.warning("firstview: collection %s got %d/%d photos", cid, len(images), want)
+    return images[:_MAX_GALLERY_IMAGES]
+
+
 def _fetch_one_collection(cid: str, category: str) -> Optional[dict]:
-    """Fetch and parse a single collection's gallery page. Returns None on
-    any failure or an empty gallery — best-effort, same as before.
+    """Fetch and parse a single collection's FULL gallery (all pages).
+    Returns None on any failure or an empty gallery — best-effort.
     """
     url = f"{BASE}/collection_images.php?id={cid}"
     try:
@@ -177,7 +227,7 @@ def _fetch_one_collection(cid: str, category: str) -> Optional[dict]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("firstview: collection fetch failed %s: %s", url, exc)
         return None
-    images = _extract_images(html, cid)
+    images = _all_gallery_images(cid, html)
     if not images:
         return None
     soup = BeautifulSoup(html, "html.parser")
