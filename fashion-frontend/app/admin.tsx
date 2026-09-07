@@ -42,6 +42,7 @@ const PHASE_LABELS: Record<string, string> = {
   fixing_covers: "Kapaklar düzeltiliyor",
   generating_thumbnails: "Küçük resimler oluşturuluyor",
   merging_duplicates: "Yinelenenler birleştiriliyor",
+  cleaning_cruft: "Bozuk kayıtlar temizleniyor",
   tagging_photos: "Fotoğraflar yapay zekayla etiketleniyor",
   tagging_firstview: "Fotoğraflar yapay zekayla etiketleniyor",
 };
@@ -310,6 +311,13 @@ export default function AdminPanel() {
                   style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Yinelenenler</Text>
+                </Pressable>
+                <Pressable
+                  disabled={!!busy}
+                  onPress={() => runAction("cruft", api.fashionCleanCruft, "Bozuk kayıtların temizliği başladı (tarihsiz + kaynağı fashion-press olmayan tek fotoğraflılar).")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.error }]}>Bozukları sil</Text>
                 </Pressable>
               </View>
             </Section>

@@ -2484,6 +2484,90 @@ async def admin_fashion_prune(admin: Annotated[dict, Depends(require_admin)]):
     return {"status": "started"}
 
 
+async def run_fashion_clean_cruft() -> dict:
+    """Admin-triggered: delete, photos and all, the two kinds of collection
+    the automatic sweeps have no repair path for —
+
+      * undated (season_rank < 0): the season never parsed from any source
+        title, so the feed can't sort it and the date-based window prune
+        can't age it out. run_fashion_prune_old only removes these after
+        _UNDATED_STALE_DAYS of not being re-scraped; this clears them now.
+      * a non-fashion-press collection stuck at <= 1 photo: run_fashion_cover
+        _fix only re-fetches fashion-press galleries (it needs fp_source_id),
+        so a thin firstview/nowfashion entry can't be repaired, and a
+        one-photo "runway collection" isn't worth showing.
+
+    Fashion-press thin collections are deliberately left alone — the Kapaklar
+    sweep (run_fashion_cover_fix) is their repair path. Mirrors
+    run_fashion_prune_old's R2 photo cleanup; shares _fashion_lock with the
+    other sweeps so nothing races over the same documents.
+    """
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        doomed = await db.fashion.find(
+            {"$or": [
+                {"season_rank": {"$lt": 0}},
+                {"fp_source_id": None, "images.1": {"$exists": False}},
+            ]},
+            {"_id": 0, "source_id": 1, "images": 1, "image": 1},
+        ).to_list(length=None)
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"scraping": True, "phase": "cleaning_cruft",
+                      "cruft_total": len(doomed), "cruft_done": 0}},
+            upsert=True,
+        )
+        if not doomed:
+            await db.meta.update_one(
+                {"_id": "fashion"},
+                {"$set": {"scraping": False,
+                          "last_cruft_clean": datetime.now(timezone.utc).isoformat()}},
+            )
+            return {"status": "ok", "deleted": 0, "photos_deleted": 0}
+
+        urls: set = set()
+        for d in doomed:
+            for u in (d.get("images") or []):
+                if u:
+                    urls.add(u)
+            if d.get("image"):
+                urls.add(d["image"])
+
+        def _purge(batch: list) -> None:
+            for u in batch:
+                image_store.delete_image(u)
+
+        url_list = list(urls)
+        CHUNK = 50
+        await asyncio.gather(*(
+            asyncio.to_thread(_purge, url_list[i:i + CHUNK]) for i in range(0, len(url_list), CHUNK)
+        ))
+
+        res = await db.fashion.delete_many({"source_id": {"$in": [d["source_id"] for d in doomed]}})
+        logger.info(
+            "Fashion cruft clean: removed %d collection(s) + %d photo(s) "
+            "(undated, or non-fashion-press with <= 1 photo).",
+            res.deleted_count, len(url_list),
+        )
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"scraping": False, "cruft_done": len(doomed),
+                      "last_cruft_clean": datetime.now(timezone.utc).isoformat()}},
+        )
+        return {"status": "ok", "deleted": res.deleted_count, "photos_deleted": len(url_list)}
+
+
+@api.post("/admin/fashion-clean-cruft")
+async def admin_fashion_clean_cruft(admin: Annotated[dict, Depends(require_admin)]):
+    # Fire-and-forget: also deletes the freed photos from R2, same as
+    # /admin/fashion-prune.
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_clean_cruft())
+    return {"status": "started"}
+
+
 def _fashion_doc_merge_key(doc: dict) -> str:
     """Same shape as _fashion_merge_key, but for an already-saved doc rather
     than a freshly-scraped raw item -- and always canonicalizes the doc's

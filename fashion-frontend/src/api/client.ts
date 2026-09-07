@@ -165,6 +165,10 @@ export const api = {
   fashionTagFirstview: () => request("/admin/fashion-tag-firstview", { method: "POST" }, true),
   // Delete collections older than the rolling recent-months window.
   fashionPruneOld: () => request("/admin/fashion-prune", { method: "POST" }, true),
+  // Delete the collections no automatic sweep can repair: undated ones
+  // (season never parsed) and non-fashion-press ones stuck at <= 1 photo.
+  // See run_fashion_clean_cruft in server.py.
+  fashionCleanCruft: () => request("/admin/fashion-clean-cruft", { method: "POST" }, true),
   // Diagnostic: probes every (key, model) slot the tagging rotation uses.
   geminiCheck: (): Promise<{
     enabled: boolean;
