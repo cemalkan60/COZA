@@ -67,18 +67,18 @@ def _split_env(*names: str) -> list:
 
 _KEYS = _split_env("GEMINI_API_KEYS", "GEMINI_API_KEY")
 
-# "gemini-2.0-flash" (this module's original default) was shut down by Google
-# on 2026-06-01 -- every call had been silently 404ing and falling back to
-# the non-AI path ever since. "gemini-flash-latest" (full Flash) fixed the
-# 404 but this project's free tier gives that line only 20 requests/DAY,
-# nowhere near a sweep over 1000+ photos. The "-flash-lite" models are still
-# fully multimodal (image input, same generateContent call) but sit in a far
-# more generous free bucket (hundreds of requests/day), and each model line
-# has its own separate daily quota -- so rotating a few of them multiplies
-# how much a nightly sweep can get through before every bucket is empty.
+# Rotating several model lines to multiply free-tier quota was the plan, but
+# checked live 2026-09-07: Google has retired gemini-2.0-flash-lite and
+# gemini-2.5-flash-lite ("no longer available", HTTP 404) and points
+# everything at gemini-3.5-flash-lite -- which is currently the ONLY free
+# multimodal line worth using here (full Flash is ~20 requests/DAY on this
+# tier). So the default is just that one model; effective quota now scales
+# with the number of API KEYS, not models. GEMINI_MODELS can still list more
+# if Google reopens other lite lines later. gemini-2.0-flash (no "-lite")
+# was this module's original default and was shut down 2026-06-01.
 _MODELS = _split_env("GEMINI_MODELS") or (
     [os.environ["GEMINI_MODEL"].strip()] if os.environ.get("GEMINI_MODEL", "").strip()
-    else ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite"]
+    else ["gemini-3.5-flash-lite"]
 )
 
 # Minimum seconds between two requests that reuse the SAME key (a free
