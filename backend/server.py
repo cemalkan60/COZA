@@ -1631,7 +1631,7 @@ def _fashion_image_host_allowed(hostname: str) -> bool:
         return True
     if hostname == "firstview.com" or hostname.endswith(".firstview.com"):
         return True
-    if image_store.PUBLIC_HOSTNAME and hostname == image_store.PUBLIC_HOSTNAME:
+    if hostname in image_store.PUBLIC_HOSTNAMES:
         return True
     return False
 
