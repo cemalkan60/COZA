@@ -277,6 +277,39 @@ def _season_rank(season: str) -> float:
     return year * 10 + _SEASON_ERA_OFFSET.get(m.group(2).upper(), 0)
 
 
+# The app is a rolling recent-runway window, not a growing archive: keep only
+# collections whose show was presented within the last FASHION_RECENT_MONTHS
+# months, and prune the rest (see run_fashion_prune_old + its scheduled job).
+FASHION_RECENT_MONTHS = int(os.environ.get("FASHION_RECENT_MONTHS", "6"))
+
+
+def _min_recent_season_rank(months: int | None = None, now: "datetime | None" = None) -> float:
+    """The season_rank floor for "shown within the last `months` months".
+
+    Ready-to-wear seasons are presented on a fixed ~quarterly calendar, so
+    the cutoff CALENDAR month maps cleanly to whichever season was on the
+    runway then:
+      Feb-Apr -> Fall/Winter  (code year = that year)
+      May-Jul -> Resort        (code year = next year)
+      Aug-Oct -> Spring/Summer (code year = next year)
+      Nov-Jan -> Pre-Fall      (code year = next year)
+    Anything with season_rank >= this value is inside the window; a doc whose
+    season doesn't parse (rank -1) is never pruned by rank alone.
+    """
+    months = FASHION_RECENT_MONTHS if months is None else months
+    now = now or datetime.now(timezone.utc)
+    total = now.year * 12 + (now.month - 1) - months
+    cy, cm = divmod(total, 12)
+    cm += 1
+    if cm <= 4:
+        return cy * 10 + _SEASON_ERA_OFFSET["AW"]
+    if cm <= 7:
+        return (cy + 1) * 10 + _SEASON_ERA_OFFSET["RESORT"]
+    if cm <= 10:
+        return (cy + 1) * 10 + _SEASON_ERA_OFFSET["SS"]
+    return (cy + 1) * 10 + _SEASON_ERA_OFFSET["PREFALL"]
+
+
 def _season_merge_code(season: str) -> str:
     """Canonical spelling of a season code, for both cross-source matching
     and display -- always fashion-press's richer year-span AW form
@@ -777,6 +810,9 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
             # an earlier scrape, before this dedup logic existed, whose
             # merge key this run's raw items no longer reproduce at all).
             await _dedupe_existing_fashion_docs()
+            # Keep the feed a rolling recent window — drop anything now older
+            # than FASHION_RECENT_MONTHS (also runs as its own nightly job).
+            await run_fashion_prune_old()
             meta = {
                 "last_scrape": now_iso,
                 "item_count": await db.fashion.count_documents({}),
@@ -1429,6 +1465,7 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
                 "thumbs": {"$size": {"$ifNull": ["$images_thumb", []]}},
                 "is_fp": {"$ne": [{"$ifNull": ["$fp_source_id", None]}, None]},
                 "gallery_fetched": {"$ifNull": ["$gallery_fetched", False]},
+                "rank": {"$ifNull": ["$season_rank", -1]},
             }},
             {"$group": {
                 "_id": None,
@@ -1437,6 +1474,9 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
                 "untagged": {"$sum": {"$cond": [{"$lt": ["$t", {"$min": ["$n", cap]}]}, 1, 0]}},
                 "fp_thin_cover": {"$sum": {"$cond": [
                     {"$and": ["$is_fp", {"$or": [{"$not": "$gallery_fetched"}, {"$lte": ["$n", _THIN_GALLERY_MAX]}]}]}, 1, 0]}},
+                "older_than_window": {"$sum": {"$cond": [
+                    {"$and": [{"$gte": ["$rank", 0]}, {"$lt": ["$rank", _min_recent_season_rank()]}]}, 1, 0]}},
+                "undated": {"$sum": {"$cond": [{"$lt": ["$rank", 0]}, 1, 0]}},
             }},
         ],
     }}]).to_list(1))[0]
@@ -1480,6 +1520,10 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
             "cap_per_collection": cap,
         },
         "health": (facet["health"][0] if facet.get("health") else {}),
+        "window": {
+            "recent_months": FASHION_RECENT_MONTHS,
+            "last_prune": fmeta.get("last_prune"),
+        },
         "tagging": {
             "running": bool(fmeta.get("scraping")) and fmeta.get("phase") in ("tagging_photos", "tagging_firstview"),
             "phase": fmeta.get("phase"),
@@ -2237,6 +2281,33 @@ async def admin_fashion_tag_photos(admin: Annotated[dict, Depends(require_admin)
     return {"status": "started"}
 
 
+async def run_fashion_prune_old() -> dict:
+    """Delete collections whose show is older than the rolling
+    FASHION_RECENT_MONTHS window (see _min_recent_season_rank). Docs with an
+    unparseable season (season_rank < 0) are left alone — we only delete when
+    we can date the show. Runs after every scrape and on its own nightly job.
+    """
+    floor = _min_recent_season_rank()
+    res = await db.fashion.delete_many({"season_rank": {"$gte": 0, "$lt": floor}})
+    if res.deleted_count:
+        logger.info(
+            "Fashion prune: removed %d collection(s) older than %d months (season_rank < %s).",
+            res.deleted_count, FASHION_RECENT_MONTHS, floor,
+        )
+    await db.meta.update_one(
+        {"_id": "fashion"},
+        {"$set": {"last_prune": datetime.now(timezone.utc).isoformat(),
+                  "recent_months": FASHION_RECENT_MONTHS}},
+        upsert=True,
+    )
+    return {"status": "ok", "deleted": res.deleted_count, "season_rank_floor": floor}
+
+
+@api.post("/admin/fashion-prune")
+async def admin_fashion_prune(admin: Annotated[dict, Depends(require_admin)]):
+    return await run_fashion_prune_old()
+
+
 def _fashion_doc_merge_key(doc: dict) -> str:
     """Same shape as _fashion_merge_key, but for an already-saved doc rather
     than a freshly-scraped raw item -- and always canonicalizes the doc's
@@ -2516,6 +2587,13 @@ async def on_startup():
     scheduler.add_job(
         run_fashion_tag_photos, CronTrigger(hour=4, minute=0, timezone="Europe/Istanbul"),
         id="scheduled_fashion_tag_firstview", replace_existing=True,
+    )
+    # Roll the recent-window forward every night (also runs after each
+    # scrape). Just before the tag sweep so freshly-aged-out collections
+    # aren't tagged. Plain DB deletes, no network — cheap.
+    scheduler.add_job(
+        run_fashion_prune_old, CronTrigger(hour=3, minute=30, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_prune", replace_existing=True,
     )
     scheduler.start()
     await _seed_if_empty()
