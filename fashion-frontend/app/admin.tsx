@@ -298,6 +298,14 @@ export default function AdminPanel() {
             {/* Sistem */}
             <Section title="Sistem">
               <Row k="Veritabanı" v={d.system.db_name} />
+              <Row
+                k="R2 kova (fotoğraf deposu)"
+                v={d.system.r2 ? (d.system.r2.enabled ? `${d.system.r2.buckets} aktif` : "kapalı") : "?"}
+                danger={!!d.system.r2 && d.system.r2.enabled && d.system.r2.buckets < 3}
+              />
+              {!!d.system.r2 && (
+                <Row k="R2 · foto max boyut" v={d.system.r2.fullres_max_px ? `${d.system.r2.fullres_max_px}px` : "—"} />
+              )}
               {Object.entries(d.system.counts).map(([k, v]) => (
                 <Row key={k} k={k} v={v} />
               ))}

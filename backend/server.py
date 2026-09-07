@@ -1549,6 +1549,12 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
         "users": users,
         "system": {
             "db_name": os.environ["DB_NAME"],
+            "r2": {
+                "enabled": image_store.ENABLED,
+                "buckets": len(getattr(image_store, "_ACCOUNTS", [])),
+                "hosts": sorted(getattr(image_store, "PUBLIC_HOSTNAMES", set())),
+                "fullres_max_px": getattr(image_store, "_FULLRES_MAX_WIDTH", None),
+            },
             "counts": {
                 "fashion": await db.fashion.count_documents({}),
                 "products": await db.products.count_documents({}),

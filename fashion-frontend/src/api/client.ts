@@ -218,5 +218,9 @@ export type AdminDashboard = {
   };
   gemini: { enabled: boolean; key_count: number; models: string[]; batch: number };
   users: { email?: string; name?: string; role?: string }[];
-  system: { db_name: string; counts: Record<string, number> };
+  system: {
+    db_name: string;
+    r2?: { enabled: boolean; buckets: number; hosts: string[]; fullres_max_px: number | null };
+    counts: Record<string, number>;
+  };
 };
