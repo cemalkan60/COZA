@@ -1966,7 +1966,7 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
 _TAG_MAX_PHOTOS_PER_DOC = int(os.environ.get("FASHION_TAG_MAX_PHOTOS_PER_DOC", "24"))
 # Photos per Gemini request (see gemini_client.tag_images — the free tier's
 # ceiling is requests/day, so batching is the main throughput lever).
-_TAG_BATCH = int(os.environ.get("GEMINI_TAG_BATCH", "5"))
+_TAG_BATCH = int(os.environ.get("GEMINI_TAG_BATCH", "6"))
 # Wall-clock budget for one tag_images() call, scaled by batch size. Generous
 # on purpose: a batch that's waiting out a per-key throttle delay, or slot
 # cooldowns forcing rotation, can otherwise look timed-out when it was only
@@ -2070,12 +2070,12 @@ async def run_fashion_tag_photos() -> dict:
             upsert=True,
         )
 
-        # Doc-level concurrency: the request rate to Gemini is bounded by
-        # gemini_client's per-key throttle + slot rotation regardless of this
-        # number — it just lets a few docs' image downloads / DB writes
-        # overlap each other's wait instead of sitting idle. A little higher
-        # now that requests fan out across several keys.
-        sem = asyncio.Semaphore(4)
+        # Doc-level concurrency. The steady-state request rate is still
+        # bounded by gemini_client's per-key throttle + slot rotation, but
+        # this needs to be high enough that those lanes stay saturated while
+        # other docs are busy downloading images / writing to Mongo. Too low
+        # and the keys sit idle (the "why is it slow" symptom).
+        sem = asyncio.Semaphore(int(os.environ.get("FASHION_TAG_DOC_CONCURRENCY", "12")))
         results = await asyncio.gather(*(_tag_one_doc(d, sem) for d in docs))
         tagged = sum(results)
         logger.info("Fashion tagging: done, %d/%d photo(s) tagged this run.", tagged, total_photos)
