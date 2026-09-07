@@ -216,6 +216,55 @@ def _generate(parts: list, max_output_tokens: int, timeout: int = 40) -> "Option
     return None
 
 
+def check_keys(timeout: int = 12) -> dict:
+    """Diagnostic: fire one minimal live call per configured key (against the
+    first model) so an operator can see which GEMINI_API_KEYS actually work.
+    Never returns key material — keys are identified by 1-based position and
+    a masked 4-char tail only. A 429 counts as a WORKING key that has simply
+    used up its quota for the day.
+    """
+    out = {
+        "enabled": ENABLED,
+        "key_count": len(_KEYS),
+        "models": list(_MODELS),
+        "slot_count": len(_SLOTS),
+        "keys": [],
+    }
+    if not _KEYS or not _MODELS:
+        return out
+    model = _MODELS[0]
+    for idx, key in enumerate(_KEYS, 1):
+        tail = key[-4:] if len(key) >= 4 else "?"
+        entry = {"index": idx, "tail": tail, "ok": False, "quota_exhausted": False, "detail": ""}
+        try:
+            r = requests.post(
+                _endpoint(model),
+                params={"key": key},
+                json={
+                    "contents": [{"parts": [{"text": "ping"}]}],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 1},
+                },
+                timeout=timeout,
+            )
+            if r.ok:
+                entry["ok"] = True
+                entry["detail"] = "ok"
+            elif r.status_code == 429:
+                entry["ok"] = True
+                entry["quota_exhausted"] = True
+                entry["detail"] = "geçerli — günlük ücretsiz kota dolmuş"
+            else:
+                try:
+                    msg = (r.json().get("error") or {}).get("message", "") or r.text[:160]
+                except Exception:  # noqa: BLE001
+                    msg = r.text[:160]
+                entry["detail"] = f"HTTP {r.status_code}: {msg[:180]}"
+        except Exception as exc:  # noqa: BLE001
+            entry["detail"] = f"{type(exc).__name__}: {exc}"
+        out["keys"].append(entry)
+    return out
+
+
 # --------------------------------------------------------------------------
 # Brand-name resolution (text only)
 # --------------------------------------------------------------------------

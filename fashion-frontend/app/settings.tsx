@@ -21,6 +21,8 @@ export default function Settings() {
   const [meta, setMeta] = useState<any>(null);
   const [scraping, setScraping] = useState(false);
   const [scrapeMsg, setScrapeMsg] = useState("");
+  const [geminiCheck, setGeminiCheck] = useState<any>(null);
+  const [geminiChecking, setGeminiChecking] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -133,6 +135,20 @@ export default function Settings() {
       setScrapeMsg("Başlatılamadı, tekrar deneyin.");
     } finally {
       setScraping(false);
+    }
+  };
+
+  const runGeminiCheck = async () => {
+    setGeminiChecking(true);
+    setGeminiCheck(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const res = await api.geminiCheck();
+      setGeminiCheck(res);
+    } catch (e: any) {
+      setGeminiCheck({ error: e?.message || "Kontrol edilemedi." });
+    } finally {
+      setGeminiChecking(false);
     }
   };
 
@@ -310,6 +326,57 @@ export default function Settings() {
                 {scraping ? "Başlatılıyor…" : "Fotoğraf Etiketlemeyi Başlat"}
               </Text>
             </Pressable>
+            <Pressable
+              testID="gemini-check"
+              onPress={runGeminiCheck}
+              disabled={geminiChecking}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: geminiChecking ? 0.6 : 1 }]}
+            >
+              <Feather name="key" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {geminiChecking ? "Kontrol ediliyor…" : "Gemini Anahtarlarını Test Et"}
+              </Text>
+            </Pressable>
+            {!!geminiCheck && (
+              <View style={[styles.metaCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                {geminiCheck.error ? (
+                  <Text style={{ color: colors.error, fontSize: 12 }}>{geminiCheck.error}</Text>
+                ) : (
+                  <>
+                    <View style={styles.metaRow}>
+                      <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Anahtar sayısı</Text>
+                      <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
+                        {geminiCheck.key_count} · {geminiCheck.models?.length ?? 0} model · {geminiCheck.slot_count} slot
+                      </Text>
+                    </View>
+                    {(geminiCheck.keys ?? []).map((k: any) => (
+                      <View key={k.index} style={[styles.metaRow, { marginTop: 8 }]}>
+                        <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
+                          Anahtar {k.index} (…{k.tail})
+                        </Text>
+                        <Text
+                          style={{
+                            color: k.ok ? (k.quota_exhausted ? colors.brandSecondary : colors.onSurface) : colors.error,
+                            fontWeight: "700",
+                            fontSize: 12,
+                            flexShrink: 1,
+                            textAlign: "right",
+                            marginLeft: 12,
+                          }}
+                        >
+                          {k.ok ? (k.quota_exhausted ? "⚠︎ kota dolu" : "✓ çalışıyor") : "✗ " + (k.detail || "hata")}
+                        </Text>
+                      </View>
+                    ))}
+                    {!geminiCheck.enabled && (
+                      <Text style={{ color: colors.error, fontSize: 12, marginTop: 8 }}>
+                        Backend hiç anahtar görmüyor — Railway&apos;de GEMINI_API_KEYS ayarlı mı?
+                      </Text>
+                    )}
+                  </>
+                )}
+              </View>
+            )}
             {!!scrapeMsg && (
               <Text style={{ color: colors.brandSecondary, fontSize: 11, marginTop: 8, textAlign: "center" }}>
                 {scrapeMsg}

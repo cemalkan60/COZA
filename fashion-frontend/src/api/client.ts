@@ -160,4 +160,13 @@ export const api = {
   // run_fashion_thumbnails_backfill in server.py.
   fashionFixThumbnails: () => request("/admin/fashion-fix-thumbnails", { method: "POST" }, true),
   fashionTagFirstview: () => request("/admin/fashion-tag-firstview", { method: "POST" }, true),
+  // Diagnostic: which GEMINI_API_KEYS on the backend actually work. Returns
+  // { enabled, key_count, models, keys: [{index, tail, ok, quota_exhausted, detail}] }.
+  geminiCheck: (): Promise<{
+    enabled: boolean;
+    key_count: number;
+    models: string[];
+    slot_count: number;
+    keys: { index: number; tail: string; ok: boolean; quota_exhausted: boolean; detail: string }[];
+  }> => request("/admin/gemini-check", {}, true),
 };

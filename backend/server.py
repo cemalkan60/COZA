@@ -1368,6 +1368,14 @@ async def get_settings(admin: Annotated[dict, Depends(require_admin)]):
     }
 
 
+@api.get("/admin/gemini-check")
+async def admin_gemini_check(admin: Annotated[dict, Depends(require_admin)]):
+    """Fire one tiny live call per configured GEMINI_API_KEYS entry and
+    report which work. Never returns key material (position + 4-char tail
+    only). Blocking HTTP, so run it off the event loop."""
+    return await asyncio.to_thread(gemini_client.check_keys)
+
+
 @api.put("/admin/settings")
 async def update_settings(body: ProxyKeyBody, admin: Annotated[dict, Depends(require_admin)]):
     await db.settings.update_one(
