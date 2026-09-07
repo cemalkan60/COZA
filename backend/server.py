@@ -281,7 +281,9 @@ def _season_rank(season: str) -> float:
 # The app is a rolling recent-runway window, not a growing archive: keep only
 # collections whose show was presented within the last FASHION_RECENT_MONTHS
 # months, and prune the rest (see run_fashion_prune_old + its scheduled job).
-FASHION_RECENT_MONTHS = int(os.environ.get("FASHION_RECENT_MONTHS", "6"))
+# 4 months to keep R2 storage under the free 10 GB with every photo tagged
+# and re-hosted full-res.
+FASHION_RECENT_MONTHS = int(os.environ.get("FASHION_RECENT_MONTHS", "4"))
 
 
 def _min_recent_season_rank(months: int | None = None, now: "datetime | None" = None) -> float:
@@ -1662,25 +1664,33 @@ async def fashion_image_proxy(url: str):
     )
 
 
+_LOOKS_SORTS = {
+    "newest": [("season_rank", -1), ("updated_at", -1), ("source_id", -1)],
+    "oldest": [("season_rank", 1), ("updated_at", 1), ("source_id", 1)],
+    "updated": [("updated_at", -1), ("season_rank", -1), ("source_id", -1)],
+}
+
+
 @api.get("/fashion/collections")
 async def fashion_collections(
     user: Annotated[dict, Depends(get_current_user)],
     season: Optional[str] = None,
     category: Optional[str] = None,
     city: Optional[str] = None,
+    source: Optional[str] = None,
+    sort: str = "newest",
     q: Optional[str] = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(30, ge=1, le=60),
 ):
     """Runway collections (women/men/haute couture), aggregated from
     multiple sources (fashion-press.net + firstview.com) and merged by
-    brand+season+category into a single feed, newest show first.
+    brand+season+category into a single feed.
 
-    Sorted by season_rank (see _season_rank) rather than updated_at/scrape
-    time: both sources get scraped in the same run and would otherwise tie
-    on updated_at, so the two sources ended up visually clustered into
-    separate blocks (whichever was scraped/saved first) instead of truly
-    interleaved by which collection actually showed most recently."""
+    `sort`: newest (default, by which show ran most recently — see
+    _season_rank), oldest, or updated (most recently (re-)scraped).
+    `source`: "firstview" or "fashion-press" to show only collections that
+    include that source (a merged doc lists both)."""
     query: dict = {}
     if season:
         query["season"] = season
@@ -1688,6 +1698,8 @@ async def fashion_collections(
         query["category"] = category
     if city:
         query["city"] = city
+    if source:
+        query["sources"] = source
     if q:
         qs = q.strip()
         query["$or"] = [
@@ -1696,7 +1708,7 @@ async def fashion_collections(
         ]
     cursor = (
         db.fashion.find(query, {"_id": 0})
-        .sort([("season_rank", -1), ("updated_at", -1), ("source_id", -1)])
+        .sort(_LOOKS_SORTS.get(sort, _LOOKS_SORTS["newest"]))
         .skip(skip)
         .limit(limit)
     )
@@ -2161,12 +2173,12 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
     return {"status": "started"}
 
 
-# How many photos of one collection's gallery to bother tagging. A runway
-# gallery routinely holds 50-120 shots that include front/back/detail
-# angles of the same outfits, so tagging every last one costs a lot of
-# Gemini spend for diminishing filter coverage. The first N (the ones most
-# likely to actually surface in the look feed) are the sweet spot.
-_TAG_MAX_PHOTOS_PER_DOC = int(os.environ.get("FASHION_TAG_MAX_PHOTOS_PER_DOC", "40"))
+# How many photos of one collection's gallery to tag. Cem wants every
+# photo tagged (not just the first N), so this defaults high enough to
+# cover any real gallery — the scrapers themselves cap a collection at a
+# few hundred photos (firstview_scraper._MAX_GALLERY_IMAGES) — while still
+# bounding a pathological doc. Lower it via env if Gemini quota gets tight.
+_TAG_MAX_PHOTOS_PER_DOC = int(os.environ.get("FASHION_TAG_MAX_PHOTOS_PER_DOC", "400"))
 # Photos per Gemini request (see gemini_client.tag_images). The free tier's
 # ceiling is requests/DAY, and model rotation turned out to be a dead end
 # (only one lite model still exists), so packing more photos per request is
