@@ -625,15 +625,18 @@ async def _finalize_and_save_group(g: dict, sem: asyncio.Semaphore, now_iso: str
     return ok
 
 
-#  The two fashion-press.net season slugs, and the firstview.com show-year,
-# that between them cover "everything shown since January 2026": ready-to-wear
+#  The fashion-press.net season slugs, and the firstview.com show-years, that
+# between them cover "everything shown since January 2026": ready-to-wear
 # runway/lookbook seasons are announced roughly 6 months ahead of their name,
 # so a collection actually shown Jan-Sep 2026 carries the season name
 # "2026-27 Autumn/Winter" (shown Feb/Mar 2026) or "2027 Spring/Summer" (shown
 # Sept/Oct 2026 — the latter still ongoing as of this writing, so a backfill
 # run today won't yet have all of it; re-running later picks up the rest).
-BACKFILL_FASHION_PRESS_SEASONS = ("2026-27aw", "2027ss")
-BACKFILL_FIRSTVIEW_YEAR = 2026
+# 2027-28aw / show-year 2027 are listed ahead of time: their listings 404 /
+# come back empty until those shows happen (handled gracefully), and then
+# a backfill starts collecting them without a code change.
+BACKFILL_FASHION_PRESS_SEASONS = ("2026-27aw", "2027ss", "2027-28aw")
+BACKFILL_FIRSTVIEW_YEARS = (2026, 2027)
 
 
 async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> dict:
@@ -675,11 +678,12 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                         fashion_scraper.scrape_collections, (3000, gender, season),
                     ))
             tasks.append(("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, (500, 200)))
-            for cat in FASHION_CATEGORIES:
-                tasks.append((
-                    f"firstview/{cat}/{BACKFILL_FIRSTVIEW_YEAR}",
-                    firstview_scraper.scrape_category, (cat, 3000, BACKFILL_FIRSTVIEW_YEAR, 60, 6),
-                ))
+            for year in BACKFILL_FIRSTVIEW_YEARS:
+                for cat in FASHION_CATEGORIES:
+                    tasks.append((
+                        f"firstview/{cat}/{year}",
+                        firstview_scraper.scrape_category, (cat, 3000, year, 60, 6),
+                    ))
         else:
             tasks = [
                 ("fashion-press/women", fashion_scraper.scrape_collections, (40, "women")),
