@@ -145,6 +145,7 @@ def _client_for(acc: dict):
     aid = acc["account_id"]
     if aid not in _clients:
         import boto3  # lazy — only needed once R2 is configured
+        from botocore.config import Config
 
         _clients[aid] = boto3.client(
             "s3",
@@ -152,6 +153,12 @@ def _client_for(acc: dict):
             aws_access_key_id=acc["access_key_id"],
             aws_secret_access_key=acc["secret_access_key"],
             region_name="auto",
+            # botocore's default pool is 10; the scrape uploads far more than
+            # 10 photos to one R2 account at once, so extra connections were
+            # being opened, used once and thrown away ("Connection pool is
+            # full, discarding connection" warnings). Size it to the scrape's
+            # real concurrency ceiling so connections get reused instead.
+            config=Config(max_pool_connections=50),
         )
     return _clients[aid]
 
