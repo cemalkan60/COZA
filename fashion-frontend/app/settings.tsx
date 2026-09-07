@@ -136,13 +136,13 @@ export default function Settings() {
     }
   };
 
-  const triggerTagFirstview = async () => {
+  const triggerTagPhotos = async () => {
     setScraping(true);
     setScrapeMsg("");
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
       await api.fashionTagFirstview();
-      setScrapeMsg("FirstView fotoğrafları yapay zekayla etiketleniyor — ücretsiz kotaya uymak için yavaş ilerler, saatler sürebilir.");
+      setScrapeMsg("Tüm koleksiyon fotoğrafları yapay zekayla etiketleniyor — ücretsiz kotaya uymak için kademeli ilerler, birkaç güne yayılabilir. Her gece kaldığı yerden devam eder.");
       startPolling();
     } catch (e: any) {
       setScrapeMsg(e?.message || "Başlatılamadı, tekrar deneyin.");
@@ -204,6 +204,14 @@ export default function Settings() {
                 <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Son güncelleme</Text>
                 <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{formatDate(meta?.last_scrape)}</Text>
               </View>
+              {meta?.photos_taggable != null && (
+                <View style={[styles.metaRow, { marginTop: 10 }]}>
+                  <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Yapay zeka etiketli fotoğraf</Text>
+                  <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
+                    {`${meta?.photos_tagged ?? 0} / ${meta?.photos_taggable ?? "?"}`}
+                  </Text>
+                </View>
+              )}
               {!!meta?.scraping && (
                 <View style={[styles.metaRow, { marginTop: 10 }]}>
                   <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
@@ -213,8 +221,8 @@ export default function Settings() {
                         ? "Yinelenenler birleştiriliyor"
                         : meta?.phase === "fixing_covers"
                           ? "Kapaklar düzeltiliyor"
-                          : meta?.phase === "tagging_firstview"
-                            ? "FirstView fotoğrafları etiketleniyor"
+                          : meta?.phase === "tagging_photos" || meta?.phase === "tagging_firstview"
+                            ? "Fotoğraflar yapay zekayla etiketleniyor"
                             : meta?.phase === "finalizing"
                               ? "Kaydediliyor"
                               : "Kaynaklar taranıyor"}
@@ -226,7 +234,7 @@ export default function Settings() {
                         ? `${meta?.merge_done ?? 0} / ${meta?.merge_total ?? "?"}`
                         : meta?.phase === "fixing_covers"
                           ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
-                          : meta?.phase === "tagging_firstview"
+                          : meta?.phase === "tagging_photos" || meta?.phase === "tagging_firstview"
                             ? `${meta?.tags_done ?? 0} / ${meta?.tags_total ?? "?"}`
                             : meta?.phase === "finalizing"
                               ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
@@ -293,13 +301,13 @@ export default function Settings() {
             </Pressable>
             <Pressable
               testID="fashion-tag-firstview"
-              onPress={triggerTagFirstview}
+              onPress={triggerTagPhotos}
               disabled={scraping}
               style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
             >
               <Feather name="tag" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "FirstView Etiketleme Başlat"}
+                {scraping ? "Başlatılıyor…" : "Fotoğraf Etiketlemeyi Başlat"}
               </Text>
             </Pressable>
             {!!scrapeMsg && (
