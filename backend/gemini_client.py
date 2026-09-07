@@ -1,5 +1,5 @@
 """
-COZA Fashion — Gemini-based brand-name resolution.
+COZA Fashion — Gemini-based brand-name resolution + runway-photo tagging.
 
 fashion_scraper.py extracts each collection's brand name from its Japanese
 title and romanizes it with pykakasi (_romanize_ja) as an always-on, free
@@ -11,22 +11,32 @@ often as it comes out close ("Andaakabaa" instead of "Undercover").
 This module asks Gemini, once per unique brand name (cached by the caller
 in db.brand_names — see server.py's _resolve_brand_names), what the
 brand's real Latin-script name is (resolve_brand_name, text-only). It also
-classifies a fashion photo's garment/color/pattern/material for
-cross-source filtering (tag_image, sends the image inline — see
-run_fashion_tag_firstview in server.py). Both share the same model/
-endpoint/throttle below.
+classifies fashion photos' garment/color/pattern/material for cross-source
+filtering (tag_image for one photo, tag_images for a batch — see
+run_fashion_tag_photos in server.py). All share the same request path,
+rotation and throttle below.
 
 Configuration (all via env vars):
-  GEMINI_API_KEY   Google AI Studio API key. Required to activate.
-  GEMINI_MODEL     Model name, e.g. "gemini-3.5-flash-lite". Optional,
-                    defaults to a fast/free-tier-friendly model below.
+  GEMINI_API_KEY    One Google AI Studio API key.
+  GEMINI_API_KEYS   OR several, comma/space/newline separated. Each key is a
+                    separate free-tier project with its own daily quota, so
+                    listing 3-4 here multiplies how many photos a nightly
+                    sweep can tag before it runs out for the day. Both vars
+                    are merged; at least one key activates the module.
+  GEMINI_MODELS     Comma-separated model names to rotate through, e.g.
+                    "gemini-3.5-flash-lite,gemini-2.5-flash-lite". Each model
+                    line has its OWN free-tier daily bucket on the same
+                    project, so rotating a few multiplies quota again.
+                    Optional — defaults to the *-flash-lite trio below.
+  GEMINI_MODEL      Back-compat single-model override (used only if
+                    GEMINI_MODELS is unset).
+  GEMINI_MIN_INTERVAL_S  Minimum seconds between two requests that reuse the
+                    same API key (per-key throttle). Default 4.5.
 
-Deliberately all-optional: with GEMINI_API_KEY unset, ENABLED is False and
-resolve_brand_name() always returns None, so callers fall back to the
-pykakasi romanization exactly as before — nothing breaks if the key is
-missing or removed. Nothing above imports `requests` at import time either
-(it already is imported elsewhere in this project, but keeping the pattern
-consistent with image_store.py costs nothing).
+Deliberately all-optional: with no key set, ENABLED is False and every
+function here returns None / a list of Nones, so callers fall back to the
+pykakasi romanization / an untagged photo exactly as before — nothing
+breaks if the keys are missing or removed.
 """
 import base64
 import json
@@ -41,42 +51,41 @@ import requests
 
 logger = logging.getLogger("coza.gemini_client")
 
-_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-# "gemini-2.0-flash" (the original default here) was shut down by Google on
-# 2026-06-01 -- every call to this client had been silently 404ing and
-# falling back to the non-AI path ever since (resolve_brand_name to
-# pykakasi romanization, tag_image to an untagged photo), with nothing
-# user-visible to flag it since both callers catch-and-log-only by design.
-# Confirmed live 2026-09-05 via Railway deploy logs during the FirstView
-# tagging sweep's first run.
-#
-# Switching straight to "gemini-flash-latest" (the current full Flash
-# model) fixed the 404s but immediately surfaced a second problem: this
-# project's free tier gives that model line only 5 requests/minute and a
-# mere 20 requests/DAY (confirmed on aistudio.google.com/rate-limit,
-# project "coza") -- nowhere near enough for a sweep tagging over a
-# thousand photos. "gemini-3.5-flash-lite" is still fully multimodal
-# (accepts image input same as Flash) but sits in a much more generous
-# free bucket on the same dashboard: 15 RPM / 500 RPD. That's what backs
-# both resolve_brand_name and tag_image below now -- no separate vision
-# endpoint or config needed, same generateContent call either way.
-_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
-# Minimum seconds between any two Gemini requests from this process (see
-# _throttle below) -- keeps this comfortably under gemini-3.5-flash-lite's
-# 15 RPM free-tier cap (see _MODEL's comment) without needing a paid key.
-# The image-tagging sweep (run_fashion_tag_firstview in server.py) is what
-# actually fires hundreds of calls in one run; a 429/503 still gets one
-# backoff-retry in tag_image below as a second line of defense, but the
-# real ceiling here is the 500/day cap, not the per-minute one -- a sweep
-# over ~500 untagged photos in a day will hit it and should just resume
-# the next day (image_tags is a resumable prefix of images either way).
+
+def _split_env(*names: str) -> list:
+    """Collect + de-dupe values from one or more env vars, each of which may
+    itself hold a comma / whitespace / newline separated list."""
+    out: list = []
+    for name in names:
+        for chunk in re.split(r"[,\s]+", os.environ.get(name, "").strip()):
+            chunk = chunk.strip()
+            if chunk and chunk not in out:
+                out.append(chunk)
+    return out
+
+
+_KEYS = _split_env("GEMINI_API_KEYS", "GEMINI_API_KEY")
+
+# "gemini-2.0-flash" (this module's original default) was shut down by Google
+# on 2026-06-01 -- every call had been silently 404ing and falling back to
+# the non-AI path ever since. "gemini-flash-latest" (full Flash) fixed the
+# 404 but this project's free tier gives that line only 20 requests/DAY,
+# nowhere near a sweep over 1000+ photos. The "-flash-lite" models are still
+# fully multimodal (image input, same generateContent call) but sit in a far
+# more generous free bucket (hundreds of requests/day), and each model line
+# has its own separate daily quota -- so rotating a few of them multiplies
+# how much a nightly sweep can get through before every bucket is empty.
+_MODELS = _split_env("GEMINI_MODELS") or (
+    [os.environ["GEMINI_MODEL"].strip()] if os.environ.get("GEMINI_MODEL", "").strip()
+    else ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite"]
+)
+
+# Minimum seconds between two requests that reuse the SAME key (a free
+# project's rate limit is per-project, so this is tracked per key, not
+# globally -- with N keys the effective aggregate spacing is ~1/N of this).
 _MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "4.5"))
 
-ENABLED = bool(_API_KEY)
-
-_ENDPOINT = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/{_MODEL}:generateContent"
-)
+ENABLED = bool(_KEYS)
 
 _IMG_DOWNLOAD_HEADERS = {
     "User-Agent": (
@@ -85,26 +94,131 @@ _IMG_DOWNLOAD_HEADERS = {
     ),
 }
 
-# Simple global leaky-bucket-of-one: every call to _throttle() blocks (the
-# calling thread only -- callers always run this via asyncio.to_thread, so
-# the event loop itself never sleeps) until at least _MIN_INTERVAL_S has
-# passed since the previous Gemini request from this process, regardless of
-# how many docs/photos are being tagged concurrently. A lock rather than a
-# per-caller sleep because several worker threads can race to call this at
-# once (the tagging sweep runs a handful of documents concurrently).
-_throttle_lock = threading.Lock()
-_last_call_ts = 0.0
+
+# --------------------------------------------------------------------------
+# (key, model) slot rotation
+# --------------------------------------------------------------------------
+# One "slot" is a specific (API key, model) pairing. A 429 (quota/rate) or a
+# transient network error puts just that slot on a cooldown -- a growing
+# backoff, so a key whose DAILY bucket is empty stops being retried every
+# few seconds and the rotation naturally settles onto whatever slots still
+# have quota. When every slot is cooling, callers get None and the sweep
+# just resumes on its next run (image_tags is a resumable prefix of images).
+class _Slot:
+    __slots__ = ("key", "model", "cool_until", "fails")
+
+    def __init__(self, key: str, model: str):
+        self.key = key
+        self.model = model
+        self.cool_until = 0.0
+        self.fails = 0
 
 
-def _throttle() -> None:
-    global _last_call_ts
-    with _throttle_lock:
+_SLOTS = [_Slot(k, m) for k in _KEYS for m in _MODELS]
+_slot_lock = threading.Lock()
+_rr = 0  # round-robin cursor
+# Per-key "last request finished at" timestamps for the throttle.
+_key_last_ts: dict = {k: 0.0 for k in _KEYS}
+
+_COOL_MAX_S = 6 * 3600  # a fully-spent daily bucket: stop poking it for the night
+
+
+def _next_slot() -> "Optional[_Slot]":
+    """Round-robin to the next slot that isn't on cooldown, or None if all are."""
+    global _rr
+    with _slot_lock:
+        n = len(_SLOTS)
         now = time.monotonic()
-        wait = _last_call_ts + _MIN_INTERVAL_S - now
-        if wait > 0:
-            time.sleep(wait)
-        _last_call_ts = time.monotonic()
+        for _ in range(n):
+            slot = _SLOTS[_rr % n]
+            _rr = (_rr + 1) % n
+            if slot.cool_until <= now:
+                return slot
+        return None
 
+
+def _cool(slot: "_Slot", *, quota: bool) -> None:
+    with _slot_lock:
+        slot.fails += 1
+        # 429 -> exponential from ~2min, capped at _COOL_MAX_S (covers "daily
+        # bucket empty"). Network/5xx -> short, it's usually momentary.
+        base = 120 if quota else 15
+        delay = min(base * (2 ** (slot.fails - 1)), _COOL_MAX_S)
+        slot.cool_until = time.monotonic() + delay
+
+
+def _slot_ok(slot: "_Slot") -> None:
+    with _slot_lock:
+        slot.fails = 0
+        slot.cool_until = 0.0
+
+
+def _throttle(key: str) -> None:
+    """Block (calling thread only -- callers use asyncio.to_thread) until at
+    least _MIN_INTERVAL_S has passed since the previous request on `key`."""
+    with _slot_lock:
+        wait = _key_last_ts.get(key, 0.0) + _MIN_INTERVAL_S - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    with _slot_lock:
+        _key_last_ts[key] = time.monotonic()
+
+
+def _endpoint(model: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
+def _generate(parts: list, max_output_tokens: int, timeout: int = 40) -> "Optional[str]":
+    """One generateContent call. Rotates through (key, model) slots on 429 /
+    503 / network error until one succeeds or all are cooling. Returns the
+    concatenated text of the first candidate, or None."""
+    if not ENABLED:
+        return None
+    attempts = max(len(_SLOTS), 1)
+    for _ in range(attempts):
+        slot = _next_slot()
+        if slot is None:
+            logger.warning("gemini_client: every (key,model) slot is on cooldown")
+            return None
+        _throttle(slot.key)
+        try:
+            resp = requests.post(
+                _endpoint(slot.model),
+                params={"key": slot.key},
+                json={
+                    "contents": [{"parts": parts}],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": max_output_tokens},
+                },
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            logger.warning("gemini_client: network error on %s: %s", slot.model, exc)
+            _cool(slot, quota=False)
+            continue
+        if resp.status_code in (429, 503):
+            _cool(slot, quota=(resp.status_code == 429))
+            continue
+        if not resp.ok:
+            logger.warning("gemini_client: HTTP %s from %s: %s", resp.status_code, slot.model, resp.text[:200])
+            _cool(slot, quota=False)
+            continue
+        _slot_ok(slot)
+        try:
+            data = resp.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                return None
+            parts_out = (candidates[0].get("content") or {}).get("parts") or []
+            return "".join(p.get("text", "") for p in parts_out).strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("gemini_client: unparseable response body: %s", exc)
+            return None
+    return None
+
+
+# --------------------------------------------------------------------------
+# Brand-name resolution (text only)
+# --------------------------------------------------------------------------
 _PROMPT_TEMPLATE = (
     "You are helping identify fashion brand/designer names. The following text "
     "is a brand or designer name as written in Japanese (often katakana, a "
@@ -120,151 +234,144 @@ _PROMPT_TEMPLATE = (
 
 def resolve_brand_name(brand_ja: str) -> "str | None":
     """Ask Gemini for the real Latin-script spelling of a brand name written
-    in Japanese. Returns None on any failure, low confidence, or when
-    GEMINI_API_KEY isn't configured — callers should fall back to the
-    pykakasi romanization in that case, never block or raise on this.
+    in Japanese. Returns None on any failure, low confidence, or when no key
+    is configured — callers fall back to the pykakasi romanization, never
+    block or raise on this.
     """
     if not ENABLED or not (brand_ja or "").strip():
         return None
+    text = _generate(
+        [{"text": _PROMPT_TEMPLATE.format(brand_ja=brand_ja.strip())}],
+        max_output_tokens=32,
+    )
+    if text is None:
+        return None
+    text = text.strip("\"'` \n\t")
+    if not text or text.upper() == "NONE":
+        return None
+    return text
 
-    prompt = _PROMPT_TEMPLATE.format(brand_ja=brand_ja.strip())
-    _throttle()
+
+# --------------------------------------------------------------------------
+# Runway-photo tagging (vision)
+# --------------------------------------------------------------------------
+_TAG_FIELDS = ("item", "color", "pattern", "material")
+
+_TAG_SHAPE_RULES = (
+    'Each object: {"item": "<main garment type, e.g. dress, coat, suit, '
+    'skirt, trousers, jacket, blouse, jumpsuit>", "color": "<single dominant '
+    'color, e.g. black, white, red, beige, navy, multicolor>", "pattern": '
+    '"<e.g. solid, striped, floral, plaid, animal print, polka dot, none>", '
+    '"material": "<best-guess fabric, e.g. denim, leather, knit, silk, wool, '
+    'cotton, sequin, unknown>"}. If you cannot tell a field confidently use '
+    '"unknown" for that field only — never drop a field or invent detail you '
+    "cannot actually see."
+)
+
+_TAG_PROMPT_ONE = (
+    "You are labeling a single fashion runway photo for a filterable clothing "
+    "catalog app. Look at the main garment/outfit worn by the model and reply "
+    "with ONLY a compact JSON object, no markdown, no code fence, no "
+    "explanation:\n" + _TAG_SHAPE_RULES
+)
+
+
+def _tag_prompt_batch(n: int) -> str:
+    return (
+        f"You are labeling fashion runway photos for a filterable clothing "
+        f"catalog app. You will be given {n} photos, in order. For EACH photo "
+        f"look at the main garment/outfit worn by the model. Reply with ONLY a "
+        f"JSON array of EXACTLY {n} objects, in the same order as the photos — "
+        f"no markdown, no code fence, no explanation.\n" + _TAG_SHAPE_RULES
+    )
+
+
+def _clean_tag(obj) -> "Optional[dict]":
+    if not isinstance(obj, dict):
+        return None
+    return {
+        field: str(obj.get(field) or "unknown").strip().lower()[:40]
+        for field in _TAG_FIELDS
+    }
+
+
+def _download_image(image_url: str) -> "Optional[dict]":
+    """Fetch one image and return a generateContent inline_data part, or None."""
     try:
-        resp = requests.post(
-            _ENDPOINT,
-            params={"key": _API_KEY},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 32},
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            return None
-        parts = (candidates[0].get("content") or {}).get("parts") or []
-        text = "".join(p.get("text", "") for p in parts).strip()
-        # Strip stray quotes/markdown Gemini sometimes wraps single-word
-        # answers in despite the prompt asking it not to.
-        text = text.strip("\"'` \n\t")
-        if not text or text.upper() == "NONE":
-            return None
-        return text
+        r = requests.get(image_url, headers=_IMG_DOWNLOAD_HEADERS, timeout=15)
+        r.raise_for_status()
+        mime = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
+        if not mime.startswith("image/"):
+            mime = "image/jpeg"
+        return {"inline_data": {"mime_type": mime, "data": base64.b64encode(r.content).decode("ascii")}}
     except Exception as exc:  # noqa: BLE001
-        logger.warning("gemini_client: failed to resolve brand %r: %s", brand_ja, exc)
+        logger.warning("gemini_client: failed to download image %r: %s", image_url, exc)
         return None
 
 
-_TAG_PROMPT = (
-    "You are labeling a single fashion runway photo for a filterable clothing "
-    "catalog app. Look at the main garment/outfit worn by the model in this "
-    "photo and reply with ONLY a compact JSON object, no markdown, no code "
-    "fence, no explanation, in exactly this shape:\n"
-    '{"item": "<main garment type, e.g. dress, coat, suit, skirt, trousers, '
-    'jacket, blouse, jumpsuit>", "color": "<single dominant color, e.g. '
-    'black, white, red, beige, navy, multicolor>", "pattern": "<e.g. solid, '
-    'striped, floral, plaid, animal print, polka dot, none>", "material": '
-    '"<best-guess fabric/material, e.g. denim, leather, knit, silk, wool, '
-    'cotton, sequin, unknown>"}\n'
-    "If you cannot tell one of the fields confidently, use \"unknown\" for "
-    "that field only — never leave a field out or invent detail you can't "
-    "actually see."
-)
+def tag_images(image_urls: list) -> list:
+    """Classify several runway photos in ONE generateContent call (item /
+    color / pattern / material each — see server.py's run_fashion_tag_photos).
 
-_TAG_FIELDS = ("item", "color", "pattern", "material")
+    The free tier's real ceiling is requests/DAY, not images/day, so sending
+    a handful of photos per request is the main lever for getting a big
+    backlog tagged in days rather than weeks. Returns a list the same length
+    and order as `image_urls`; any entry is None if that photo couldn't be
+    downloaded, the reply couldn't be parsed, or all slots are cooling —
+    callers should leave those photos for a later sweep, never block/raise.
+    """
+    n = len(image_urls)
+    if not ENABLED or n == 0:
+        return [None] * n
+
+    downloaded = [_download_image(u) for u in image_urls]
+    ok_idx = [i for i, d in enumerate(downloaded) if d is not None]
+    if not ok_idx:
+        return [None] * n
+
+    out: list = [None] * n
+
+    # One good image left -> the single-object prompt parses more reliably
+    # than asking for a 1-element array.
+    if len(ok_idx) == 1:
+        i = ok_idx[0]
+        text = _generate([{"text": _TAG_PROMPT_ONE}, downloaded[i]], max_output_tokens=256)
+        if text:
+            m = re.search(r"\{.*\}", text, re.DOTALL)
+            if m:
+                try:
+                    out[i] = _clean_tag(json.loads(m.group(0)))
+                except Exception:  # noqa: BLE001
+                    pass
+        return out
+
+    parts = [{"text": _tag_prompt_batch(len(ok_idx))}]
+    for i in ok_idx:
+        parts.append(downloaded[i])
+    # ~90 output tokens per object is plenty for this fixed 4-field shape.
+    text = _generate(parts, max_output_tokens=64 + 90 * len(ok_idx), timeout=60)
+    if not text:
+        return out
+    m = re.search(r"\[.*\]", text, re.DOTALL)
+    if not m:
+        logger.warning("gemini_client: batch reply had no JSON array")
+        return out
+    try:
+        arr = json.loads(m.group(0))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("gemini_client: batch JSON array unparseable: %s", exc)
+        return out
+    if not isinstance(arr, list) or len(arr) != len(ok_idx):
+        logger.warning(
+            "gemini_client: batch returned %s items, expected %d",
+            len(arr) if isinstance(arr, list) else type(arr).__name__, len(ok_idx),
+        )
+        return out
+    for pos, i in enumerate(ok_idx):
+        out[i] = _clean_tag(arr[pos])
+    return out
 
 
 def tag_image(image_url: str) -> "Optional[dict]":
-    """Ask Gemini's vision-capable text model to classify one fashion photo
-    (garment type / color / pattern / material) for cross-source filtering
-    — see server.py's run_fashion_tag_firstview, the sweep that calls this
-    once per photo. Returns None on any failure, an unparseable reply, or
-    when GEMINI_API_KEY isn't configured; callers should just leave that
-    photo untagged and retry on a later sweep, never block or raise on this.
-
-    Downloads `image_url` itself (works with any publicly reachable URL,
-    including our own R2-hosted thumbnails/full-res photos) and sends it
-    inline as base64 alongside the prompt in one generateContent call — the
-    same multimodal support _MODEL (gemini-3.5-flash-lite) offers on this
-    text endpoint, no separate vision endpoint needed. Callers should
-    prefer a small thumbnail URL over the full-resolution photo where
-    available: plenty for this level of classification, and noticeably
-    cheaper/faster to upload.
-    """
-    if not ENABLED or not image_url:
-        return None
-
-    try:
-        img_resp = requests.get(image_url, headers=_IMG_DOWNLOAD_HEADERS, timeout=15)
-        img_resp.raise_for_status()
-        image_b64 = base64.b64encode(img_resp.content).decode("ascii")
-        mime_type = (img_resp.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
-        if not mime_type.startswith("image/"):
-            mime_type = "image/jpeg"
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("gemini_client: failed to download image to tag %r: %s", image_url, exc)
-        return None
-
-    # A transient 429 (rate limit) or 503 (momentarily overloaded) is worth
-    # one retry after backing off further, rather than giving up on the
-    # photo immediately -- confirmed live that both show up in normal
-    # operation even with _throttle already pacing requests (the free tier's
-    # actual burst tolerance is tighter than the steady-state rate alone
-    # suggested). Anything else (a real error, a bad image, an invalid key)
-    # isn't retried -- it'll just fail the same way again.
-    for attempt in range(2):
-        _throttle()
-        try:
-            resp = requests.post(
-                _ENDPOINT,
-                params={"key": _API_KEY},
-                json={
-                    "contents": [
-                        {
-                            "parts": [
-                                {"text": _TAG_PROMPT},
-                                {"inline_data": {"mime_type": mime_type, "data": image_b64}},
-                            ]
-                        }
-                    ],
-                    "generationConfig": {"temperature": 0, "maxOutputTokens": 256},
-                },
-                timeout=30,
-            )
-            if resp.status_code in (429, 503) and attempt == 0:
-                logger.warning(
-                    "gemini_client: %s tagging %r, backing off and retrying once",
-                    resp.status_code, image_url,
-                )
-                time.sleep(_MIN_INTERVAL_S * 3)
-                continue
-            resp.raise_for_status()
-            data = resp.json()
-            candidates = data.get("candidates") or []
-            if not candidates:
-                return None
-            parts = (candidates[0].get("content") or {}).get("parts") or []
-            text = "".join(p.get("text", "") for p in parts).strip()
-            # Gemini sometimes adds a stray explanation sentence or a
-            # ```json ... ``` fence around the JSON despite the prompt
-            # asking it not to -- pull out the {...} substring itself
-            # rather than trusting the reply to be nothing else, which is
-            # far more robust than just stripping backticks/whitespace off
-            # the ends (confirmed live: plain strip() left unparseable text
-            # often enough to be the main failure mode on this model).
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if not match:
-                return None
-            parsed = json.loads(match.group(0))
-            if not isinstance(parsed, dict):
-                return None
-            return {
-                field: str(parsed.get(field) or "unknown").strip().lower()[:40]
-                for field in _TAG_FIELDS
-            }
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("gemini_client: failed to tag image %r: %s", image_url, exc)
-            return None
-    return None
+    """Single-photo convenience wrapper around tag_images()."""
+    return tag_images([image_url])[0]
