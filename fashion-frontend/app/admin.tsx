@@ -218,7 +218,7 @@ export default function AdminPanel() {
               <View style={styles.btnRow}>
                 <Pressable
                   disabled={!!busy}
-                  onPress={() => runAction("prune", api.fashionPruneOld, "Eski koleksiyonlar temizlendi.")}
+                  onPress={() => runAction("prune", api.fashionPruneOld, "Eski koleksiyonların temizliği başladı (fotoğraflar dahil).")}
                   style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.error }]}>Eskileri sil</Text>

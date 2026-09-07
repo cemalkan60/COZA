@@ -2283,29 +2283,74 @@ async def admin_fashion_tag_photos(admin: Annotated[dict, Depends(require_admin)
 
 async def run_fashion_prune_old() -> dict:
     """Delete collections whose show is older than the rolling
-    FASHION_RECENT_MONTHS window (see _min_recent_season_rank). Docs with an
-    unparseable season (season_rank < 0) are left alone — we only delete when
-    we can date the show. Runs after every scrape and on its own nightly job.
+    FASHION_RECENT_MONTHS window (see _min_recent_season_rank), photos and
+    all — the app is a rolling window, so an aged-out collection leaves
+    nothing behind, not even orphaned files on R2. Docs with an unparseable
+    season (season_rank < 0) are left alone — we only delete when we can
+    date the show. Runs after every scrape and on its own nightly job.
     """
     floor = _min_recent_season_rank()
-    res = await db.fashion.delete_many({"season_rank": {"$gte": 0, "$lt": floor}})
-    if res.deleted_count:
-        logger.info(
-            "Fashion prune: removed %d collection(s) older than %d months (season_rank < %s).",
-            res.deleted_count, FASHION_RECENT_MONTHS, floor,
+    doomed = await db.fashion.find(
+        {"season_rank": {"$gte": 0, "$lt": floor}},
+        {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1},
+    ).to_list(length=None)
+    if not doomed:
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"last_prune": datetime.now(timezone.utc).isoformat(),
+                      "recent_months": FASHION_RECENT_MONTHS}},
+            upsert=True,
         )
+        return {"status": "ok", "deleted": 0, "photos_deleted": 0, "season_rank_floor": floor}
+
+    # Every re-hosted photo URL these docs point at. delete_image() removes
+    # the full-res object AND its derived thumbnail, and no-ops on any URL
+    # that isn't on our own R2 bucket, so passing the full-res list is
+    # enough (and passing a source-site URL is harmless).
+    urls: set = set()
+    for d in doomed:
+        for u in (d.get("images") or []):
+            if u:
+                urls.add(u)
+        if d.get("image"):
+            urls.add(d["image"])
+
+    def _purge(batch: list) -> None:
+        for u in batch:
+            image_store.delete_image(u)
+
+    url_list = list(urls)
+    CHUNK = 50
+    await asyncio.gather(*(
+        asyncio.to_thread(_purge, url_list[i:i + CHUNK]) for i in range(0, len(url_list), CHUNK)
+    ))
+
+    res = await db.fashion.delete_many({"source_id": {"$in": [d["source_id"] for d in doomed]}})
+    logger.info(
+        "Fashion prune: removed %d collection(s) + %d photo(s) older than %d months (season_rank < %s).",
+        res.deleted_count, len(url_list), FASHION_RECENT_MONTHS, floor,
+    )
     await db.meta.update_one(
         {"_id": "fashion"},
         {"$set": {"last_prune": datetime.now(timezone.utc).isoformat(),
                   "recent_months": FASHION_RECENT_MONTHS}},
         upsert=True,
     )
-    return {"status": "ok", "deleted": res.deleted_count, "season_rank_floor": floor}
+    return {
+        "status": "ok",
+        "deleted": res.deleted_count,
+        "photos_deleted": len(url_list),
+        "season_rank_floor": floor,
+    }
 
 
 @api.post("/admin/fashion-prune")
 async def admin_fashion_prune(admin: Annotated[dict, Depends(require_admin)]):
-    return await run_fashion_prune_old()
+    # Can now take a while (deletes photos from R2 too), so fire-and-forget.
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_prune_old())
+    return {"status": "started"}
 
 
 def _fashion_doc_merge_key(doc: dict) -> str:
