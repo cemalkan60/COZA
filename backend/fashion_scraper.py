@@ -68,36 +68,70 @@ LOOKS_PATH = "/collections/looks"
 
 
 def _normalize_season(title: str) -> str:
-    """Extract & normalize a season code (e.g. 2026-27AW, 2027SS) from a title."""
-    # Already-normalized latin season codes: 2026-27AW / 2027SS / 2026AW ...
+    """Extract & normalize a season code from a title:
+    AW / SS carry the year-span form (2026-27AW); RESORT / PREFALL are
+    single-year (2027RESORT), matching server.py's _SEASON_RANK_RE and
+    firstview_scraper._season_from_text. Returns "" if nothing parses.
+    """
+    # Already-normalized latin codes: 2026-27AW / 2027SS / 2026AW ...
     m = re.search(r"(\d{4}(?:-\d{2})?)\s*(AW|SS)", title, re.IGNORECASE)
     if m:
         return f"{m.group(1)}{m.group(2).upper()}"
-    # Japanese season words: 年秋冬 (autumn/winter -> AW), 年春夏 (spring/summer -> SS)
+    m = re.search(r"(\d{4})\s*(RESORT|CRUISE|PRE[- ]?FALL|PREFALL)", title, re.IGNORECASE)
+    if m:
+        era = m.group(2).upper().replace("-", "").replace(" ", "")
+        return f"{m.group(1)}{'RESORT' if era in ('RESORT', 'CRUISE') else 'PREFALL'}"
+
+    # Japanese season words. The suffix regex (_TITLE_SUFFIX_RE) already
+    # knows all four; this must recognise the same set or Resort/Pre-Fall
+    # collections come back seasonless (season_rank -1) and slip the rolling
+    # prune. Year can be a span (2026-27) for 秋冬, single for the rest.
     m = re.search(r"(\d{4}(?:-\d{2})?)\s*年?\s*秋冬", title)
     if m:
         return f"{m.group(1)}AW"
     m = re.search(r"(\d{4}(?:-\d{2})?)\s*年?\s*春夏", title)
     if m:
         return f"{m.group(1)}SS"
-    # Bare 秋冬 / 春夏 with a leading year captured elsewhere
+    m = re.search(r"(\d{4})\s*年?\s*リゾート", title)
+    if m:
+        return f"{m.group(1)}RESORT"
+    m = re.search(r"(\d{4})\s*年?\s*プレフォール", title)
+    if m:
+        return f"{m.group(1)}PREFALL"
+
+    # Bare season word with a year captured anywhere in the string.
     m = re.search(r"(\d{4}(?:-\d{2})?)", title)
-    if m and "秋冬" in title:
-        return f"{m.group(1)}AW"
-    if m and "春夏" in title:
-        return f"{m.group(1)}SS"
+    if not m:
+        return ""
+    yr = m.group(1)
+    yr4 = yr[:4]
+    if "秋冬" in title:
+        return f"{yr}AW"
+    if "春夏" in title:
+        return f"{yr}SS"
+    if "リゾート" in title:
+        return f"{yr4}RESORT"
+    if "プレフォール" in title:
+        return f"{yr4}PREFALL"
     return ""
+
+
+_SEASON_LABELS = {
+    "AW": "Sonbahar/Kış",
+    "SS": "İlkbahar/Yaz",
+    "RESORT": "Resort",
+    "PREFALL": "Pre-Fall",
+}
 
 
 def _season_label_tr(season: str) -> str:
     """Human-friendly Turkish label for a season code (e.g. '2027 İlkbahar/Yaz')."""
     if not season:
         return ""
-    m = re.match(r"(\d{4}(?:-\d{2})?)(AW|SS)", season)
+    m = re.match(r"(\d{4}(?:-\d{2})?)(AW|SS|RESORT|PREFALL)", season, re.IGNORECASE)
     if not m:
         return season
-    year, tag = m.group(1), m.group(2)
-    return f"{year} {'Sonbahar/Kış' if tag == 'AW' else 'İlkbahar/Yaz'}"
+    return f"{m.group(1)} {_SEASON_LABELS[m.group(2).upper()]}"
 
 
 def _fetch(path: str) -> str:
@@ -304,8 +338,12 @@ def scrape_collections(limit: int = 40, gender: str = "women", season: Optional[
         for it in new_items:
             seen_ids.add(it["source_id"])
         raw.extend(new_items)
-        if not season:
-            break  # unfiltered "latest" mode stays single-page, as before
+        # Unfiltered "latest" mode: single page for the quick regular scrape
+        # (small limit), but paginate for a backfill (big limit) — Resort /
+        # Pre-Fall collections have no dedicated season slug, so the deep
+        # unfiltered listing is the only way to reach them.
+        if not season and limit <= 60:
+            break
         page += 1
         time.sleep(0.3)  # a backfill can be dozens of pages — be polite
 

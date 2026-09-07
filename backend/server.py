@@ -237,6 +237,9 @@ def _normalize_fashion_item(raw: dict) -> Optional[dict]:
         "url": raw.get("url") or "",
         "brand_tr": brand_tr,
         "title_tr": raw.get("title_tr") or brand_tr,
+        # Kept on the doc so a later season-parser fix can be re-applied
+        # without re-scraping (see _reparse_seasons_if_needed).
+        "title_ja": raw.get("title_ja") or "",
         "season": season,
         "season_label": raw.get("season_label") or fashion_scraper._season_label_tr(season),
         "category": category,
@@ -284,6 +287,10 @@ def _season_rank(season: str) -> float:
 # 4 months to keep R2 storage under the free 10 GB with every photo tagged
 # and re-hosted full-res.
 FASHION_RECENT_MONTHS = int(os.environ.get("FASHION_RECENT_MONTHS", "4"))
+# An undated collection (season didn't parse) that also hasn't been
+# re-scraped in this many days is treated as stale cruft and pruned — it
+# would otherwise be exempt from the window prune forever.
+_UNDATED_STALE_DAYS = int(os.environ.get("FASHION_UNDATED_STALE_DAYS", "21"))
 
 
 def _min_recent_season_rank(months: int | None = None, now: "datetime | None" = None) -> float:
@@ -522,6 +529,7 @@ def _group_fashion_items(raw_items: list) -> tuple:
                 "url": item["url"],
                 "brand_tr": item["brand_tr"],
                 "title_tr": item["title_tr"],
+                "title_ja": item.get("title_ja") or "",
                 "season": item["season"],
                 "season_label": item["season_label"],
                 "season_rank": _season_rank(item["season"]),
@@ -713,6 +721,14 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                         f"fashion-press/{gender}/{season}",
                         fashion_scraper.scrape_collections, (3000, gender, season),
                     ))
+            # Deep unfiltered pass too — Resort / Pre-Fall / Cruise have no
+            # dedicated season slug on fashion-press, so they only appear in
+            # the newest-first listing (which paginates for a big limit).
+            for gender in ("women", "men"):
+                tasks.append((
+                    f"fashion-press/{gender}/latest-deep",
+                    fashion_scraper.scrape_collections, (600, gender),
+                ))
             tasks.append(("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, (500, 200)))
             for year in BACKFILL_FIRSTVIEW_YEARS:
                 for cat in FASHION_CATEGORIES:
@@ -956,6 +972,12 @@ async def _migrate_fashion_schema():
         logger.warning("Fashion: season_rank backfill timed out (>20s) — skipping, will retry next startup.")
     except Exception:
         logger.exception("Fashion: season_rank backfill failed.")
+    try:
+        await asyncio.wait_for(_reparse_seasons_if_needed(), timeout=20)
+    except asyncio.TimeoutError:
+        logger.warning("Fashion: season re-parse timed out (>20s) — skipping, will retry next startup.")
+    except Exception:
+        logger.exception("Fashion: season re-parse failed.")
 
 
 async def _backfill_season_rank():
@@ -969,6 +991,33 @@ async def _backfill_season_rank():
         ]
         await db.fashion.bulk_write(ops, ordered=False)
         logger.info("Fashion: backfilled season_rank on %d document(s).", len(stale))
+
+
+async def _reparse_seasons_if_needed():
+    """Re-derive `season` for docs that have a Japanese title but no season —
+    lets a fix to fashion_scraper._normalize_season (e.g. adding Resort /
+    Pre-Fall) reach already-saved collections without a re-scrape. Only
+    touches docs where the parser now produces something."""
+    undated = await db.fashion.find(
+        {"season": {"$in": ["", None]}, "title_ja": {"$nin": ["", None]}},
+        {"_id": 0, "source_id": 1, "title_ja": 1},
+    ).to_list(length=None)
+    ops = []
+    for d in undated:
+        season = _season_merge_code(fashion_scraper._normalize_season(d.get("title_ja") or ""))
+        if not season:
+            continue
+        ops.append(UpdateOne(
+            {"source_id": d["source_id"]},
+            {"$set": {
+                "season": season,
+                "season_label": fashion_scraper._season_label_tr(season),
+                "season_rank": _season_rank(season),
+            }},
+        ))
+    if ops:
+        await db.fashion.bulk_write(ops, ordered=False)
+        logger.info("Fashion: re-parsed season on %d previously-undated document(s).", len(ops))
 
 
 async def _dedupe_existing_fashion_docs():
@@ -2345,13 +2394,22 @@ async def run_fashion_prune_old() -> dict:
     """Delete collections whose show is older than the rolling
     FASHION_RECENT_MONTHS window (see _min_recent_season_rank), photos and
     all — the app is a rolling window, so an aged-out collection leaves
-    nothing behind, not even orphaned files on R2. Docs with an unparseable
-    season (season_rank < 0) are left alone — we only delete when we can
-    date the show. Runs after every scrape and on its own nightly job.
+    nothing behind, not even orphaned files on R2. Runs after every scrape
+    and on its own nightly job.
+
+    A doc whose season doesn't parse (season_rank < 0) is normally left
+    alone — we only delete when we can date the show — EXCEPT when it also
+    hasn't been re-scraped in _UNDATED_STALE_DAYS: several scrape cycles
+    have gone by without ever managing to date it, so it's stale cruft that
+    would otherwise pile up forever (Resort / Pre-Fall pre-parser-fix).
     """
     floor = _min_recent_season_rank()
+    stale_cut = (datetime.now(timezone.utc) - timedelta(days=_UNDATED_STALE_DAYS)).isoformat()
     doomed = await db.fashion.find(
-        {"season_rank": {"$gte": 0, "$lt": floor}},
+        {"$or": [
+            {"season_rank": {"$gte": 0, "$lt": floor}},
+            {"season_rank": {"$lt": 0}, "updated_at": {"$lt": stale_cut}},
+        ]},
         {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1},
     ).to_list(length=None)
     if not doomed:
