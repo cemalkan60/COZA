@@ -263,12 +263,10 @@ def ensure_cors_configured() -> None:
             logger.warning("image_store: failed to set CORS on %s: %s", acc["bucket"], exc)
 
 
-def _wait_until_publicly_readable(public_url: str, attempts: int = 4, delay: float = 0.2) -> None:
+def _wait_until_publicly_readable(public_url: str, attempts: int = 5, delay: float = 0.35) -> None:
     """R2's public subdomain briefly 503s an object right after upload while
     it propagates to the edge — poll until it serves so a caller never gets
-    a URL that momentarily 404/503s. Best-effort and bounded; returns as soon
-    as one probe succeeds (the common case), so the full budget is only spent
-    on the slow minority."""
+    a URL that momentarily 404/503s. Best-effort and bounded."""
     for _ in range(attempts):
         try:
             if _http().head(public_url, timeout=5).status_code < 400:
