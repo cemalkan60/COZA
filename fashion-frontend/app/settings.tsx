@@ -344,15 +344,15 @@ export default function Settings() {
                 ) : (
                   <>
                     <View style={styles.metaRow}>
-                      <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Anahtar sayısı</Text>
+                      <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Çalışan slot</Text>
                       <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
-                        {geminiCheck.key_count} · {geminiCheck.models?.length ?? 0} model · {geminiCheck.slot_count} slot
+                        {geminiCheck.slots_ok ?? 0} / {geminiCheck.slot_count} ({geminiCheck.key_count} anahtar × {geminiCheck.models?.length ?? 0} model)
                       </Text>
                     </View>
                     {(geminiCheck.keys ?? []).map((k: any) => (
                       <View key={k.index} style={[styles.metaRow, { marginTop: 8 }]}>
                         <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
-                          Anahtar {k.index} (…{k.tail})
+                          Anahtar {k.index} (…{k.tail}) · {k.models_ok}/{k.models_total} model
                         </Text>
                         <Text
                           style={{
@@ -368,6 +368,24 @@ export default function Settings() {
                         </Text>
                       </View>
                     ))}
+                    {(geminiCheck.models ?? []).map((m: string) => {
+                      const ms = (geminiCheck.slots ?? []).filter((s: any) => s.model === m);
+                      const okc = ms.filter((s: any) => s.ok).length;
+                      const bad = ms.find((s: any) => !s.ok);
+                      return (
+                        <View key={m} style={[styles.metaRow, { marginTop: 6 }]}>
+                          <Text style={{ color: colors.brandSecondary, fontSize: 11 }}>{m}</Text>
+                          <Text
+                            style={{
+                              color: okc > 0 ? colors.onSurfaceSecondary : colors.error,
+                              fontSize: 11, flexShrink: 1, textAlign: "right", marginLeft: 12,
+                            }}
+                          >
+                            {okc > 0 ? `${okc}/${ms.length} anahtar` : `✗ ${bad?.detail || "hata"}`}
+                          </Text>
+                        </View>
+                      );
+                    })}
                     {!geminiCheck.enabled && (
                       <Text style={{ color: colors.error, fontSize: 12, marginTop: 8 }}>
                         Backend hiç anahtar görmüyor — Railway&apos;de GEMINI_API_KEYS ayarlı mı?

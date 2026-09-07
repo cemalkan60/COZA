@@ -162,14 +162,20 @@ def _slot_ok(slot: "_Slot") -> None:
 
 
 def _throttle(key: str) -> None:
-    """Block (calling thread only -- callers use asyncio.to_thread) until at
-    least _MIN_INTERVAL_S has passed since the previous request on `key`."""
+    """Space out requests that reuse the same key by >= _MIN_INTERVAL_S.
+
+    Reserve-then-sleep: the next send-time for `key` is claimed under the
+    lock *before* sleeping, so N threads racing here for the same key queue
+    up at strict _MIN_INTERVAL_S increments instead of all reading the same
+    stale timestamp and firing together (that burst is what earns 429s).
+    Only the calling thread sleeps — callers run this via asyncio.to_thread.
+    """
     with _slot_lock:
-        wait = _key_last_ts.get(key, 0.0) + _MIN_INTERVAL_S - time.monotonic()
+        send_at = max(time.monotonic(), _key_last_ts.get(key, 0.0) + _MIN_INTERVAL_S)
+        _key_last_ts[key] = send_at
+    wait = send_at - time.monotonic()
     if wait > 0:
         time.sleep(wait)
-    with _slot_lock:
-        _key_last_ts[key] = time.monotonic()
 
 
 def _endpoint(model: str) -> str:
@@ -224,52 +230,76 @@ def _generate(parts: list, max_output_tokens: int, timeout: int = 40) -> "Option
     return None
 
 
+def _probe(key: str, model: str, timeout: int) -> dict:
+    """One minimal live generateContent call. ok=True also for 429 (the
+    key/model pairing is valid, its quota is just spent)."""
+    res = {"ok": False, "quota_exhausted": False, "detail": ""}
+    try:
+        r = requests.post(
+            _endpoint(model),
+            params={"key": key},
+            json={
+                "contents": [{"parts": [{"text": "ping"}]}],
+                "generationConfig": {"temperature": 0, "maxOutputTokens": 1},
+            },
+            timeout=timeout,
+        )
+        if r.ok:
+            res["ok"] = True
+            res["detail"] = "ok"
+        elif r.status_code == 429:
+            res["ok"] = True
+            res["quota_exhausted"] = True
+            res["detail"] = "geçerli — kota dolu"
+        else:
+            try:
+                msg = (r.json().get("error") or {}).get("message", "") or r.text[:160]
+            except Exception:  # noqa: BLE001
+                msg = r.text[:160]
+            res["detail"] = f"HTTP {r.status_code}: {msg[:180]}"
+    except Exception as exc:  # noqa: BLE001
+        res["detail"] = f"{type(exc).__name__}: {exc}"
+    return res
+
+
 def check_keys(timeout: int = 12) -> dict:
-    """Diagnostic: fire one minimal live call per configured key (against the
-    first model) so an operator can see which GEMINI_API_KEYS actually work.
-    Never returns key material — keys are identified by 1-based position and
-    a masked 4-char tail only. A 429 counts as a WORKING key that has simply
-    used up its quota for the day.
+    """Diagnostic: probe EVERY (key, model) slot the rotation would use, so an
+    operator can see the real working parallelism — a mistyped key or a
+    non-existent model name shows up here instead of silently cooling itself
+    out during a sweep. Never returns key material (position + 4-char tail
+    only). `keys` keeps the per-key summary (ok if ANY of its models work);
+    `slots` has the full grid.
     """
     out = {
         "enabled": ENABLED,
         "key_count": len(_KEYS),
         "models": list(_MODELS),
         "slot_count": len(_SLOTS),
+        "slots_ok": 0,
         "keys": [],
+        "slots": [],
     }
     if not _KEYS or not _MODELS:
         return out
-    model = _MODELS[0]
     for idx, key in enumerate(_KEYS, 1):
         tail = key[-4:] if len(key) >= 4 else "?"
-        entry = {"index": idx, "tail": tail, "ok": False, "quota_exhausted": False, "detail": ""}
-        try:
-            r = requests.post(
-                _endpoint(model),
-                params={"key": key},
-                json={
-                    "contents": [{"parts": [{"text": "ping"}]}],
-                    "generationConfig": {"temperature": 0, "maxOutputTokens": 1},
-                },
-                timeout=timeout,
-            )
-            if r.ok:
-                entry["ok"] = True
-                entry["detail"] = "ok"
-            elif r.status_code == 429:
-                entry["ok"] = True
-                entry["quota_exhausted"] = True
-                entry["detail"] = "geçerli — günlük ücretsiz kota dolmuş"
-            else:
-                try:
-                    msg = (r.json().get("error") or {}).get("message", "") or r.text[:160]
-                except Exception:  # noqa: BLE001
-                    msg = r.text[:160]
-                entry["detail"] = f"HTTP {r.status_code}: {msg[:180]}"
-        except Exception as exc:  # noqa: BLE001
-            entry["detail"] = f"{type(exc).__name__}: {exc}"
-        out["keys"].append(entry)
+        per_model = []
+        for model in _MODELS:
+            r = _probe(key, model, timeout)
+            per_model.append({"model": model, **r})
+            out["slots"].append({"key_index": idx, "key_tail": tail, "model": model, **r})
+            if r["ok"]:
+                out["slots_ok"] += 1
+        any_ok = any(m["ok"] for m in per_model)
+        all_quota = any_ok and all((not m["ok"]) or m["quota_exhausted"] for m in per_model)
+        detail = next((m["detail"] for m in per_model if not m["ok"]), "ok")
+        out["keys"].append({
+            "index": idx, "tail": tail,
+            "ok": any_ok, "quota_exhausted": all_quota,
+            "models_ok": sum(1 for m in per_model if m["ok"]),
+            "models_total": len(per_model),
+            "detail": "ok" if any_ok else detail,
+        })
     return out
 
 

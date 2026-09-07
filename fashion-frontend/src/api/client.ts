@@ -160,13 +160,17 @@ export const api = {
   // run_fashion_thumbnails_backfill in server.py.
   fashionFixThumbnails: () => request("/admin/fashion-fix-thumbnails", { method: "POST" }, true),
   fashionTagFirstview: () => request("/admin/fashion-tag-firstview", { method: "POST" }, true),
-  // Diagnostic: which GEMINI_API_KEYS on the backend actually work. Returns
-  // { enabled, key_count, models, keys: [{index, tail, ok, quota_exhausted, detail}] }.
+  // Diagnostic: probes every (key, model) slot the tagging rotation uses.
   geminiCheck: (): Promise<{
     enabled: boolean;
     key_count: number;
     models: string[];
     slot_count: number;
-    keys: { index: number; tail: string; ok: boolean; quota_exhausted: boolean; detail: string }[];
+    slots_ok: number;
+    keys: {
+      index: number; tail: string; ok: boolean; quota_exhausted: boolean;
+      models_ok: number; models_total: number; detail: string;
+    }[];
+    slots: { key_index: number; key_tail: string; model: string; ok: boolean; quota_exhausted: boolean; detail: string }[];
   }> => request("/admin/gemini-check", {}, true),
 };
