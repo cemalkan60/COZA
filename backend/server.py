@@ -1376,6 +1376,140 @@ async def admin_gemini_check(admin: Annotated[dict, Depends(require_admin)]):
     return await asyncio.to_thread(gemini_client.check_keys)
 
 
+@api.get("/admin/dashboard")
+async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
+    """Everything the admin panel needs in one call. Admin-only (viewers get
+    403 via require_admin). Read-only; no live Gemini probe here — that stays
+    behind its own button (/admin/gemini-check)."""
+    cap = _TAG_MAX_PHOTOS_PER_DOC
+
+    facet = (await db.fashion.aggregate([{"$facet": {
+        "total": [{"$count": "n"}],
+        "by_source": [
+            {"$unwind": {"path": "$sources", "preserveNullAndEmptyArrays": True}},
+            {"$group": {"_id": {"$ifNull": ["$sources", "?"]}, "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}},
+        ],
+        "by_season": [
+            {"$match": {"season_label": {"$nin": ["", None]}}},
+            {"$group": {"_id": "$season_label", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}, {"$limit": 16},
+        ],
+        "by_category": [
+            {"$group": {"_id": {"$ifNull": ["$category", "?"]}, "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}},
+        ],
+        "by_city": [
+            {"$match": {"city": {"$nin": ["", None]}}},
+            {"$group": {"_id": "$city", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}, {"$limit": 12},
+        ],
+        "photos_by_source": [
+            {"$project": {
+                "n": {"$size": {"$ifNull": ["$images", []]}},
+                "t": {"$size": {"$ifNull": ["$image_tags", []]}},
+                "src": {"$ifNull": [{"$arrayElemAt": ["$sources", 0]}, "?"]},
+            }},
+            {"$group": {
+                "_id": "$src",
+                "photos": {"$sum": "$n"},
+                "tagged": {"$sum": "$t"},
+                "taggable": {"$sum": {"$min": ["$n", cap]}},
+            }},
+            {"$sort": {"taggable": -1}},
+        ],
+        "health": [
+            {"$project": {
+                "n": {"$size": {"$ifNull": ["$images", []]}},
+                "t": {"$size": {"$ifNull": ["$image_tags", []]}},
+                "thumbs": {"$size": {"$ifNull": ["$images_thumb", []]}},
+                "is_fp": {"$ne": [{"$ifNull": ["$fp_source_id", None]}, None]},
+                "gallery_fetched": {"$ifNull": ["$gallery_fetched", False]},
+            }},
+            {"$group": {
+                "_id": None,
+                "single_photo": {"$sum": {"$cond": [{"$lte": ["$n", 1]}, 1, 0]}},
+                "missing_thumbs": {"$sum": {"$cond": [{"$and": [{"$gt": ["$n", 0]}, {"$eq": ["$thumbs", 0]}]}, 1, 0]}},
+                "untagged": {"$sum": {"$cond": [{"$lt": ["$t", {"$min": ["$n", cap]}]}, 1, 0]}},
+                "fp_thin_cover": {"$sum": {"$cond": [
+                    {"$and": ["$is_fp", {"$or": [{"$not": "$gallery_fetched"}, {"$lte": ["$n", _THIN_GALLERY_MAX]}]}]}, 1, 0]}},
+            }},
+        ],
+    }}]).to_list(1))[0]
+
+    def _pairs(rows):
+        return [{"label": (r["_id"] if r["_id"] not in (None, "") else "?"), "count": r["n"]} for r in rows]
+
+    fmeta = await db.meta.find_one({"_id": "fashion"}, {"_id": 0}) or {}
+    smeta = await db.meta.find_one({"_id": "scrape"}, {"_id": 0}) or {}
+
+    ph = {"photos": 0, "tagged": 0, "taggable": 0}
+    for r in facet.get("photos_by_source", []):
+        for k in ph:
+            ph[k] += r.get(k, 0)
+
+    jobs = []
+    for j in scheduler.get_jobs():
+        nrt = getattr(j, "next_run_time", None)
+        jobs.append({"id": j.id, "next_run": nrt.isoformat() if nrt else None})
+
+    users = await db.users.find(
+        {}, {"_id": 0, "password_hash": 0, "id": 0}
+    ).to_list(length=50)
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "collections": {
+            "total": (facet["total"][0]["n"] if facet.get("total") else 0),
+            "by_source": _pairs(facet.get("by_source", [])),
+            "by_season": _pairs(facet.get("by_season", [])),
+            "by_category": _pairs(facet.get("by_category", [])),
+            "by_city": _pairs(facet.get("by_city", [])),
+        },
+        "photos": {
+            **ph,
+            "by_source": [
+                {"label": r["_id"] if r["_id"] not in (None, "") else "?",
+                 "photos": r.get("photos", 0), "tagged": r.get("tagged", 0), "taggable": r.get("taggable", 0)}
+                for r in facet.get("photos_by_source", [])
+            ],
+            "cap_per_collection": cap,
+        },
+        "health": (facet["health"][0] if facet.get("health") else {}),
+        "tagging": {
+            "running": bool(fmeta.get("scraping")) and fmeta.get("phase") in ("tagging_photos", "tagging_firstview"),
+            "phase": fmeta.get("phase"),
+            "run_done": fmeta.get("tags_done", 0),
+            "run_total": fmeta.get("tags_total", 0),
+        },
+        "scrape": {
+            "fashion_last": fmeta.get("last_scrape"),
+            "fashion_running": bool(fmeta.get("scraping")),
+            "fashion_phase": fmeta.get("phase"),
+            "catalog_last": smeta.get("last_scrape"),
+            "scheduled_jobs": jobs,
+        },
+        "gemini": {
+            "enabled": gemini_client.ENABLED,
+            "key_count": len(getattr(gemini_client, "_KEYS", [])),
+            "models": list(getattr(gemini_client, "_MODELS", [])),
+            "batch": _TAG_BATCH,
+        },
+        "users": users,
+        "system": {
+            "db_name": os.environ["DB_NAME"],
+            "counts": {
+                "fashion": await db.fashion.count_documents({}),
+                "products": await db.products.count_documents({}),
+                "origins": await db.origins.count_documents({}),
+                "brand_names": await db.brand_names.count_documents({}),
+                "favorites": await db.favorites.count_documents({}),
+                "users": await db.users.count_documents({}),
+            },
+        },
+    }
+
+
 @api.put("/admin/settings")
 async def update_settings(body: ProxyKeyBody, admin: Annotated[dict, Depends(require_admin)]):
     await db.settings.update_one(
