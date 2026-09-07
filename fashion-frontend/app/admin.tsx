@@ -208,11 +208,21 @@ export default function AdminPanel() {
 
             {/* Veri sağlığı */}
             <Section title="Veri Sağlığı">
+              <Row k={`Pencere · son ${d.window?.recent_months ?? 6} ay`} v={`temizlik: ${fmtWhen(d.window?.last_prune)}`} />
+              <Row k="6 aydan eski (silinecek)" v={d.health.older_than_window ?? 0} danger />
+              <Row k="Tarihsiz (sezon okunamadı)" v={d.health.undated ?? 0} danger />
               <Row k="Etiketsiz koleksiyon" v={d.health.untagged ?? 0} danger />
               <Row k="Küçük resmi eksik" v={d.health.missing_thumbs ?? 0} danger />
               <Row k="Tek fotoğraflı" v={d.health.single_photo ?? 0} danger />
               <Row k="fashion-press · zayıf kapak" v={d.health.fp_thin_cover ?? 0} danger />
               <View style={styles.btnRow}>
+                <Pressable
+                  disabled={!!busy}
+                  onPress={() => runAction("prune", api.fashionPruneOld, "Eski koleksiyonlar temizlendi.")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.error }]}>Eskileri sil</Text>
+                </Pressable>
                 <Pressable
                   disabled={!!busy}
                   onPress={() => runAction("thumbs", api.fashionFixThumbnails, "Küçük resim oluşturma başladı.")}

@@ -160,6 +160,8 @@ export const api = {
   // run_fashion_thumbnails_backfill in server.py.
   fashionFixThumbnails: () => request("/admin/fashion-fix-thumbnails", { method: "POST" }, true),
   fashionTagFirstview: () => request("/admin/fashion-tag-firstview", { method: "POST" }, true),
+  // Delete collections older than the rolling recent-months window.
+  fashionPruneOld: () => request("/admin/fashion-prune", { method: "POST" }, true),
   // Diagnostic: probes every (key, model) slot the tagging rotation uses.
   geminiCheck: (): Promise<{
     enabled: boolean;
@@ -199,7 +201,10 @@ export type AdminDashboard = {
     missing_thumbs?: number;
     untagged?: number;
     fp_thin_cover?: number;
+    older_than_window?: number;
+    undated?: number;
   };
+  window: { recent_months: number; last_prune: string | null };
   tagging: { running: boolean; phase: string | null; run_done: number; run_total: number };
   scrape: {
     fashion_last: string | null;
