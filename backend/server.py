@@ -1837,7 +1837,8 @@ async def fashion_looks(
         {"$match": match},
         {"$project": {
             "_id": 0, "sid": "$source_id", "brand_tr": 1, "season_label": 1,
-            "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1, "season_rank": 1,
+            "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1,
+            "season_rank": 1, "updated_at": 1,
         }},
         {"$unwind": {"path": "$image_tags", "includeArrayIndex": "i"}},
     ]
@@ -1855,9 +1856,11 @@ async def fashion_looks(
                 {"$arrayElemAt": ["$images", "$i"]},
             ]},
             "season_rank": {"$ifNull": ["$season_rank", -1]},
+            "updated_at": {"$ifNull": ["$updated_at", ""]},
         }},
         {"$match": {"image": {"$nin": [None, ""]}}},
-        {"$sort": {"season_rank": -1, "source_id": 1}},
+        # Newest show first, then most recently (re-)scraped, then stable.
+        {"$sort": {"season_rank": -1, "updated_at": -1, "source_id": 1}},
         {"$skip": max(0, skip)},
         {"$limit": _LOOKS_LIMIT},
     ]
@@ -1865,6 +1868,7 @@ async def fashion_looks(
     rows = await db.fashion.aggregate(pipeline).to_list(length=_LOOKS_LIMIT)
     for r in rows:
         r.pop("season_rank", None)
+        r.pop("updated_at", None)
     return {"items": rows}
 
 

@@ -86,6 +86,7 @@ export type FashionLookQuery = {
   color?: string;
   material?: string;
   pattern?: string;
+  skip?: number;
 };
 
 async function request(path: string, init: RequestInit = {}, auth = false) {
@@ -128,6 +129,8 @@ export const api = {
       season?: string;
       category?: string;
       city?: string;
+      source?: string;
+      sort?: "newest" | "oldest" | "updated";
       q?: string;
       skip?: number;
       limit?: number;

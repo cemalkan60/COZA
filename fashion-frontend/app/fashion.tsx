@@ -40,10 +40,12 @@ export default function Fashion() {
   const [season, setSeason] = useState<string | undefined>(undefined);
   const [category, setCategory] = useState<string | undefined>(undefined);
   const [city, setCity] = useState<string | undefined>(undefined);
+  const [source, setSource] = useState<string | undefined>(undefined);
+  const [sort, setSort] = useState<"newest" | "oldest" | "updated">("newest");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [openModal, setOpenModal] = useState<"city" | "season" | null>(null);
+  const [openModal, setOpenModal] = useState<"city" | "season" | "source" | "sort" | null>(null);
 
   const PAGE_SIZE = 40;
 
@@ -52,7 +54,7 @@ export default function Fashion() {
       if (refresh) setRefreshing(true);
       try {
         const [feed, stats] = await Promise.all([
-          api.fashionCollections({ season, category, city, limit: PAGE_SIZE }),
+          api.fashionCollections({ season, category, city, source, sort, limit: PAGE_SIZE }),
           api.fashionAnalytics(),
         ]);
         setItems(feed.items || []);
@@ -65,7 +67,7 @@ export default function Fashion() {
         setRefreshing(false);
       }
     },
-    [season, category, city],
+    [season, category, city, source, sort],
   );
 
   const loadMore = useCallback(async () => {
@@ -76,6 +78,8 @@ export default function Fashion() {
         season,
         category,
         city,
+        source,
+        sort,
         skip: items.length,
         limit: PAGE_SIZE,
       });
@@ -86,7 +90,7 @@ export default function Fashion() {
     } finally {
       setLoadingMore(false);
     }
-  }, [season, category, city, items.length, total, loadingMore]);
+  }, [season, category, city, source, sort, items.length, total, loadingMore]);
 
   useEffect(() => {
     setLoading(true);
@@ -100,6 +104,19 @@ export default function Fashion() {
   // that city by the time the list was rebuilt.
   const seasonChips = analytics?.season_options || [];
   const cityChips = analytics?.cities || [];
+
+  const SORT_OPTS = [
+    { value: "newest", label: "En Yeni" },
+    { value: "oldest", label: "En Eski" },
+    { value: "updated", label: "Son Güncellenen" },
+  ];
+  const SOURCE_OPTS = [
+    { value: "", label: "Tüm Kaynaklar" },
+    { value: "firstview", label: "FirstView" },
+    { value: "fashion-press", label: "fashion-press" },
+  ];
+  const sortLabel = SORT_OPTS.find((o) => o.value === sort)?.label || "Sırala";
+  const sourceLabel = source ? SOURCE_OPTS.find((o) => o.value === source)?.label : undefined;
 
   // show all items (no 6-limit)
   const slots = items;
@@ -159,30 +176,48 @@ export default function Fashion() {
             ))}
           </ScrollView>
 
-          {(cityChips.length > 0 || seasonChips.length > 0) && (
-            <View style={{ flexDirection: "row", paddingHorizontal: spacing.xl, gap: 8, paddingBottom: 14 }}>
-              {cityChips.length > 0 && (
-                <FilterPill
-                  testID="fashion-filter-city"
-                  label="Şehir"
-                  value={city}
-                  active={!!city}
-                  onPress={() => setOpenModal("city")}
-                  colors={colors}
-                />
-              )}
-              {seasonChips.length > 0 && (
-                <FilterPill
-                  testID="fashion-filter-season"
-                  label="Sezon"
-                  value={season ? seasonChips.find((s) => s.code === season)?.label : undefined}
-                  active={!!season}
-                  onPress={() => setOpenModal("season")}
-                  colors={colors}
-                />
-              )}
-            </View>
-          )}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ flexDirection: "row", paddingHorizontal: spacing.xl, gap: 8, paddingBottom: 14 }}
+          >
+            <FilterPill
+              testID="fashion-filter-sort"
+              label={sortLabel}
+              value={sortLabel}
+              active={sort !== "newest"}
+              onPress={() => setOpenModal("sort")}
+              colors={colors}
+            />
+            <FilterPill
+              testID="fashion-filter-source"
+              label="Kaynak"
+              value={sourceLabel}
+              active={!!source}
+              onPress={() => setOpenModal("source")}
+              colors={colors}
+            />
+            {seasonChips.length > 0 && (
+              <FilterPill
+                testID="fashion-filter-season"
+                label="Sezon"
+                value={season ? seasonChips.find((s) => s.code === season)?.label : undefined}
+                active={!!season}
+                onPress={() => setOpenModal("season")}
+                colors={colors}
+              />
+            )}
+            {cityChips.length > 0 && (
+              <FilterPill
+                testID="fashion-filter-city"
+                label="Şehir"
+                value={city}
+                active={!!city}
+                onPress={() => setOpenModal("city")}
+                colors={colors}
+              />
+            )}
+          </ScrollView>
 
           {items.length === 0 ? (
             <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
@@ -225,18 +260,34 @@ export default function Fashion() {
       <FashionFilterModal
         visible={openModal !== null}
         onClose={() => setOpenModal(null)}
-        title={openModal === "city" ? "Şehir" : "Sezon"}
+        title={
+          openModal === "city" ? "Şehir"
+            : openModal === "season" ? "Sezon"
+              : openModal === "source" ? "Kaynak"
+                : "Sırala"
+        }
         colors={colors}
         bottomInset={insets.bottom}
         options={
           openModal === "city"
             ? [{ value: "", label: "Tüm Şehirler" }, ...cityChips.map((c) => ({ value: c, label: c }))]
-            : [{ value: "", label: "Tüm Sezonlar" }, ...seasonChips.map((s) => ({ value: s.code, label: s.label }))]
+            : openModal === "season"
+              ? [{ value: "", label: "Tüm Sezonlar" }, ...seasonChips.map((s) => ({ value: s.code, label: s.label }))]
+              : openModal === "source"
+                ? SOURCE_OPTS
+                : SORT_OPTS
         }
-        selected={(openModal === "city" ? city : season) || ""}
+        selected={
+          openModal === "city" ? city || ""
+            : openModal === "season" ? season || ""
+              : openModal === "source" ? source || ""
+                : sort
+        }
         onSelect={(v) => {
           if (openModal === "city") setCity(v || undefined);
           else if (openModal === "season") setSeason(v || undefined);
+          else if (openModal === "source") setSource(v || undefined);
+          else if (openModal === "sort") setSort((v || "newest") as "newest" | "oldest" | "updated");
           setOpenModal(null);
         }}
       />

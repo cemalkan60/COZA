@@ -49,8 +49,12 @@ export default function FashionSearch() {
   const [items, setItems] = useState<FashionLookItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [openModal, setOpenModal] = useState<FilterKey | null>(null);
   const [viewerItem, setViewerItem] = useState<FashionLookItem | null>(null);
+
+  const PAGE = 90;
 
   useEffect(() => {
     api
@@ -65,9 +69,12 @@ export default function FashionSearch() {
       else setLoading(true);
       try {
         const res = await api.fashionLooks({ gender: gender || undefined, ...selected });
-        setItems(res.items || []);
+        const list = res.items || [];
+        setItems(list);
+        setHasMore(list.length >= PAGE);
       } catch {
         setItems([]);
+        setHasMore(false);
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -75,6 +82,21 @@ export default function FashionSearch() {
     },
     [gender, selected],
   );
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await api.fashionLooks({ gender: gender || undefined, ...selected, skip: items.length });
+      const list = res.items || [];
+      setItems((cur) => [...cur, ...list]);
+      setHasMore(list.length >= PAGE);
+    } catch {
+      /* sessizce geç */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [gender, selected, items.length, hasMore, loadingMore]);
 
   useEffect(() => {
     load();
@@ -210,17 +232,38 @@ export default function FashionSearch() {
               </Text>
             </View>
           ) : (
-            <View style={[styles.grid, { gap, paddingHorizontal: gridPad, paddingTop: 6 }]}>
-              {items.map((it, idx) => (
-                <LookCard
-                  key={`${it.source_id}-${idx}`}
-                  item={it}
-                  width={cardWidth}
-                  colors={colors}
-                  onPress={() => setViewerItem(it)}
-                />
-              ))}
-            </View>
+            <>
+              <View style={[styles.grid, { gap, paddingHorizontal: gridPad, paddingTop: 6 }]}>
+                {items.map((it, idx) => (
+                  <LookCard
+                    key={`${it.source_id}-${idx}`}
+                    item={it}
+                    width={cardWidth}
+                    colors={colors}
+                    onPress={() => setViewerItem(it)}
+                  />
+                ))}
+              </View>
+              {hasMore && (
+                <Pressable
+                  testID="look-load-more"
+                  onPress={loadMore}
+                  disabled={loadingMore}
+                  style={[
+                    styles.loadMoreBtn,
+                    { borderColor: colors.border, marginHorizontal: spacing.xl, opacity: loadingMore ? 0.6 : 1 },
+                  ]}
+                >
+                  {loadingMore ? (
+                    <ActivityIndicator color={colors.onSurface} size="small" />
+                  ) : (
+                    <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
+                      Daha Fazla Yükle ({items.length})
+                    </Text>
+                  )}
+                </Pressable>
+              )}
+            </>
           )}
         </ScrollView>
       )}
@@ -417,6 +460,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   grid: { flexDirection: "row", flexWrap: "wrap" },
+  loadMoreBtn: {
+    height: 44,
+    borderWidth: 1,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 14,
+  },
   cardImageWrap: {
     width: "100%",
     aspectRatio: 5 / 7,
