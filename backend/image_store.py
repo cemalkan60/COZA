@@ -36,11 +36,13 @@ import os
 import json
 import hashlib
 import logging
+import threading
 import time
 from typing import Optional
 from urllib.parse import urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
 
 logger = logging.getLogger("coza.image_store")
 
@@ -115,6 +117,26 @@ _DOWNLOAD_HEADERS = {
         "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
     ),
 }
+
+# One pooled requests.Session per worker thread. cache_images_with_thumb runs
+# this module across a ThreadPoolExecutor, and a plain requests.get() opens a
+# fresh TCP+TLS connection on every call — thousands of them per backfill, all
+# to the same handful of hosts (the source sites and the R2 public subdomain).
+# A per-thread pooled Session reuses connections instead. Thread-local, so no
+# Session object is ever touched by two threads at once.
+_thread_local = threading.local()
+
+
+def _http() -> requests.Session:
+    s = getattr(_thread_local, "session", None)
+    if s is None:
+        s = requests.Session()
+        adapter = HTTPAdapter(pool_connections=8, pool_maxsize=8)
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
+        _thread_local.session = s
+    return s
+
 
 _clients: dict = {}
 
@@ -234,13 +256,15 @@ def ensure_cors_configured() -> None:
             logger.warning("image_store: failed to set CORS on %s: %s", acc["bucket"], exc)
 
 
-def _wait_until_publicly_readable(public_url: str, attempts: int = 5, delay: float = 0.35) -> None:
+def _wait_until_publicly_readable(public_url: str, attempts: int = 4, delay: float = 0.2) -> None:
     """R2's public subdomain briefly 503s an object right after upload while
     it propagates to the edge — poll until it serves so a caller never gets
-    a URL that momentarily 404/503s. Best-effort and bounded."""
+    a URL that momentarily 404/503s. Best-effort and bounded; returns as soon
+    as one probe succeeds (the common case), so the full budget is only spent
+    on the slow minority."""
     for _ in range(attempts):
         try:
-            if requests.head(public_url, timeout=5).status_code < 400:
+            if _http().head(public_url, timeout=5).status_code < 400:
                 return
         except Exception:
             pass
@@ -285,7 +309,7 @@ def cache_image(source_url: str) -> str:
         return public_url
 
     try:
-        resp = requests.get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
+        resp = _http().get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
         body, ctype = _cap_fullres(resp.content, resp.headers.get("Content-Type", "image/jpeg"))
         client.put_object(Bucket=acc["bucket"], Key=key, Body=body, ContentType=ctype or "image/jpeg")
@@ -318,7 +342,7 @@ def cache_image_with_thumb(source_url: str) -> tuple:
         return full_url, thumb_url
 
     try:
-        resp = requests.get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
+        resp = _http().get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
         content = resp.content
         content_type = resp.headers.get("Content-Type", "image/jpeg")
@@ -367,7 +391,7 @@ def backfill_thumb(full_url: str) -> Optional[str]:
     if _object_exists(client, acc["bucket"], thumb_key):
         return thumb_url
     try:
-        resp = requests.get(full_url, headers=_DOWNLOAD_HEADERS, timeout=20)
+        resp = _http().get(full_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
         client.put_object(
             Bucket=acc["bucket"], Key=thumb_key,
