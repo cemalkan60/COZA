@@ -1959,11 +1959,11 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
 
 
 # How many photos of one collection's gallery to bother tagging. A runway
-# gallery routinely holds 50-120 shots that are mostly front/back/detail
-# angles of the same ~20 outfits, so tagging every last one triples the
-# Gemini spend for almost no extra filter coverage. The first N (the ones
-# most likely to actually surface in the look feed) are enough.
-_TAG_MAX_PHOTOS_PER_DOC = int(os.environ.get("FASHION_TAG_MAX_PHOTOS_PER_DOC", "24"))
+# gallery routinely holds 50-120 shots that include front/back/detail
+# angles of the same outfits, so tagging every last one costs a lot of
+# Gemini spend for diminishing filter coverage. The first N (the ones most
+# likely to actually surface in the look feed) are the sweet spot.
+_TAG_MAX_PHOTOS_PER_DOC = int(os.environ.get("FASHION_TAG_MAX_PHOTOS_PER_DOC", "40"))
 # Photos per Gemini request (see gemini_client.tag_images — the free tier's
 # ceiling is requests/day, so batching is the main throughput lever).
 _TAG_BATCH = int(os.environ.get("GEMINI_TAG_BATCH", "6"))
