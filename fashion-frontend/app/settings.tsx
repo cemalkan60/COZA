@@ -261,6 +261,15 @@ export default function Settings() {
             </View>
 
             <Pressable
+              testID="open-admin-panel"
+              onPress={() => router.push("/admin")}
+              style={[styles.refreshBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
+            >
+              <Feather name="bar-chart-2" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>Admin Panel</Text>
+            </Pressable>
+
+            <Pressable
               testID="fashion-refresh-data"
               onPress={triggerScrape}
               disabled={scraping}

@@ -173,4 +173,42 @@ export const api = {
     }[];
     slots: { key_index: number; key_tail: string; model: string; ok: boolean; quota_exhausted: boolean; detail: string }[];
   }> => request("/admin/gemini-check", {}, true),
+  // Everything the admin dashboard renders, in one call. Admin-only (403 for viewers).
+  adminDashboard: (): Promise<AdminDashboard> => request("/admin/dashboard", {}, true),
+};
+
+type LabelCount = { label: string; count: number };
+export type AdminDashboard = {
+  generated_at: string;
+  collections: {
+    total: number;
+    by_source: LabelCount[];
+    by_season: LabelCount[];
+    by_category: LabelCount[];
+    by_city: LabelCount[];
+  };
+  photos: {
+    photos: number;
+    tagged: number;
+    taggable: number;
+    cap_per_collection: number;
+    by_source: { label: string; photos: number; tagged: number; taggable: number }[];
+  };
+  health: {
+    single_photo?: number;
+    missing_thumbs?: number;
+    untagged?: number;
+    fp_thin_cover?: number;
+  };
+  tagging: { running: boolean; phase: string | null; run_done: number; run_total: number };
+  scrape: {
+    fashion_last: string | null;
+    fashion_running: boolean;
+    fashion_phase: string | null;
+    catalog_last: string | null;
+    scheduled_jobs: { id: string; next_run: string | null }[];
+  };
+  gemini: { enabled: boolean; key_count: number; models: string[]; batch: number };
+  users: { email?: string; name?: string; role?: string }[];
+  system: { db_name: string; counts: Record<string, number> };
 };
