@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Platform } from "react-native";
 import { Image, type ImageProps } from "expo-image";
 
 // Neither caching (query-bust retries, cachePolicy="none") nor a guaranteed
@@ -18,11 +19,30 @@ import { Image, type ImageProps } from "expo-image";
 // anything that looks like a browser, even though the object itself is
 // perfectly fine and public. Sending the same browser User-Agent the
 // backend already uses successfully is the fix this points to.
+//
+// NATIVE ONLY. On web an <img> already carries the browser's real
+// User-Agent, so this header buys nothing there -- and worse, passing
+// `headers` at all flips expo-image's web renderer from a plain <img>
+// (cross-origin images just display) to a fetch()+blob-URL path that IS
+// subject to CORS. That left every card blank on the Vercel web build
+// while the exact same URL loaded fine as a bare <img>. So the helpers
+// below (fashionImageSource / FASHION_IMAGE_CACHE_POLICY) drop both the
+// header and the cache bypass (which shares that same fragile fetch path)
+// on web, leaving the plain-<img> behaviour the web build had before this
+// workaround existed.
 export const FASHION_IMAGE_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 " +
     "(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
 };
+
+// Native: real headers + cache bypass (see above). Web: neither — a plain
+// <img> load, which is what actually works there.
+export function fashionImageSource(uri: string) {
+  return Platform.OS === "web" ? { uri } : { uri, headers: FASHION_IMAGE_HEADERS };
+}
+export const FASHION_IMAGE_CACHE_POLICY: ImageProps["cachePolicy"] =
+  Platform.OS === "web" ? undefined : "none";
 
 // Retrying on error with a cache-busting query param (instead of the same
 // URI) hands expo-image a fresh cache key, so a genuinely-transient
@@ -52,15 +72,16 @@ export default function RetryImage({ uri, ...rest }: Props) {
   return (
     <Image
       {...rest}
-      source={{ uri: bustedUri, headers: FASHION_IMAGE_HEADERS }}
-      // Bypass the disk cache entirely for these photos. A stale/failed
-      // disk-cache entry from before the R2 object recovered was suspected
-      // as one way this could keep failing forever on a given device even
-      // after the underlying photo is fine again everywhere else; forcing
-      // every load through the network (no disk read, no disk write) rules
-      // that out completely rather than relying on the cache-busting query
-      // param above to always be enough on every OS/version.
-      cachePolicy="none"
+      source={fashionImageSource(bustedUri)}
+      // Native: bypass the disk cache entirely for these photos. A
+      // stale/failed disk-cache entry from before the R2 object recovered
+      // was suspected as one way this could keep failing forever on a given
+      // device even after the underlying photo is fine again everywhere
+      // else; forcing every load through the network (no disk read, no disk
+      // write) rules that out completely rather than relying on the
+      // cache-busting query param above to always be enough on every
+      // OS/version. Web keeps the default policy (see fashionImageSource).
+      cachePolicy={FASHION_IMAGE_CACHE_POLICY}
       onError={() => {
         setAttempt((a) => (a < MAX_RETRIES ? a + 1 : a));
       }}

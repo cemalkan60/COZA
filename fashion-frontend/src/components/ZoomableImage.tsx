@@ -2,13 +2,15 @@ import React, { forwardRef, useEffect, useImperativeHandle, useState } from "rea
 import { View } from "react-native";
 import { Image, type ImageContentFit } from "expo-image";
 
-import { FASHION_IMAGE_HEADERS } from "./RetryImage";
+import { fashionImageSource, FASHION_IMAGE_CACHE_POLICY } from "./RetryImage";
 
 // See RetryImage's comment for why this retry-with-cache-bust dance (and
-// the browser User-Agent header below) is needed -- this component can't
-// just reuse RetryImage directly (it's wrapped in the pan/pinch gesture
-// view below and needs its own `uri` prop name kept stable for callers),
-// so the same handful of lines are duplicated here instead.
+// the native-only browser User-Agent header / cache bypass, both carried
+// by the fashionImageSource + FASHION_IMAGE_CACHE_POLICY helpers) is
+// needed -- this component can't just reuse RetryImage directly (it's
+// wrapped in the pan/pinch gesture view below and needs its own `uri`
+// prop name kept stable for callers), so the same handful of lines are
+// duplicated here instead.
 const MAX_IMAGE_RETRIES = 2;
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -205,10 +207,10 @@ export const ZoomableImage = forwardRef<
       <GestureDetector gesture={composed}>
         <Animated.View style={[{ width, height }, animatedStyle]}>
           <Image
-            source={{ uri: bustedUri, headers: FASHION_IMAGE_HEADERS }}
+            source={fashionImageSource(bustedUri)}
             style={{ width, height }}
             contentFit={contentFit}
-            cachePolicy="none"
+            cachePolicy={FASHION_IMAGE_CACHE_POLICY}
             onError={() => setImgAttempt((a) => (a < MAX_IMAGE_RETRIES ? a + 1 : a))}
           />
         </Animated.View>
