@@ -28,6 +28,7 @@ import nowfashion_scraper
 import firstview_scraper
 import image_store
 import gemini_client
+import fashion_tag_map
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -1783,7 +1784,7 @@ async def fashion_looks_filters(user: Annotated[dict, Depends(get_current_user)]
     return fashion_scraper.looks_filters()
 
 
-_LOOKS_CACHE_TTL = timedelta(hours=6)
+_LOOKS_LIMIT = 90
 
 
 @api.get("/fashion/looks")
@@ -1795,44 +1796,64 @@ async def fashion_looks(
     color: Optional[str] = None,
     material: Optional[str] = None,
     pattern: Optional[str] = None,
+    skip: int = 0,
 ):
-    """Coordinate search ("kombin arama"): live-filtered single runway photos.
+    """Coordinate search ("kombin arama"): single runway photos, filtered by
+    item / color / material / pattern / season / gender.
 
-    Proxies fashion-press.net's own /collections/looks filter, cached briefly
-    per unique filter combination so repeated searches don't re-hit the source
-    site on every request.
+    Served from our OWN db.fashion — every collection's Gemini photo tags
+    (see gemini_client.tag_images + run_fashion_tag_photos), exploded to one
+    result per tagged photo — so FirstView shows up here too, not just
+    fashion-press. The filter vocabulary is still fashion-press's (see
+    fashion_scraper.LOOKS_*); fashion_tag_map bridges it to the looser words
+    Gemini actually writes. Only photos that have been tagged so far appear;
+    coverage fills in as the nightly tag sweep runs.
     """
-    params = {
-        "gender": gender,
-        "season": season,
-        "item": item,
-        "color": color,
-        "material": material,
-        "pattern": pattern,
-    }
-    params = {k: v for k, v in params.items() if v}
-    cache_key = "&".join(f"{k}={v}" for k, v in sorted(params.items())) or "_all"
+    match: dict = {}
+    if season:
+        match["season"] = season.upper()
+    if gender == "female":
+        match["category"] = {"$in": ["women", "haute-couture"]}
+    elif gender == "male":
+        match["category"] = "men"
 
-    cached = await db.fashion_looks_cache.find_one({"_id": cache_key})
-    if cached and cached.get("fetched_at"):
-        fetched_at = datetime.fromisoformat(cached["fetched_at"])
-        if datetime.now(timezone.utc) - fetched_at < _LOOKS_CACHE_TTL:
-            return {"items": cached["items"]}
+    tconds = fashion_tag_map.tag_match_conditions(item=item, color=color, material=material, pattern=pattern)
+    if tconds:
+        match["image_tags"] = {"$elemMatch": tconds}
 
-    try:
-        items = await asyncio.to_thread(fashion_scraper.fetch_looks, params)
-    except Exception:
-        logger.exception("fashion looks fetch failed for %r", params)
-        if cached:
-            return {"items": cached["items"]}
-        raise HTTPException(502, "Kıyafet arama şu anda kullanılamıyor.")
+    pipeline: list = [
+        {"$match": match},
+        {"$project": {
+            "_id": 0, "sid": "$source_id", "brand_tr": 1, "season_label": 1,
+            "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1, "season_rank": 1,
+        }},
+        {"$unwind": {"path": "$image_tags", "includeArrayIndex": "i"}},
+    ]
+    if tconds:
+        # After $unwind, image_tags is one object — keep only matching photos.
+        pipeline.append({"$match": {f"image_tags.{k}": v for k, v in tconds.items()}})
+    pipeline += [
+        {"$project": {
+            "source_id": {"$concat": ["$sid", "#", {"$toString": "$i"}]},
+            "url": {"$ifNull": ["$url", ""]},
+            "brand_tr": {"$ifNull": ["$brand_tr", ""]},
+            "season_text_tr": {"$ifNull": ["$season_label", ""]},
+            "image": {"$ifNull": [
+                {"$arrayElemAt": ["$images_thumb", "$i"]},
+                {"$arrayElemAt": ["$images", "$i"]},
+            ]},
+            "season_rank": {"$ifNull": ["$season_rank", -1]},
+        }},
+        {"$match": {"image": {"$nin": [None, ""]}}},
+        {"$sort": {"season_rank": -1, "source_id": 1}},
+        {"$skip": max(0, skip)},
+        {"$limit": _LOOKS_LIMIT},
+    ]
 
-    await db.fashion_looks_cache.update_one(
-        {"_id": cache_key},
-        {"$set": {"items": items, "fetched_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True,
-    )
-    return {"items": items}
+    rows = await db.fashion.aggregate(pipeline).to_list(length=_LOOKS_LIMIT)
+    for r in rows:
+        r.pop("season_rank", None)
+    return {"items": rows}
 
 
 @api.get("/fashion/analytics")
