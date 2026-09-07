@@ -1,6 +1,6 @@
 // frontend/app/admin.tsx — admin-only dashboard. Viewers are redirected out
 // (and the backend /admin/* endpoints 403 them anyway).
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
@@ -36,6 +36,40 @@ function fmtWhen(iso: string | null | undefined): string {
   return `${formatDate(iso)} · ${diff >= 0 ? rel + " sonra" : rel + " önce"}`;
 }
 
+const PHASE_LABELS: Record<string, string> = {
+  collecting: "Kaynaklar taranıyor",
+  finalizing: "Fotoğraflar indiriliyor / kaydediliyor",
+  fixing_covers: "Kapaklar düzeltiliyor",
+  generating_thumbnails: "Küçük resimler oluşturuluyor",
+  merging_duplicates: "Yinelenenler birleştiriliyor",
+  tagging_photos: "Fotoğraflar yapay zekayla etiketleniyor",
+  tagging_firstview: "Fotoğraflar yapay zekayla etiketleniyor",
+};
+
+// A single 0-100 for whatever fashion job is running. A full scrape is
+// collecting (0->12%) then finalizing (12->100%); the one-off sweeps each
+// report their own fraction.
+function scrapeProgress(d: AdminDashboard): { pct: number | null; label: string; detail: string } {
+  const phase = d.scrape.fashion_phase || "";
+  const p = d.scrape.progress;
+  const label = PHASE_LABELS[phase] || (phase ? phase : "Çalışıyor");
+  const frac = (a: number, b: number) => (b > 0 ? Math.min(1, a / b) : 0);
+  if (!p) return { pct: null, label, detail: "" };
+  if (phase === "collecting")
+    return { pct: Math.round(12 * frac(p.sources_done, p.sources_total)), label, detail: `${p.sources_done}/${p.sources_total} kaynak` };
+  if (phase === "finalizing")
+    return { pct: Math.round(12 + 88 * frac(p.groups_done, p.groups_total)), label, detail: `${p.groups_done}/${p.groups_total} koleksiyon` };
+  if (phase === "fixing_covers")
+    return { pct: Math.round(100 * frac(p.covers_done, p.covers_total)), label, detail: `${p.covers_done}/${p.covers_total}` };
+  if (phase === "generating_thumbnails")
+    return { pct: Math.round(100 * frac(p.thumbs_done, p.thumbs_total)), label, detail: `${p.thumbs_done}/${p.thumbs_total}` };
+  if (phase === "merging_duplicates")
+    return { pct: Math.round(100 * frac(p.merge_done, p.merge_total)), label, detail: `${p.merge_done}/${p.merge_total}` };
+  if (phase === "tagging_photos" || phase === "tagging_firstview")
+    return { pct: Math.round(100 * frac(d.tagging.run_done, d.tagging.run_total)), label, detail: `${d.tagging.run_done}/${d.tagging.run_total}` };
+  return { pct: null, label, detail: "" };
+}
+
 export default function AdminPanel() {
   const { colors, spacing, fontSize } = useTheme();
   const insets = useSafeAreaInsets();
@@ -67,6 +101,15 @@ export default function AdminPanel() {
       load();
     }, [load]),
   );
+
+  // While a scrape or the tag sweep is running, poll every 5s so the
+  // progress bar moves without pull-to-refresh.
+  const busyNow = !!data && (data.scrape.fashion_running || data.tagging.running);
+  useEffect(() => {
+    if (!busyNow) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [busyNow, load]);
 
   const runAction = async (key: string, fn: () => Promise<any>, note: string) => {
     setBusy(key);
@@ -149,6 +192,30 @@ export default function AdminPanel() {
                 fontSize={fontSize}
               />
             </View>
+
+            {/* Canlı ilerleme — sadece bir iş çalışırken */}
+            {(d.scrape.fashion_running || d.tagging.running) && (() => {
+              const prog = scrapeProgress(d);
+              return (
+                <View style={[styles.card, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border, marginTop: spacing.lg }]}>
+                  <View style={styles.row}>
+                    <Text style={{ color: colors.onSurface, fontWeight: "700", fontSize: fontSize.sm }}>{prog.label}</Text>
+                    <Text style={{ color: colors.onSurface, fontWeight: "800", fontSize: fontSize.sm }}>
+                      {prog.pct != null ? `%${prog.pct}` : "…"}
+                    </Text>
+                  </View>
+                  <View style={{ marginTop: 6 }}>
+                    <ProgressBar value={prog.pct ?? 0} max={100} />
+                  </View>
+                  {!!prog.detail && (
+                    <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 6 }}>{prog.detail}</Text>
+                  )}
+                  <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 4 }}>
+                    otomatik yenilenir · 5 sn
+                  </Text>
+                </View>
+              );
+            })()}
 
             {/* Etiketleme */}
             <Section title="Yapay Zeka Etiketleme">

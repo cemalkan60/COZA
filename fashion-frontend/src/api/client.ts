@@ -215,6 +215,13 @@ export type AdminDashboard = {
     fashion_phase: string | null;
     catalog_last: string | null;
     scheduled_jobs: { id: string; next_run: string | null }[];
+    progress?: {
+      sources_done: number; sources_total: number;
+      groups_done: number; groups_total: number;
+      covers_done: number; covers_total: number;
+      thumbs_done: number; thumbs_total: number;
+      merge_done: number; merge_total: number;
+    };
   };
   gemini: { enabled: boolean; key_count: number; models: string[]; batch: number };
   users: { email?: string; name?: string; role?: string }[];

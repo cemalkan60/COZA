@@ -1605,6 +1605,19 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
             "fashion_phase": fmeta.get("phase"),
             "catalog_last": smeta.get("last_scrape"),
             "scheduled_jobs": jobs,
+            # Raw per-phase counters for a live progress %.
+            "progress": {
+                "sources_done": fmeta.get("sources_done", 0),
+                "sources_total": fmeta.get("sources_total", 0),
+                "groups_done": fmeta.get("groups_done", 0),
+                "groups_total": fmeta.get("groups_total", 0),
+                "covers_done": fmeta.get("covers_done", 0),
+                "covers_total": fmeta.get("covers_total", 0),
+                "thumbs_done": fmeta.get("thumbs_done", 0),
+                "thumbs_total": fmeta.get("thumbs_total", 0),
+                "merge_done": fmeta.get("merge_done", 0),
+                "merge_total": fmeta.get("merge_total", 0),
+            },
         },
         "gemini": {
             "enabled": gemini_client.ENABLED,
