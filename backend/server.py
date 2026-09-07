@@ -759,6 +759,23 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 logger.exception("Fashion scrape source failed (%s)", label)
             await db.meta.update_one({"_id": "fashion"}, {"$inc": {"sources_done": 1}})
 
+        # Drop anything already outside the rolling window BEFORE the
+        # expensive finalize / R2-cache / tag steps — a backfill's season
+        # slugs and firstview year filter still pull in older shows that the
+        # nightly prune would just delete hours later. Items whose season
+        # doesn't parse (rank < 0) pass through, same rule as the prune.
+        _floor = _min_recent_season_rank()
+        _pre = len(raw_items)
+        raw_items = [
+            r for r in raw_items
+            if (lambda rk: rk < 0 or rk >= _floor)(_season_rank(r.get("season") or ""))
+        ]
+        if _pre != len(raw_items):
+            logger.info(
+                "Fashion scrape (%s): dropped %d raw item(s) older than the %d-month window",
+                reason, _pre - len(raw_items), FASHION_RECENT_MONTHS,
+            )
+
         by_source: dict = {}
         for r in raw_items:
             by_source[r.get("source", "?")] = by_source.get(r.get("source", "?"), 0) + 1
