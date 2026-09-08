@@ -153,9 +153,9 @@ export default function FashionSearch() {
         <Pressable testID="fashion-search-back" onPress={() => router.back()} hitSlop={10}>
           <Feather name="chevron-left" size={26} color={colors.onSurface} />
         </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.title, { color: colors.onSurface }]}>Kombin Arama</Text>
-          <Text style={[styles.helper, { color: colors.brandSecondary }]}>Koleksiyon koordinasyon araması</Text>
+        <View style={{ flex: 1, flexDirection: "row", alignItems: "baseline" }}>
+          <Text style={[styles.title, { color: colors.onSurface, letterSpacing: 3, fontWeight: "800" }]}>COZA</Text>
+          <Text style={[styles.title, { color: colors.brandSecondary, letterSpacing: 3, fontWeight: "300", marginLeft: 6 }]}>LENS</Text>
         </View>
       </View>
 
@@ -228,7 +228,7 @@ export default function FashionSearch() {
           {items.length === 0 ? (
             <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
               <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
-                Bu filtreye uygun kombin bulunamadı.
+                Bu filtreye uygun sonuç bulunamadı.
               </Text>
             </View>
           ) : (

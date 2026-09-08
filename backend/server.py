@@ -240,6 +240,10 @@ def _normalize_fashion_item(raw: dict) -> Optional[dict]:
         # Kept on the doc so a later season-parser fix can be re-applied
         # without re-scraping (see _reparse_seasons_if_needed).
         "title_ja": raw.get("title_ja") or "",
+        # Position in the source's newest-first listing (0 = newest); the
+        # feed / look search sort by this within a season. Big default so an
+        # item without one never jumps to the top.
+        "feed_seq": raw.get("feed_seq", 10**6),
         "season": season,
         "season_label": raw.get("season_label") or fashion_scraper._season_label_tr(season),
         "category": category,
@@ -535,6 +539,7 @@ def _group_fashion_items(raw_items: list) -> tuple:
                 "brand_tr": item["brand_tr"],
                 "title_tr": item["title_tr"],
                 "title_ja": item.get("title_ja") or "",
+                "feed_seq": item.get("feed_seq", 10**6),
                 "season": item["season"],
                 "season_label": item["season_label"],
                 "season_rank": _season_rank(item["season"]),
@@ -546,6 +551,7 @@ def _group_fashion_items(raw_items: list) -> tuple:
             }
             groups[key] = g
         g["images"].extend(item["images"])
+        g["feed_seq"] = min(g["feed_seq"], item.get("feed_seq", 10**6))
         if item["city"] and not g["city"]:
             g["city"] = item["city"]
         if item["source"] and item["source"] not in g["sources"]:
@@ -570,6 +576,7 @@ def _group_fashion_items(raw_items: list) -> tuple:
             other = groups.pop(dup_key)
             obsolete.add(dup_key)
             canonical["images"].extend(other["images"])
+            canonical["feed_seq"] = min(canonical.get("feed_seq", 10**6), other.get("feed_seq", 10**6))
             for s in other["sources"]:
                 if s not in canonical["sources"]:
                     canonical["sources"].append(s)
@@ -988,6 +995,12 @@ async def _migrate_fashion_schema():
         logger.warning("Fashion: season re-parse timed out (>20s) — skipping, will retry next startup.")
     except Exception:
         logger.exception("Fashion: season re-parse failed.")
+    try:
+        await asyncio.wait_for(_backfill_feed_seq(), timeout=20)
+    except asyncio.TimeoutError:
+        logger.warning("Fashion: feed_seq backfill timed out (>20s) — skipping, will retry next startup.")
+    except Exception:
+        logger.exception("Fashion: feed_seq backfill failed.")
 
 
 async def _backfill_season_rank():
@@ -1001,6 +1014,26 @@ async def _backfill_season_rank():
         ]
         await db.fashion.bulk_write(ops, ordered=False)
         logger.info("Fashion: backfilled season_rank on %d document(s).", len(stale))
+
+
+async def _backfill_feed_seq():
+    """Give docs saved before feed_seq existed a one-time value so the
+    "newest first" feed isn't alphabetical until the next scrape re-lists
+    them. Best available proxy: season DESC, then discovery time DESC."""
+    missing = await db.fashion.find(
+        {"feed_seq": {"$exists": False}},
+        {"_id": 0, "source_id": 1, "season_rank": 1, "first_seen": 1, "updated_at": 1},
+    ).to_list(length=None)
+    if not missing:
+        return
+    missing.sort(key=lambda d: (d.get("first_seen") or d.get("updated_at") or ""), reverse=True)
+    missing.sort(key=lambda d: (d.get("season_rank") if d.get("season_rank") is not None else -1), reverse=True)
+    ops = [
+        UpdateOne({"source_id": d["source_id"]}, {"$set": {"feed_seq": i}})
+        for i, d in enumerate(missing)
+    ]
+    await db.fashion.bulk_write(ops, ordered=False)
+    logger.info("Fashion: backfilled feed_seq on %d document(s).", len(ops))
 
 
 async def _reparse_seasons_if_needed():
@@ -1760,8 +1793,10 @@ async def fashion_image_proxy(url: str):
 
 
 _LOOKS_SORTS = {
-    "newest": [("season_rank", -1), ("updated_at", -1), ("source_id", -1)],
-    "oldest": [("season_rank", 1), ("updated_at", 1), ("source_id", 1)],
+    # feed_seq = position in the source's newest-first listing (0 = newest),
+    # so within a season the most recently shown collection lands on top.
+    "newest": [("season_rank", -1), ("feed_seq", 1), ("updated_at", -1), ("source_id", 1)],
+    "oldest": [("season_rank", 1), ("feed_seq", -1), ("updated_at", 1), ("source_id", 1)],
     "updated": [("updated_at", -1), ("season_rank", -1), ("source_id", -1)],
 }
 
@@ -1933,7 +1968,7 @@ async def fashion_looks(
         {"$project": {
             "_id": 0, "sid": "$source_id", "brand_tr": 1, "season_label": 1,
             "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1,
-            "season_rank": 1, "updated_at": 1,
+            "season_rank": 1, "updated_at": 1, "feed_seq": 1,
         }},
         {"$unwind": {"path": "$image_tags", "includeArrayIndex": "i"}},
     ]
@@ -1951,11 +1986,13 @@ async def fashion_looks(
                 {"$arrayElemAt": ["$images", "$i"]},
             ]},
             "season_rank": {"$ifNull": ["$season_rank", -1]},
+            "feed_seq": {"$ifNull": ["$feed_seq", 1000000]},
             "updated_at": {"$ifNull": ["$updated_at", ""]},
         }},
         {"$match": {"image": {"$nin": [None, ""]}}},
-        # Newest show first, then most recently (re-)scraped, then stable.
-        {"$sort": {"season_rank": -1, "updated_at": -1, "source_id": 1}},
+        # Newest show first: season, then the source's listing position
+        # (0 = newest), then re-scrape time, then stable.
+        {"$sort": {"season_rank": -1, "feed_seq": 1, "updated_at": -1, "source_id": 1}},
         {"$skip": max(0, skip)},
         {"$limit": _LOOKS_LIMIT},
     ]
@@ -1963,6 +2000,7 @@ async def fashion_looks(
     rows = await db.fashion.aggregate(pipeline).to_list(length=_LOOKS_LIMIT)
     for r in rows:
         r.pop("season_rank", None)
+        r.pop("feed_seq", None)
         r.pop("updated_at", None)
     return {"items": rows}
 
@@ -2826,6 +2864,7 @@ async def on_startup():
     await db.fashion.create_index("season")
     await db.fashion.create_index("category")
     await db.fashion.create_index("city")
+    await db.fashion.create_index([("season_rank", -1), ("feed_seq", 1)])
     await seed_users()
     # A CronTrigger built standalone (as below) does NOT inherit the
     # scheduler's `timezone=` — it defaults to the host's local system time,

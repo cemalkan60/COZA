@@ -260,7 +260,7 @@ def _finish_items(raw: list, category: str) -> list:
     items get grouped into collections (see run_fashion_scrape).
     """
     items = []
-    for r in raw:
+    for i, r in enumerate(raw):
         title_ja = r["title_ja"]
         season = _normalize_season(title_ja)
         brand_ja = _brand_ja_from_title(title_ja)
@@ -279,6 +279,9 @@ def _finish_items(raw: list, category: str) -> list:
                 "category": category,
                 "city": None,  # not exposed anywhere on this site
                 "source": "fashion-press",
+                # Position in the source's newest-first listing (0 = newest).
+                # Lower wins on merge; the feed sorts by it within a season.
+                "feed_seq": i,
             }
         )
     return items
