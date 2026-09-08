@@ -2866,6 +2866,10 @@ async def on_startup():
         id="scheduled_fashion_prune", replace_existing=True,
     )
     scheduler.start()
+    # A scrape/sweep can't survive a process restart, so a lingering
+    # scraping:true here (e.g. the box was OOM-killed mid-backfill) is
+    # always stale — clear it so the UI doesn't show a frozen progress bar.
+    await db.meta.update_one({"_id": "fashion", "scraping": True}, {"$set": {"scraping": False, "phase": "interrupted"}})
     await _seed_if_empty()
     await _migrate_fashion_schema()
     await _dedupe_existing_fashion_docs()
