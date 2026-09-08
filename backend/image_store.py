@@ -283,17 +283,41 @@ def ensure_cors_configured() -> None:
             )
 
 
+_cors_probe_cache: dict = {}  # public_base -> (checked_at, ok, detail)
+
+
 def cors_status() -> list:
-    """Per-bucket CORS state for the admin panel."""
+    """Per-bucket CORS state for the admin panel — the REAL test: a browser
+    CORS preflight against the public URL (needs no credentials), so it
+    reflects a policy set by hand in the Cloudflare dashboard, not just
+    whether our API token could call put_bucket_cors. Cached 2 min."""
     out = []
     for i, acc in enumerate(_ACCOUNTS, 1):
-        st = _cors_state.get(acc["account_id"])
+        base = acc["public_base_url"]
+        cached = _cors_probe_cache.get(base)
+        if cached and (time.time() - cached[0] < 120):
+            _, ok, detail = cached
+        else:
+            ok, detail = False, ""
+            try:
+                r = requests.options(
+                    f"{base}/_corsprobe",
+                    headers={"Origin": "https://coza.app", "Access-Control-Request-Method": "GET"},
+                    timeout=6,
+                )
+                if r.headers.get("access-control-allow-origin"):
+                    ok = True
+                else:
+                    detail = f"no ACAO header (HTTP {r.status_code})"
+            except Exception as exc:  # noqa: BLE001
+                detail = f"{type(exc).__name__}"
+            _cors_probe_cache[base] = (time.time(), ok, detail)
         out.append({
             "index": i,
             "bucket": acc["bucket"],
-            "host": (urlparse(acc["public_base_url"]).hostname or ""),
-            "ok": st is True,
-            "detail": "" if st is True else (st or "not checked"),
+            "host": (urlparse(base).hostname or ""),
+            "ok": ok,
+            "detail": detail,
         })
     return out
 

@@ -1655,6 +1655,8 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
         {}, {"_id": 0, "password_hash": 0, "id": 0}
     ).to_list(length=50)
 
+    cors_rows = await asyncio.to_thread(image_store.cors_status) if hasattr(image_store, "cors_status") else []
+
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "collections": {
@@ -1718,7 +1720,7 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
                 "buckets": len(getattr(image_store, "_ACCOUNTS", [])),
                 "hosts": sorted(getattr(image_store, "PUBLIC_HOSTNAMES", set())),
                 "fullres_max_px": getattr(image_store, "_FULLRES_MAX_WIDTH", None),
-                "cors": image_store.cors_status() if hasattr(image_store, "cors_status") else [],
+                "cors": cors_rows,
             },
             "counts": {
                 "fashion": await db.fashion.count_documents({}),
