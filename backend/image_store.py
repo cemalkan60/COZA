@@ -245,27 +245,57 @@ def _object_exists(client, bucket: str, key: str) -> bool:
         return False
 
 
-_cors_checked = False
+# Per-account CORS state: None = not tried, True = set OK, str = last error.
+# expo-image's web renderer loads photos with crossOrigin="anonymous", so a
+# bucket with no CORS policy shows BLANK on web even though the URL is fine
+# in a plain <img>. A new account's API token is often "Object Read & Write"
+# only, which can't call put_bucket_cors — so this now retries on every
+# startup (not one-shot) and the error is surfaced (cors_status()).
+_cors_state: dict = {}
+
+_CORS_RULES = {"CORSRules": [{
+    "AllowedOrigins": ["*"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "MaxAgeSeconds": 86400,
+}]}
 
 
 def ensure_cors_configured() -> None:
-    """Allow browsers to load photos straight from every R2 bucket. Runs
-    once per process, best-effort per account."""
-    global _cors_checked
-    if _cors_checked or not ENABLED:
+    """Try to set the browser-load CORS policy on every bucket that isn't
+    known-good yet. Safe to call on every startup."""
+    if not ENABLED:
         return
-    _cors_checked = True
-    rules = {"CORSRules": [{
-        "AllowedOrigins": ["*"],
-        "AllowedMethods": ["GET", "HEAD"],
-        "AllowedHeaders": ["*"],
-        "MaxAgeSeconds": 86400,
-    }]}
     for acc in _ACCOUNTS:
+        aid = acc["account_id"]
+        if _cors_state.get(aid) is True:
+            continue
         try:
-            _client_for(acc).put_bucket_cors(Bucket=acc["bucket"], CORSConfiguration=rules)
+            _client_for(acc).put_bucket_cors(Bucket=acc["bucket"], CORSConfiguration=_CORS_RULES)
+            _cors_state[aid] = True
+            logger.info("image_store: CORS policy set on %s", acc["bucket"])
         except Exception as exc:  # noqa: BLE001
-            logger.warning("image_store: failed to set CORS on %s: %s", acc["bucket"], exc)
+            _cors_state[aid] = f"{type(exc).__name__}: {exc}"
+            logger.error(
+                "image_store: could NOT set CORS on %s (%s) — web images from this "
+                "bucket will be blank until you add the policy in the Cloudflare "
+                "dashboard (Settings -> CORS Policy).", acc["bucket"], exc,
+            )
+
+
+def cors_status() -> list:
+    """Per-bucket CORS state for the admin panel."""
+    out = []
+    for i, acc in enumerate(_ACCOUNTS, 1):
+        st = _cors_state.get(acc["account_id"])
+        out.append({
+            "index": i,
+            "bucket": acc["bucket"],
+            "host": (urlparse(acc["public_base_url"]).hostname or ""),
+            "ok": st is True,
+            "detail": "" if st is True else (st or "not checked"),
+        })
+    return out
 
 
 def _wait_until_publicly_readable(public_url: str, attempts: int = 5, delay: float = 0.35) -> None:

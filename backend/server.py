@@ -1718,6 +1718,7 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
                 "buckets": len(getattr(image_store, "_ACCOUNTS", [])),
                 "hosts": sorted(getattr(image_store, "PUBLIC_HOSTNAMES", set())),
                 "fullres_max_px": getattr(image_store, "_FULLRES_MAX_WIDTH", None),
+                "cors": image_store.cors_status() if hasattr(image_store, "cors_status") else [],
             },
             "counts": {
                 "fashion": await db.fashion.count_documents({}),

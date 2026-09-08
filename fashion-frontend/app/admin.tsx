@@ -381,6 +381,14 @@ export default function AdminPanel() {
               {!!d.system.r2 && (
                 <Row k="R2 · foto max boyut" v={d.system.r2.fullres_max_px ? `${d.system.r2.fullres_max_px}px` : "—"} />
               )}
+              {(d.system.r2?.cors ?? []).map((c) => (
+                <Row
+                  key={c.index}
+                  k={`R2 CORS · kova ${c.index} (${c.host})`}
+                  v={c.ok ? "✓ ayarlı" : "✗ " + (c.detail || "yok")}
+                  danger={!c.ok}
+                />
+              ))}
               {Object.entries(d.system.counts).map(([k, v]) => (
                 <Row key={k} k={k} v={v} />
               ))}

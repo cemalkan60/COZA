@@ -232,7 +232,10 @@ export type AdminDashboard = {
   users: { email?: string; name?: string; role?: string }[];
   system: {
     db_name: string;
-    r2?: { enabled: boolean; buckets: number; hosts: string[]; fullres_max_px: number | null };
+    r2?: {
+      enabled: boolean; buckets: number; hosts: string[]; fullres_max_px: number | null;
+      cors?: { index: number; bucket: string; host: string; ok: boolean; detail: string }[];
+    };
     counts: Record<string, number>;
   };
 };
