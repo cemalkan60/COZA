@@ -197,39 +197,44 @@ def _account_for_url(public_url: str) -> "Optional[dict]":
     return None
 
 
-def _make_thumbnail(content: bytes) -> bytes:
-    """Resize photo bytes to a small JPEG for grid/list display."""
-    from io import BytesIO
-    from PIL import Image
+def _derive_variants(content: bytes, content_type: str) -> tuple:
+    """From one download, produce (full_bytes, full_ctype, thumb_bytes).
 
-    img = Image.open(BytesIO(content))
-    img = img.convert("RGB")
-    img.thumbnail((_THUMB_MAX_WIDTH, _THUMB_MAX_WIDTH * 3))
-    out = BytesIO()
-    img.save(out, format="JPEG", quality=78, optimize=True)
-    return out.getvalue()
-
-
-def _cap_fullres(content: bytes, content_type: str) -> tuple:
-    """Downscale a stored photo's longest edge to <= _FULLRES_MAX_WIDTH and
-    re-encode JPEG q82. Returns (bytes, content_type). No-op (original bytes
-    unchanged) if it's already small enough or Pillow can't decode it — a
-    resize failure must never cost us the photo."""
+    Memory-frugal on purpose — this runs many-at-once during a scrape and
+    OOM-killed the box once: ONE PIL decode, JPEG draft-mode so the decoder
+    downscales while reading (a big runway JPEG never becomes a full-size
+    bitmap in RAM), then shrink the same image in place — full-res save
+    first, then further down to the thumbnail. No .copy(), no second open.
+    On any Pillow failure the original bytes are stored as-is and the thumb
+    falls back to them, so a decode problem never costs the photo.
+    """
     try:
         from io import BytesIO
         from PIL import Image
 
         img = Image.open(BytesIO(content))
-        if max(img.size) <= _FULLRES_MAX_WIDTH:
-            return content, content_type
+        if (img.format or "").upper() == "JPEG":
+            # decoder downscales to ~this size while reading the file
+            img.draft("RGB", (_FULLRES_MAX_WIDTH, _FULLRES_MAX_WIDTH))
         img = img.convert("RGB")
-        img.thumbnail((_FULLRES_MAX_WIDTH, _FULLRES_MAX_WIDTH))
-        out = BytesIO()
-        img.save(out, format="JPEG", quality=82, optimize=True)
-        return out.getvalue(), "image/jpeg"
+
+        if max(img.size) > _FULLRES_MAX_WIDTH:
+            img.thumbnail((_FULLRES_MAX_WIDTH, _FULLRES_MAX_WIDTH))
+            fb = BytesIO()
+            img.save(fb, format="JPEG", quality=82, optimize=True)
+            full_bytes, full_ctype = fb.getvalue(), "image/jpeg"
+        else:
+            full_bytes, full_ctype = content, content_type
+
+        img.thumbnail((_THUMB_MAX_WIDTH, _THUMB_MAX_WIDTH * 3))  # same img, further down
+        tb = BytesIO()
+        img.save(tb, format="JPEG", quality=78, optimize=True)
+        thumb_bytes = tb.getvalue()
+        img.close()
+        return full_bytes, full_ctype, thumb_bytes
     except Exception as exc:  # noqa: BLE001
-        logger.warning("image_store: could not downscale a photo (%s) — storing as-is", exc)
-        return content, content_type
+        logger.warning("image_store: could not process a photo (%s) — storing as-is", exc)
+        return content, content_type, content
 
 
 def _object_exists(client, bucket: str, key: str) -> bool:
@@ -316,7 +321,7 @@ def cache_image(source_url: str) -> str:
     try:
         resp = _http().get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
-        body, ctype = _cap_fullres(resp.content, resp.headers.get("Content-Type", "image/jpeg"))
+        body, ctype, _ = _derive_variants(resp.content, resp.headers.get("Content-Type", "image/jpeg"))
         client.put_object(Bucket=acc["bucket"], Key=key, Body=body, ContentType=ctype or "image/jpeg")
         _wait_until_publicly_readable(public_url)
         return public_url
@@ -349,26 +354,24 @@ def cache_image_with_thumb(source_url: str) -> tuple:
     try:
         resp = _http().get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
-        content = resp.content
-        content_type = resp.headers.get("Content-Type", "image/jpeg")
+        full_body, full_ctype, thumb_body = _derive_variants(
+            resp.content, resp.headers.get("Content-Type", "image/jpeg")
+        )
+        del resp
     except Exception as exc:  # noqa: BLE001
         logger.warning("image_store: failed to download %s: %s", source_url, exc)
         return source_url, source_url
 
     if not full_exists:
         try:
-            body, ctype = _cap_fullres(content, content_type)
-            client.put_object(Bucket=acc["bucket"], Key=full_key, Body=body, ContentType=ctype or "image/jpeg")
+            client.put_object(Bucket=acc["bucket"], Key=full_key, Body=full_body, ContentType=full_ctype or "image/jpeg")
         except Exception as exc:  # noqa: BLE001
             logger.warning("image_store: failed to upload full %s: %s", source_url, exc)
             return source_url, source_url
 
     if not thumb_exists:
         try:
-            client.put_object(
-                Bucket=acc["bucket"], Key=thumb_key,
-                Body=_make_thumbnail(content), ContentType="image/jpeg",
-            )
+            client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg")
         except Exception as exc:  # noqa: BLE001
             logger.warning("image_store: failed to make/upload thumb for %s: %s", source_url, exc)
             thumb_url = full_url
@@ -398,17 +401,21 @@ def backfill_thumb(full_url: str) -> Optional[str]:
     try:
         resp = _http().get(full_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
-        client.put_object(
-            Bucket=acc["bucket"], Key=thumb_key,
-            Body=_make_thumbnail(resp.content), ContentType="image/jpeg",
-        )
+        _, _, thumb_body = _derive_variants(resp.content, "image/jpeg")
+        client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg")
         return thumb_url
     except Exception as exc:  # noqa: BLE001
         logger.warning("image_store: failed to backfill thumb for %s: %s", full_url, exc)
         return None
 
 
-def cache_images_with_thumb(urls: list, max_workers: int = 6) -> list:
+# Modest by default — this runs inside a per-collection semaphore in
+# server.py, so real image-decode concurrency is this x that. Too high and
+# the box OOM-kills mid-scrape (seen live). Both are env-tunable.
+_CACHE_WORKERS = int(os.environ.get("R2_CACHE_WORKERS", "3"))
+
+
+def cache_images_with_thumb(urls: list, max_workers: int = None) -> list:
     """cache_image_with_thumb over a whole gallery concurrently. Returns a
     list of (full_url, thumb_url) tuples in the same order as `urls`."""
     if not urls:
@@ -417,5 +424,6 @@ def cache_images_with_thumb(urls: list, max_workers: int = 6) -> list:
         return [cache_image_with_thumb(urls[0])]
     from concurrent.futures import ThreadPoolExecutor
 
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(urls))) as pool:
+    workers = min(max_workers or _CACHE_WORKERS, len(urls))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(cache_image_with_thumb, urls))

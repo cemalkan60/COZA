@@ -449,7 +449,12 @@ def _dedupe_images_phash(urls: list, threshold: int = 6) -> list:
             resp = requests.get(u, headers=fashion_scraper.HEADERS, timeout=15)
             resp.raise_for_status()
             content = resp.content
-            h = imagehash.phash(Image.open(io.BytesIO(content)))
+            im = Image.open(io.BytesIO(content))
+            # phash only needs a 32x32 — let the JPEG decoder downscale
+            # while reading so a big runway photo isn't a full bitmap in RAM.
+            if (im.format or "").upper() == "JPEG":
+                im.draft("L", (128, 128))
+            h = imagehash.phash(im)
             entries.append((u, h, len(content)))
         except Exception:  # noqa: BLE001
             entries.append((u, None, 0))
@@ -616,6 +621,11 @@ def _finalize_fashion_group(g: dict) -> dict:
 
 
 _FINALIZE_TIMEOUT_S = 90
+# How many collections' photo sets are downloaded + PIL-processed + uploaded
+# at once. Each of those runs its own small pool inside image_store
+# (_CACHE_WORKERS), so real concurrent image decodes ≈ this × that. Kept
+# low: the box OOM-killed itself mid-backfill at 8. Env-tunable.
+_IMG_WORK_CONCURRENCY = int(os.environ.get("FASHION_IMG_CONCURRENCY", "3"))
 
 
 async def _finalize_and_save_group(g: dict, sem: asyncio.Semaphore, now_iso: str) -> bool:
@@ -836,7 +846,7 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
             # at a time) — sequential per-photo network calls here are what
             # made a full scrape take 30-90+ minutes before, with nothing
             # visible in the app until every single group was done.
-            sem = asyncio.Semaphore(8)
+            sem = asyncio.Semaphore(_IMG_WORK_CONCURRENCY)
             results = await asyncio.gather(
                 *(_finalize_and_save_group(g, sem, now_iso) for g in groups)
             )
@@ -2144,7 +2154,7 @@ async def run_fashion_cover_fix() -> dict:
         )
 
         fixed = 0
-        sem = asyncio.Semaphore(6)
+        sem = asyncio.Semaphore(_IMG_WORK_CONCURRENCY)
 
         async def _run_one(d: dict):
             nonlocal fixed
@@ -2238,7 +2248,7 @@ async def run_fashion_thumbnails_backfill() -> dict:
         )
 
         fixed = 0
-        sem = asyncio.Semaphore(8)
+        sem = asyncio.Semaphore(_IMG_WORK_CONCURRENCY)
 
         async def _run_one(d: dict):
             nonlocal fixed
@@ -2733,7 +2743,7 @@ async def run_fashion_merge_duplicates() -> dict:
             upsert=True,
         )
 
-        sem = asyncio.Semaphore(6)
+        sem = asyncio.Semaphore(_IMG_WORK_CONCURRENCY)
         docs_removed = 0
         images_dropped = 0
 
