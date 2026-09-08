@@ -2279,11 +2279,11 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
 # bounding a pathological doc. Lower it via env if Gemini quota gets tight.
 _TAG_MAX_PHOTOS_PER_DOC = int(os.environ.get("FASHION_TAG_MAX_PHOTOS_PER_DOC", "400"))
 # Photos per Gemini request (see gemini_client.tag_images). The free tier's
-# ceiling is requests/DAY, and model rotation turned out to be a dead end
-# (only one lite model still exists), so packing more photos per request is
-# now the main lever besides adding API keys. 8 is a safe spot for
-# flash-lite; a batch that comes back malformed just retries next sweep.
-_TAG_BATCH = int(os.environ.get("GEMINI_TAG_BATCH", "8"))
+# ceiling is requests/DAY, so packing more photos per request stretches it —
+# but flash-lite gets flaky returning a clean N-object JSON array past ~6
+# images (malformed reply -> whole batch wasted -> quota spent for nothing),
+# so 6 is the sweet spot. Raise via env once a better model is available.
+_TAG_BATCH = int(os.environ.get("GEMINI_TAG_BATCH", "6"))
 # Wall-clock budget for one tag_images() call, scaled by batch size. Generous
 # on purpose: a batch that's waiting out a per-key throttle delay, or slot
 # cooldowns forcing rotation, can otherwise look timed-out when it was only
