@@ -240,10 +240,6 @@ def _normalize_fashion_item(raw: dict) -> Optional[dict]:
         # Kept on the doc so a later season-parser fix can be re-applied
         # without re-scraping (see _reparse_seasons_if_needed).
         "title_ja": raw.get("title_ja") or "",
-        # Position in the source's newest-first listing (0 = newest); the
-        # feed / look search sort by this within a season. Big default so an
-        # item without one never jumps to the top.
-        "feed_seq": raw.get("feed_seq", 10**6),
         "season": season,
         "season_label": raw.get("season_label") or fashion_scraper._season_label_tr(season),
         "category": category,
@@ -549,7 +545,6 @@ def _group_fashion_items(raw_items: list) -> tuple:
                 "brand_tr": item["brand_tr"],
                 "title_tr": item["title_tr"],
                 "title_ja": item.get("title_ja") or "",
-                "feed_seq": item.get("feed_seq", 10**6),
                 "season": item["season"],
                 "season_label": item["season_label"],
                 "season_rank": _season_rank(item["season"]),
@@ -561,7 +556,6 @@ def _group_fashion_items(raw_items: list) -> tuple:
             }
             groups[key] = g
         g["images"].extend(item["images"])
-        g["feed_seq"] = min(g["feed_seq"], item.get("feed_seq", 10**6))
         if item["city"] and not g["city"]:
             g["city"] = item["city"]
         if item["source"] and item["source"] not in g["sources"]:
@@ -586,7 +580,6 @@ def _group_fashion_items(raw_items: list) -> tuple:
             other = groups.pop(dup_key)
             obsolete.add(dup_key)
             canonical["images"].extend(other["images"])
-            canonical["feed_seq"] = min(canonical.get("feed_seq", 10**6), other.get("feed_seq", 10**6))
             for s in other["sources"]:
                 if s not in canonical["sources"]:
                     canonical["sources"].append(s)
@@ -605,7 +598,18 @@ def _group_fashion_items(raw_items: list) -> tuple:
             ):
                 canonical["category"] = other["category"]
 
-    return list(groups.values()), obsolete
+    # Global newest-first ordering for the whole feed / look search: season
+    # DESC, then the source's own collection id DESC (higher = added more
+    # recently — a reliable recency proxy). Stamped as feed_seq so a doc's
+    # position is a single number to sort on, and consistent with
+    # _backfill_feed_seq (which seeds the same order for docs no scrape has
+    # re-listed yet).
+    result = list(groups.values())
+    result.sort(key=_source_collection_id, reverse=True)
+    result.sort(key=lambda g: (g.get("season_rank") if g.get("season_rank") is not None else -1), reverse=True)
+    for i, g in enumerate(result):
+        g["feed_seq"] = i
+    return result, obsolete
 
 
 def _finalize_fashion_group(g: dict) -> dict:
@@ -1006,9 +1010,12 @@ async def _migrate_fashion_schema():
     except Exception:
         logger.exception("Fashion: season re-parse failed.")
     try:
-        await asyncio.wait_for(_backfill_feed_seq(), timeout=20)
+        flag = await db.meta.find_one({"_id": "feed_seq_migration_v2"})
+        if not flag:
+            await asyncio.wait_for(_backfill_feed_seq(), timeout=25)
+            await db.meta.update_one({"_id": "feed_seq_migration_v2"}, {"$set": {"done_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
     except asyncio.TimeoutError:
-        logger.warning("Fashion: feed_seq backfill timed out (>20s) — skipping, will retry next startup.")
+        logger.warning("Fashion: feed_seq backfill timed out — skipping, will retry next startup.")
     except Exception:
         logger.exception("Fashion: feed_seq backfill failed.")
     try:
@@ -1038,24 +1045,37 @@ async def _backfill_season_rank():
         logger.info("Fashion: backfilled season_rank on %d document(s).", len(stale))
 
 
+def _source_collection_id(doc: dict) -> int:
+    """The source site's own monotonically-increasing collection id (higher
+    = added more recently). fashion-press stores it as fp_source_id;
+    firstview's is the ?id= in the collection URL. 0 if neither is found."""
+    fp = doc.get("fp_source_id")
+    if fp is not None and str(fp).isdigit():
+        return int(fp)
+    m = re.search(r"[?&]id=(\d+)", doc.get("url") or "")
+    return int(m.group(1)) if m else 0
+
+
 async def _backfill_feed_seq():
-    """Give docs saved before feed_seq existed a one-time value so the
-    "newest first" feed isn't alphabetical until the next scrape re-lists
-    them. Best available proxy: season DESC, then discovery time DESC."""
-    missing = await db.fashion.find(
-        {"feed_seq": {"$exists": False}},
-        {"_id": 0, "source_id": 1, "season_rank": 1, "first_seen": 1, "updated_at": 1},
+    """(Re)assign feed_seq to EVERY doc so "newest first" isn't alphabetical
+    until scrapes re-list them with a real listing position. Ranks by
+    season DESC, then the source's own collection id DESC (a reliable
+    recency proxy — unlike first_seen, which a full backfill stamps
+    uniformly). A later scrape overwrites the newest docs with their true
+    listing index."""
+    docs = await db.fashion.find(
+        {}, {"_id": 0, "source_id": 1, "season_rank": 1, "fp_source_id": 1, "url": 1},
     ).to_list(length=None)
-    if not missing:
+    if not docs:
         return
-    missing.sort(key=lambda d: (d.get("first_seen") or d.get("updated_at") or ""), reverse=True)
-    missing.sort(key=lambda d: (d.get("season_rank") if d.get("season_rank") is not None else -1), reverse=True)
+    docs.sort(key=_source_collection_id, reverse=True)
+    docs.sort(key=lambda d: (d.get("season_rank") if d.get("season_rank") is not None else -1), reverse=True)
     ops = [
         UpdateOne({"source_id": d["source_id"]}, {"$set": {"feed_seq": i}})
-        for i, d in enumerate(missing)
+        for i, d in enumerate(docs)
     ]
     await db.fashion.bulk_write(ops, ordered=False)
-    logger.info("Fashion: backfilled feed_seq on %d document(s).", len(ops))
+    logger.info("Fashion: (re)assigned feed_seq on %d document(s).", len(ops))
 
 
 async def _reparse_seasons_if_needed():

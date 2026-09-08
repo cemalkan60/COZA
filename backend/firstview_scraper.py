@@ -304,9 +304,6 @@ def scrape_category(
             if result:
                 items.append(result)
 
-    # Position in firstview's newest-first ("b=date") listing (0 = newest).
-    for i, it in enumerate(items):
-        it["feed_seq"] = i
 
     logger.info(
         "firstview: scraped %d %s collections%s", len(items), category, f" (year {year}, {page} page(s))" if year else ""
