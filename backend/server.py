@@ -1980,6 +1980,7 @@ async def fashion_looks(
     color: Optional[str] = None,
     material: Optional[str] = None,
     pattern: Optional[str] = None,
+    q: Optional[str] = None,
     skip: int = 0,
 ):
     """Coordinate search ("kombin arama"): single runway photos, filtered by
@@ -2000,6 +2001,9 @@ async def fashion_looks(
         match["category"] = {"$in": ["women", "haute-couture"]}
     elif gender == "male":
         match["category"] = "men"
+    if q and q.strip():
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        match["$or"] = [{"brand_tr": rx}, {"title_tr": rx}, {"season_label": rx}, {"city": rx}]
 
     tconds = fashion_tag_map.tag_match_conditions(item=item, color=color, material=material, pattern=pattern)
     if tconds:

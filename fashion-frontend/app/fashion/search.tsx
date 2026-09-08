@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
 } from "react-native";
@@ -53,8 +54,15 @@ export default function FashionSearch() {
   const [hasMore, setHasMore] = useState(false);
   const [openModal, setOpenModal] = useState<FilterKey | null>(null);
   const [viewerItem, setViewerItem] = useState<FashionLookItem | null>(null);
+  const [q, setQ] = useState("");
+  const [qActive, setQActive] = useState("");
 
   const PAGE = 90;
+
+  useEffect(() => {
+    const t = setTimeout(() => setQActive(q.trim()), 350);
+    return () => clearTimeout(t);
+  }, [q]);
 
   useEffect(() => {
     api
@@ -68,7 +76,7 @@ export default function FashionSearch() {
       if (refresh) setRefreshing(true);
       else setLoading(true);
       try {
-        const res = await api.fashionLooks({ gender: gender || undefined, ...selected });
+        const res = await api.fashionLooks({ gender: gender || undefined, ...selected, q: qActive || undefined });
         const list = res.items || [];
         setItems(list);
         setHasMore(list.length >= PAGE);
@@ -80,14 +88,14 @@ export default function FashionSearch() {
         setRefreshing(false);
       }
     },
-    [gender, selected],
+    [gender, selected, qActive],
   );
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const res = await api.fashionLooks({ gender: gender || undefined, ...selected, skip: items.length });
+      const res = await api.fashionLooks({ gender: gender || undefined, ...selected, q: qActive || undefined, skip: items.length });
       const list = res.items || [];
       setItems((cur) => [...cur, ...list]);
       setHasMore(list.length >= PAGE);
@@ -96,12 +104,12 @@ export default function FashionSearch() {
     } finally {
       setLoadingMore(false);
     }
-  }, [gender, selected, items.length, hasMore, loadingMore]);
+  }, [gender, selected, qActive, items.length, hasMore, loadingMore]);
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gender, selected]);
+  }, [gender, selected, qActive]);
 
   const setFilter = (key: FilterKey, value: string) => {
     setSelected((s) => ({ ...s, [key]: value }));
@@ -156,6 +164,28 @@ export default function FashionSearch() {
         <View style={{ flex: 1, flexDirection: "row", alignItems: "baseline" }}>
           <Text style={[styles.title, { color: colors.onSurface, letterSpacing: 3, fontWeight: "800" }]}>COZA</Text>
           <Text style={[styles.title, { color: colors.brandSecondary, letterSpacing: 3, fontWeight: "300", marginLeft: 6 }]}>LENS</Text>
+        </View>
+      </View>
+
+      <View style={{ paddingHorizontal: spacing.xl, paddingTop: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
+        <View style={[styles.searchBar, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <Feather name="search" size={16} color={colors.brandSecondary} />
+          <TextInput
+            testID="look-search-input"
+            value={q}
+            onChangeText={setQ}
+            placeholder="Marka, sezon ara…"
+            placeholderTextColor={colors.brandSecondary}
+            style={{ flex: 1, color: colors.onSurface, fontSize: 14, paddingVertical: 8 }}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {!!q && (
+            <Pressable onPress={() => setQ("")} hitSlop={8}>
+              <Feather name="x" size={16} color={colors.brandSecondary} />
+            </Pressable>
+          )}
         </View>
       </View>
 
@@ -460,6 +490,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   grid: { flexDirection: "row", flexWrap: "wrap" },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
   loadMoreBtn: {
     height: 44,
     borderWidth: 1,

@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
   Dimensions,
 } from "react-native";
@@ -42,6 +43,8 @@ export default function Fashion() {
   const [city, setCity] = useState<string | undefined>(undefined);
   const [source, setSource] = useState<string | undefined>(undefined);
   const [sort, setSort] = useState<"newest" | "oldest" | "updated">("newest");
+  const [q, setQ] = useState("");
+  const [qActive, setQActive] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -49,12 +52,18 @@ export default function Fashion() {
 
   const PAGE_SIZE = 40;
 
+  // debounce the text box -> qActive (what actually gets queried)
+  useEffect(() => {
+    const t = setTimeout(() => setQActive(q.trim()), 350);
+    return () => clearTimeout(t);
+  }, [q]);
+
   const load = useCallback(
     async (refresh = false) => {
       if (refresh) setRefreshing(true);
       try {
         const [feed, stats] = await Promise.all([
-          api.fashionCollections({ season, category, city, source, sort, limit: PAGE_SIZE }),
+          api.fashionCollections({ season, category, city, source, sort, q: qActive || undefined, limit: PAGE_SIZE }),
           api.fashionAnalytics(),
         ]);
         setItems(feed.items || []);
@@ -67,7 +76,7 @@ export default function Fashion() {
         setRefreshing(false);
       }
     },
-    [season, category, city, source, sort],
+    [season, category, city, source, sort, qActive],
   );
 
   const loadMore = useCallback(async () => {
@@ -80,6 +89,7 @@ export default function Fashion() {
         city,
         source,
         sort,
+        q: qActive || undefined,
         skip: items.length,
         limit: PAGE_SIZE,
       });
@@ -90,7 +100,7 @@ export default function Fashion() {
     } finally {
       setLoadingMore(false);
     }
-  }, [season, category, city, source, sort, items.length, total, loadingMore]);
+  }, [season, category, city, source, sort, qActive, items.length, total, loadingMore]);
 
   useEffect(() => {
     setLoading(true);
@@ -151,6 +161,29 @@ export default function Fashion() {
         >
           <Feather name="settings" size={18} color={colors.onSurface} />
         </Pressable>
+      </View>
+
+      {/* Serbest metin arama */}
+      <View style={[styles.searchWrap, { paddingHorizontal: spacing.xl, borderBottomColor: colors.divider }]}>
+        <View style={[styles.searchBar, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <Feather name="search" size={16} color={colors.brandSecondary} />
+          <TextInput
+            testID="fashion-search-input"
+            value={q}
+            onChangeText={setQ}
+            placeholder="Marka, sezon, şehir ara…"
+            placeholderTextColor={colors.brandSecondary}
+            style={{ flex: 1, color: colors.onSurface, fontSize: 14, paddingVertical: 8 }}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+          />
+          {!!q && (
+            <Pressable onPress={() => setQ("")} hitSlop={8}>
+              <Feather name="x" size={16} color={colors.brandSecondary} />
+            </Pressable>
+          )}
+        </View>
       </View>
 
       {loading ? (
@@ -463,6 +496,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   brandLine: { fontSize: 20, fontWeight: "800", letterSpacing: 1 },
+  searchWrap: { paddingTop: 10, paddingBottom: 10, borderBottomWidth: 1 },
+  searchBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+  },
   searchBtn: {
     width: 40,
     height: 40,

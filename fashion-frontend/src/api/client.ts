@@ -86,6 +86,7 @@ export type FashionLookQuery = {
   color?: string;
   material?: string;
   pattern?: string;
+  q?: string;
   skip?: number;
 };
 
