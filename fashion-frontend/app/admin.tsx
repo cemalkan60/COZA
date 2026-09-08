@@ -43,6 +43,7 @@ const PHASE_LABELS: Record<string, string> = {
   generating_thumbnails: "Küçük resimler oluşturuluyor",
   merging_duplicates: "Yinelenenler birleştiriliyor",
   cleaning_cruft: "Bozuk kayıtlar temizleniyor",
+  repairing_urls: "Fotoğraf adresleri onarılıyor",
   tagging_photos: "Fotoğraflar yapay zekayla etiketleniyor",
   tagging_firstview: "Fotoğraflar yapay zekayla etiketleniyor",
 };
@@ -66,6 +67,8 @@ function scrapeProgress(d: AdminDashboard): { pct: number | null; label: string;
     return { pct: Math.round(100 * frac(p.thumbs_done, p.thumbs_total)), label, detail: `${p.thumbs_done}/${p.thumbs_total}` };
   if (phase === "merging_duplicates")
     return { pct: Math.round(100 * frac(p.merge_done, p.merge_total)), label, detail: `${p.merge_done}/${p.merge_total}` };
+  if (phase === "repairing_urls")
+    return { pct: Math.round(100 * frac(p.repair_done ?? 0, p.repair_total ?? 0)), label, detail: `${p.repair_done ?? 0}/${p.repair_total ?? 0}` };
   if (phase === "tagging_photos" || phase === "tagging_firstview")
     return { pct: Math.round(100 * frac(d.tagging.run_done, d.tagging.run_total)), label, detail: `${d.tagging.run_done}/${d.tagging.run_total}` };
   return { pct: null, label, detail: "" };
@@ -318,6 +321,13 @@ export default function AdminPanel() {
                   style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.error }]}>Bozukları sil</Text>
+                </Pressable>
+                <Pressable
+                  disabled={!!busy}
+                  onPress={() => runAction("repair", api.fashionRepairUrls, "Fotoğraf adresleri onarılıyor — 404 veren fotoğrafların gerçekte bulunduğu kova adresine güncelleniyor.")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Foto adreslerini onar</Text>
                 </Pressable>
               </View>
             </Section>

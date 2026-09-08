@@ -170,6 +170,9 @@ export const api = {
   // (season never parsed) and non-fashion-press ones stuck at <= 1 photo.
   // See run_fashion_clean_cruft in server.py.
   fashionCleanCruft: () => request("/admin/fashion-clean-cruft", { method: "POST" }, true),
+  // Rewrite cached photo URLs to the bucket that actually holds them now
+  // (fixes 404s after the R2 bucket count changed). No re-download.
+  fashionRepairUrls: () => request("/admin/fashion-repair-urls", { method: "POST" }, true),
   // Diagnostic: probes every (key, model) slot the tagging rotation uses.
   geminiCheck: (): Promise<{
     enabled: boolean;
@@ -226,6 +229,7 @@ export type AdminDashboard = {
       covers_done: number; covers_total: number;
       thumbs_done: number; thumbs_total: number;
       merge_done: number; merge_total: number;
+      repair_done?: number; repair_total?: number;
     };
   };
   gemini: { enabled: boolean; key_count: number; models: string[]; batch: number };

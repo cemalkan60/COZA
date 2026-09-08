@@ -1709,6 +1709,8 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
                 "thumbs_total": fmeta.get("thumbs_total", 0),
                 "merge_done": fmeta.get("merge_done", 0),
                 "merge_total": fmeta.get("merge_total", 0),
+                "repair_done": fmeta.get("repair_done", 0),
+                "repair_total": fmeta.get("repair_total", 0),
             },
         },
         "gemini": {
@@ -2442,6 +2444,61 @@ def _doc_taggable(doc: dict) -> int:
     _TAG_MAX_PHOTOS_PER_DOC)."""
     n = len(doc.get("images") or ([doc["image"]] if doc.get("image") else []))
     return min(n, _TAG_MAX_PHOTOS_PER_DOC)
+
+
+async def run_fashion_repair_urls() -> dict:
+    """Rewrite every cached photo URL to the bucket that actually holds the
+    object now. Going from 1 -> N R2 buckets changed `hash % N`, so the
+    shard for a given key moved: new uploads went to the right bucket but
+    the stored URLs still point at the old one (often bucket 1, which was
+    emptied by hand) -> 404 / blank tiles. This just fixes the addresses,
+    no re-download. A URL that resolves to nothing is left as-is (the next
+    scrape re-fetches it)."""
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        docs = await db.fashion.find(
+            {}, {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_thumb": 1},
+        ).to_list(length=None)
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"scraping": True, "phase": "repairing_urls", "repair_total": len(docs), "repair_done": 0}},
+            upsert=True,
+        )
+        fixed_docs = 0
+        sem = asyncio.Semaphore(_IMG_WORK_CONCURRENCY)
+
+        def _remap(urls: list) -> list:
+            return [(image_store.find_object_url(u) or u) for u in (urls or [])]
+
+        async def _one(d: dict) -> None:
+            nonlocal fixed_docs
+            async with sem:
+                imgs = d.get("images") or []
+                thumbs = d.get("images_thumb") or []
+                new_imgs, new_thumbs = await asyncio.to_thread(lambda: (_remap(imgs), _remap(thumbs)))
+                if new_imgs != imgs or new_thumbs != thumbs:
+                    upd = {"images": new_imgs, "images_thumb": new_thumbs}
+                    if new_imgs:
+                        upd["image"] = new_imgs[0]
+                    if new_thumbs:
+                        upd["image_thumb"] = new_thumbs[0]
+                    await db.fashion.update_one({"source_id": d["source_id"]}, {"$set": upd})
+                    fixed_docs += 1
+            await db.meta.update_one({"_id": "fashion"}, {"$inc": {"repair_done": 1}})
+
+        await asyncio.gather(*(_one(d) for d in docs))
+        await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        logger.info("Fashion URL repair: rewrote photo URLs on %d/%d collection(s).", fixed_docs, len(docs))
+        return {"status": "ok", "docs_fixed": fixed_docs, "docs_total": len(docs)}
+
+
+@api.post("/admin/fashion-repair-urls")
+async def admin_fashion_repair_urls(admin: Annotated[dict, Depends(require_admin)]):
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(run_fashion_repair_urls())
+    return {"status": "started"}
 
 
 async def run_fashion_tag_photos() -> dict:

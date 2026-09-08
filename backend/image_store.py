@@ -197,6 +197,32 @@ def _account_for_url(public_url: str) -> "Optional[dict]":
     return None
 
 
+def _key_from_url(url: str) -> "Optional[str]":
+    a = _account_for_url(url or "")
+    if not a:
+        return None
+    return url[len(a["public_base_url"]) + 1:].split("?")[0]
+
+
+def find_object_url(url: str) -> "Optional[str]":
+    """Where a cached photo actually lives NOW. Given one of our R2 URLs,
+    return the URL on whichever bucket currently holds that object — the
+    shard-correct one first, then the others — or None if it's on none of
+    them. Repairs URLs stranded on a bucket that `hash % N` no longer picks
+    (bucket count changed) or that was emptied by hand."""
+    if not ENABLED or not url:
+        return None
+    key = _key_from_url(url)
+    if not key:
+        return None  # not one of ours — a live source-site URL, leave it
+    sc = _shard_for_key(key)
+    for a in [sc] + [x for x in _ACCOUNTS if x is not sc]:
+        if _object_exists(_client_for(a), a["bucket"], key):
+            u = f"{a['public_base_url']}/{key}"
+            return u if u != url.split("?")[0] else url
+    return None
+
+
 def _derive_variants(content: bytes, content_type: str) -> tuple:
     """From one download, produce (full_bytes, full_ctype, thumb_bytes).
 
