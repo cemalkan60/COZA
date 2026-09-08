@@ -145,13 +145,23 @@ def _next_slot() -> "Optional[_Slot]":
         return None
 
 
-def _cool(slot: "_Slot", *, quota: bool) -> None:
+_RETRY_DELAY_RE = re.compile(r'"retryDelay"\s*:\s*"(\d+)(?:\.\d+)?s"')
+
+
+def _cool(slot: "_Slot", *, quota: bool, retry_after: "float | None" = None) -> None:
+    """Park a slot. If Gemini told us exactly how long to wait (retryDelay
+    in a 429 body — a per-minute rate cap), honour that. Otherwise back off
+    exponentially from ~1min: repeated 429s on the SAME slot with no
+    retryDelay means the daily bucket is spent, so keep climbing to
+    _COOL_MAX_S. Network/5xx cools briefly."""
     with _slot_lock:
         slot.fails += 1
-        # 429 -> exponential from ~2min, capped at _COOL_MAX_S (covers "daily
-        # bucket empty"). Network/5xx -> short, it's usually momentary.
-        base = 120 if quota else 15
-        delay = min(base * (2 ** (slot.fails - 1)), _COOL_MAX_S)
+        if retry_after is not None:
+            delay = max(5.0, min(retry_after + 2.0, _COOL_MAX_S))
+        elif quota:
+            delay = min(60 * (2 ** (slot.fails - 1)), _COOL_MAX_S)
+        else:
+            delay = min(15 * (2 ** (slot.fails - 1)), 300)
         slot.cool_until = time.monotonic() + delay
 
 
@@ -210,7 +220,12 @@ def _generate(parts: list, max_output_tokens: int, timeout: int = 40) -> "Option
             _cool(slot, quota=False)
             continue
         if resp.status_code in (429, 503):
-            _cool(slot, quota=(resp.status_code == 429))
+            ra = None
+            if resp.status_code == 429:
+                m = _RETRY_DELAY_RE.search(resp.text or "")
+                if m:
+                    ra = float(m.group(1))
+            _cool(slot, quota=(resp.status_code == 429), retry_after=ra)
             continue
         if not resp.ok:
             logger.warning("gemini_client: HTTP %s from %s: %s", resp.status_code, slot.model, resp.text[:200])

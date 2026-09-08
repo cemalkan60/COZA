@@ -2533,34 +2533,46 @@ async def run_fashion_tag_photos() -> dict:
             {},
             {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_tags": 1},
         ).to_list(length=None)
-        docs = [d for d in all_docs if len(d.get("image_tags") or []) < _doc_taggable(d)]
-        total_photos = sum(_doc_taggable(d) - len(d.get("image_tags") or []) for d in docs)
-        logger.info(
-            "Fashion tagging: %d collection(s), %d photo(s) still untagged.",
-            len(docs), total_photos,
-        )
+        need = [d["source_id"] for d in all_docs if len(d.get("image_tags") or []) < _doc_taggable(d)]
+        total_photos = sum(_doc_taggable(d) - len(d.get("image_tags") or []) for d in all_docs)
+        logger.info("Fashion tagging: %d collection(s), %d photo(s) still untagged.", len(need), total_photos)
         await db.meta.update_one(
             {"_id": "fashion"},
-            {
-                "$set": {
-                    "scraping": True,
-                    "phase": "tagging_photos",
-                    "tags_total": total_photos,
-                    "tags_done": 0,
-                }
-            },
+            {"$set": {"scraping": True, "phase": "tagging_photos", "tags_total": total_photos, "tags_done": 0}},
             upsert=True,
         )
 
-        # Doc-level concurrency. The steady-state request rate is still
-        # bounded by gemini_client's per-key throttle + slot rotation, but
-        # this needs to be high enough that those lanes stay saturated while
-        # other docs are busy downloading images / writing to Mongo. Too low
-        # and the keys sit idle (the "why is it slow" symptom).
         sem = asyncio.Semaphore(int(os.environ.get("FASHION_TAG_DOC_CONCURRENCY", "12")))
-        results = await asyncio.gather(*(_tag_one_doc(d, sem) for d in docs))
-        tagged = sum(results)
-        logger.info("Fashion tagging: done, %d/%d photo(s) tagged this run.", tagged, total_photos)
+        # Keep going in passes: a batch that fails (a slot cooling out on a
+        # per-minute 429, a briefly-unreachable photo) makes _tag_one_doc
+        # abandon the rest of that doc for the pass. Without a loop the whole
+        # sweep would then just end early ("tagged 200, stopped"). Re-query
+        # and retry until a full pass makes zero progress — cooldowns clear
+        # between passes, so this drains as far as the day's quota allows.
+        tagged = 0
+        while need:
+            batch_docs = await db.fashion.find(
+                {"source_id": {"$in": need}},
+                {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_tags": 1},
+            ).to_list(length=None)
+            batch_docs = [d for d in batch_docs if len(d.get("image_tags") or []) < _doc_taggable(d)]
+            if not batch_docs:
+                break
+            results = await asyncio.gather(*(_tag_one_doc(d, sem) for d in batch_docs))
+            pass_tagged = sum(results)
+            tagged += pass_tagged
+            # re-read: which of this pass's docs still aren't fully tagged?
+            still = await db.fashion.find(
+                {"source_id": {"$in": [d["source_id"] for d in batch_docs]}},
+                {"_id": 0, "source_id": 1, "images": 1, "image_tags": 1},
+            ).to_list(length=None)
+            need = [d["source_id"] for d in still if len(d.get("image_tags") or []) < _doc_taggable(d)]
+            if pass_tagged == 0:
+                logger.info("Fashion tagging: a full pass tagged nothing (quota spent or photos unreachable) — stopping, resumes next run.")
+                break
+            logger.info("Fashion tagging: pass done (+%d), %d collection(s) still need work.", pass_tagged, len(need))
+
+        logger.info("Fashion tagging: run finished, %d photo(s) tagged.", tagged)
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
         return {"status": "ok", "total_photos": total_photos, "tagged": tagged}
 
