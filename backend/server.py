@@ -1601,7 +1601,12 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
         "photos_by_source": [
             {"$project": {
                 "n": {"$size": {"$ifNull": ["$images", []]}},
-                "t": {"$size": {"$ifNull": ["$image_tags", []]}},
+                # clamp: a mid-backfill re-scrape can leave more tags than
+                # photos, which showed as >100% tagged in the UI.
+                "t": {"$min": [
+                    {"$size": {"$ifNull": ["$image_tags", []]}},
+                    {"$min": [{"$size": {"$ifNull": ["$images", []]}}, cap]},
+                ]},
                 "src": {"$ifNull": [{"$arrayElemAt": ["$sources", 0]}, "?"]},
             }},
             {"$group": {
@@ -2108,7 +2113,13 @@ async def fashion_meta(user: Annotated[dict, Depends(get_current_user)]):
     agg = await db.fashion.aggregate([
         {"$project": {
             "n": {"$size": {"$ifNull": ["$images", []]}},
-            "t": {"$size": {"$ifNull": ["$image_tags", []]}},
+            # a re-scrape can leave image_tags longer than the (now shorter)
+            # images array mid-backfill — clamp so "tagged" never exceeds
+            # "taggable" (which showed as >100% in the UI).
+            "t": {"$min": [
+                {"$size": {"$ifNull": ["$image_tags", []]}},
+                {"$min": [{"$size": {"$ifNull": ["$images", []]}}, _TAG_MAX_PHOTOS_PER_DOC]},
+            ]},
         }},
         {"$group": {
             "_id": None,
@@ -2451,6 +2462,16 @@ async def run_fashion_tag_photos() -> dict:
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
+        # A re-scrape replaces `images` but leaves `image_tags` — if the new
+        # gallery is shorter, trim the tags back to a valid prefix so the
+        # remaining photos get (re-)tagged and progress counts stay sane.
+        await db.fashion.update_many(
+            {"$expr": {"$gt": [
+                {"$size": {"$ifNull": ["$image_tags", []]}},
+                {"$size": {"$ifNull": ["$images", []]}},
+            ]}},
+            [{"$set": {"image_tags": {"$slice": ["$image_tags", {"$size": {"$ifNull": ["$images", []]}}]}}}],
+        )
         all_docs = await db.fashion.find(
             {},
             {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_tags": 1},
