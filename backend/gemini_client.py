@@ -319,11 +319,21 @@ _PROMPT_TEMPLATE = (
 )
 
 
+class GeminiUnavailable(Exception):
+    """Raised when a request couldn't be answered at all (every slot on
+    cooldown / quota, or a network failure) — distinct from Gemini actually
+    replying "NONE". Callers use this to know NOT to cache the miss."""
+
+
 def resolve_brand_name(brand_ja: str) -> "str | None":
     """Ask Gemini for the real Latin-script spelling of a brand name written
-    in Japanese. Returns None on any failure, low confidence, or when no key
-    is configured — callers fall back to the pykakasi romanization, never
-    block or raise on this.
+    in Japanese.
+
+    Returns the name, or None when Gemini replies "NONE" / low confidence
+    (a real, cacheable "no answer"). Raises GeminiUnavailable when it
+    couldn't get an answer at all (all keys out of quota, network down) —
+    the caller should retry later rather than cache that as a permanent
+    miss. Also returns None (no raise) when no key is configured.
     """
     if not ENABLED or not (brand_ja or "").strip():
         return None
@@ -332,7 +342,7 @@ def resolve_brand_name(brand_ja: str) -> "str | None":
         max_output_tokens=32,
     )
     if text is None:
-        return None
+        raise GeminiUnavailable(brand_ja)
     text = text.strip("\"'` \n\t")
     if not text or text.upper() == "NONE":
         return None

@@ -387,19 +387,29 @@ async def _resolve_brand_names(raw_items: list) -> None:
 
     resolved: dict = {}
     to_lookup = []
+    # A cached NULL ("NONE" / low confidence) is worth re-asking occasionally
+    # in case a later model gets it; a cached NULL from a quota-exhausted run
+    # never got written at all now (see _lookup below), so this is just the
+    # genuine-miss retry cadence.
+    stale_before = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
     for brand_ja in candidates:
         cached = await db.brand_names.find_one({"_id": brand_ja})
         if cached is None:
             to_lookup.append(brand_ja)
         elif cached.get("brand_tr"):
             resolved[brand_ja] = cached["brand_tr"]
+        elif (cached.get("resolved_at") or "") < stale_before:
+            to_lookup.append(brand_ja)
 
     if to_lookup:
         sem = asyncio.Semaphore(5)
 
         async def _lookup(brand_ja: str) -> None:
             async with sem:
-                name = await asyncio.to_thread(gemini_client.resolve_brand_name, brand_ja)
+                try:
+                    name = await asyncio.to_thread(gemini_client.resolve_brand_name, brand_ja)
+                except gemini_client.GeminiUnavailable:
+                    return  # couldn't ask (quota/network) — don't cache, retry next scrape
             await db.brand_names.update_one(
                 {"_id": brand_ja},
                 {"$set": {"brand_tr": name, "resolved_at": datetime.now(timezone.utc).isoformat()}},
@@ -1001,6 +1011,18 @@ async def _migrate_fashion_schema():
         logger.warning("Fashion: feed_seq backfill timed out (>20s) — skipping, will retry next startup.")
     except Exception:
         logger.exception("Fashion: feed_seq backfill failed.")
+    try:
+        # One-time: older code cached a quota-failed brand lookup as a
+        # permanent NULL, so those brands were stuck on the raw pykakasi
+        # romanization forever (e.g. "Rui • viton"). Drop the NULLs once so
+        # the next scrape re-asks Gemini for them.
+        flag = await db.meta.find_one({"_id": "brand_names_null_purge_v1"})
+        if not flag:
+            res = await db.brand_names.delete_many({"brand_tr": {"$in": [None, ""]}})
+            await db.meta.update_one({"_id": "brand_names_null_purge_v1"}, {"$set": {"done_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+            logger.info("Fashion: cleared %d null brand-name cache entr(ies) for re-lookup.", res.deleted_count)
+    except Exception:
+        logger.exception("Fashion: brand-name null purge failed.")
 
 
 async def _backfill_season_rank():

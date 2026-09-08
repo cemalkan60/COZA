@@ -170,6 +170,11 @@ def _romanize_ja(text: str) -> str:
             _kakasi = pykakasi.kakasi()
         words = [w["hepburn"] for w in _kakasi.convert(text) if w.get("hepburn", "").strip()]
         romanized = " ".join(w[:1].upper() + w[1:] for w in words)
+        # pykakasi keeps the katakana middle dot (・) as its own "word", so a
+        # name like ルイ・ヴィトン romanizes to "Rui ・ Viton" / "Rui • viton".
+        # Drop the dot and collapse the gap — "Rui Viton" reads far better as
+        # the always-on fallback.
+        romanized = re.sub(r"\s*[・·•]\s*", " ", romanized).strip()
         return romanized or text
     except Exception as exc:  # noqa: BLE001
         logger.warning("pykakasi romanization failed for %r: %s", text, exc)
