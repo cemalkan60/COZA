@@ -3215,11 +3215,15 @@ async def run_fashion_tag_photos() -> dict:
         while need:
             batch_docs = await db.fashion.find(
                 {"source_id": {"$in": need}},
-                {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_tags": 1},
+                {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1,
+                 "image_tags": 1, "season_rank": 1},
             ).to_list(length=None)
             batch_docs = [d for d in batch_docs if len(d.get("image_tags") or []) < _doc_taggable(d)]
             if not batch_docs:
                 break
+            # Newest shows first — the ones actually being browsed — so an
+            # interrupted run (deploy / quota) leaves the recent feed tagged.
+            batch_docs.sort(key=lambda d: d.get("season_rank") or -1, reverse=True)
             results = await asyncio.gather(*(_tag_one_doc(d, sem) for d in batch_docs))
             pass_tagged = sum(results)
             tagged += pass_tagged
