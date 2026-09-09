@@ -52,6 +52,8 @@ api = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=True)
 scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
 
+_PROCESS_START = datetime.now(timezone.utc)
+
 _scrape_lock = asyncio.Lock()
 _enrich_lock = asyncio.Lock()
 _fashion_lock = asyncio.Lock()
@@ -2309,7 +2311,11 @@ async def _tagging_readiness(untagged: "int | None" = None) -> dict:
     if last_tag and last_tag.get("status") in ("partial", "error") and "kota" in (last_tag.get("reason") or "").lower():
         try:
             fin = datetime.fromisoformat((last_tag.get("finished_at") or "").replace("Z", "+00:00"))
-            quota_recent = datetime.now(timezone.utc) - fin < timedelta(hours=6)
+            # Ignore a quota-limited run from before this process started — a
+            # redeploy (e.g. new GEMINI_MODELS) deserves a fresh attempt, not
+            # a "kota dolu" carried over from the old config.
+            cutoff = max(datetime.now(timezone.utc) - timedelta(hours=6), _PROCESS_START)
+            quota_recent = fin > cutoff
         except Exception:
             quota_recent = False
 
