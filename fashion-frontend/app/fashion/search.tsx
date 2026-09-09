@@ -347,7 +347,9 @@ export default function FashionSearch() {
                     item={it}
                     width={cardWidth}
                     colors={colors}
+                    saved={(savedKeys[it.source_id]?.length ?? 0) > 0}
                     onPress={() => setViewerItem(it)}
+                    onSave={() => setSaveItem(it)}
                   />
                 ))}
               </View>
@@ -458,11 +460,15 @@ function LookCard({
   width,
   colors,
   onPress,
+  onSave,
+  saved,
 }: {
   item: FashionLookItem;
   width: number;
   colors: any;
   onPress: () => void;
+  onSave: () => void;
+  saved: boolean;
 }) {
   return (
     <Pressable
@@ -478,6 +484,9 @@ function LookCard({
             <Feather name="image" size={20} color={colors.brandSecondary} />
           </View>
         )}
+        <Pressable testID={`look-card-save-${item.source_id}`} onPress={onSave} hitSlop={8} style={styles.cardSave}>
+          <Feather name="bookmark" size={15} color="#fff" style={{ opacity: saved ? 1 : 0.7 }} />
+        </Pressable>
       </View>
       <Text numberOfLines={1} style={[styles.cardBrand, { color: colors.onSurface }]}>
         {item.brand_tr || "—"}
@@ -628,6 +637,17 @@ const styles = StyleSheet.create({
   },
   cardImage: { width: "100%", height: "100%" },
   cardImagePlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
+  cardSave: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
   cardBrand: { fontSize: 12, fontWeight: "700", letterSpacing: -0.1 },
   cardSeason: { fontSize: 11, marginTop: 2 },
   // Single-image viewer

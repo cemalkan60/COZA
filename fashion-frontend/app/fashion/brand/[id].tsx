@@ -283,6 +283,19 @@ export default function BrandGallery() {
               contentFit="cover"
               transition={220}
             />
+            <Pressable
+              testID={`brand-thumb-save-${index}`}
+              onPress={() => setSaveSheetIndex(index)}
+              hitSlop={8}
+              style={styles.thumbSave}
+            >
+              <Feather
+                name="bookmark"
+                size={15}
+                color="#fff"
+                style={{ opacity: (savedKeys[`${id}#${index}`]?.length ?? 0) > 0 ? 1 : 0.7 }}
+              />
+            </Pressable>
           </Pressable>
         )}
         ListFooterComponent={
@@ -472,6 +485,17 @@ export default function BrandGallery() {
 }
 
 const styles = StyleSheet.create({
+  thumbSave: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
   container: { flex: 1 },
   header: {
     flexDirection: "row",

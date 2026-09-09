@@ -16,12 +16,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
-import { api, FashionItem, FashionAnalytics } from "@/src/api/client";
+import { api, FashionItem, FashionAnalytics, SavePhotoInput } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
 import { formatDate } from "@/src/utils/format";
 import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 import RetryImage from "@/src/components/RetryImage";
+import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 
 const { width } = Dimensions.get("window");
 
@@ -52,6 +53,12 @@ export default function Fashion() {
   const [error, setError] = useState(false);
   const [moreError, setMoreError] = useState(false);
   const [openModal, setOpenModal] = useState<"city" | "season" | "source" | "sort" | null>(null);
+  const [savedKeys, setSavedKeys] = useState<Record<string, string[]>>({});
+  const [saveTarget, setSaveTarget] = useState<SavePhotoInput | null>(null);
+  const refreshSaved = useCallback(() => {
+    api.savedKeys().then((r) => setSavedKeys(r.saved || {})).catch(() => {});
+  }, []);
+  useEffect(() => { refreshSaved(); }, [refreshSaved]);
 
   const PAGE_SIZE = 40;
 
@@ -293,7 +300,24 @@ export default function Fashion() {
           ) : (
             <View style={[styles.grid, { paddingHorizontal: spacing.xl - 4 }]}>
               {slots.map((it, idx) => (
-                <FashionCard key={idx} item={it} colors={colors} />
+                <FashionCard
+                  key={idx}
+                  item={it}
+                  colors={colors}
+                  saved={!!it && (savedKeys[`${it.source_id}#0`]?.length ?? 0) > 0}
+                  onSave={() =>
+                    it &&
+                    setSaveTarget({
+                      source_id: it.source_id,
+                      photo_index: 0,
+                      image: it.image || it.image_thumb || "",
+                      image_thumb: it.image_thumb || it.image || "",
+                      brand_tr: it.brand_tr || it.title_tr || "",
+                      season: it.season || "",
+                      season_label: it.season_label || "",
+                    })
+                  }
+                />
               ))}
             </View>
           )}
@@ -360,11 +384,29 @@ export default function Fashion() {
           setOpenModal(null);
         }}
       />
+
+      <SaveToBoardSheet
+        visible={!!saveTarget}
+        onClose={() => setSaveTarget(null)}
+        photo={saveTarget}
+        savedBoardIds={saveTarget ? savedKeys[`${saveTarget.source_id}#${saveTarget.photo_index}`] || [] : []}
+        onChange={refreshSaved}
+      />
     </View>
   );
 }
 
-function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }) {
+function FashionCard({
+  item,
+  colors,
+  saved,
+  onSave,
+}: {
+  item: FashionItem | null;
+  colors: any;
+  saved?: boolean;
+  onSave?: () => void;
+}) {
   const router = useRouter();
   const { formatSeason } = useT();
   // The grid only ever shows this card at a small fixed size, so it loads
@@ -417,6 +459,11 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
           <View style={styles.imagePlaceholder}>
             <Feather name="image" size={22} color={colors.brandSecondary} />
           </View>
+        )}
+        {onSave && (
+          <Pressable testID={`fashion-card-save-${item.source_id}`} onPress={onSave} hitSlop={8} style={styles.cardSave}>
+            <Feather name="bookmark" size={14} color="#fff" style={{ opacity: saved ? 1 : 0.7 }} />
+          </Pressable>
         )}
       </View>
       <Text numberOfLines={1} style={[styles.cardBrand, { color: colors.onSurface }]}>
@@ -589,6 +636,17 @@ const styles = StyleSheet.create({
   // 6 columns layout
   card: { width: "16.6%", marginBottom: 18 },
   cardEmpty: { alignItems: "center", justifyContent: "center", height: 220, backgroundColor: "transparent", borderRadius: 4 },
+  cardSave: {
+    position: "absolute",
+    top: 5,
+    right: 5,
+    width: 26,
+    height: 26,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
   imageWrap: {
     width: "100%",
     aspectRatio: 3 / 4,
