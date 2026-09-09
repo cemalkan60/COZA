@@ -56,6 +56,72 @@ _scrape_lock = asyncio.Lock()
 _enrich_lock = asyncio.Lock()
 _fashion_lock = asyncio.Lock()
 
+_JOB_LABELS = {
+    "catalog_scrape": "Katalog taraması",
+    "fashion_scrape": "Fashion taraması",
+    "fashion_backfill": "Fashion taraması (2026'dan beri)",
+    "fashion_tag_photos": "Fotoğraf etiketleme",
+    "fashion_repair_urls": "Fotoğraf adreslerini onarma",
+    "fashion_cover_fix": "Kapak düzeltme",
+    "fashion_thumbnails": "Küçük resimler",
+    "fashion_merge_duplicates": "Yinelenen birleştirme",
+    "fashion_clean_cruft": "Bozuk kayıt temizliği",
+    "fashion_prune_old": "Eski kayıt temizliği",
+}
+
+
+async def _record_job_run(
+    job: str, *, status: str, started_at: str, detail: str = "", reason: str = "",
+    done: "int | None" = None, total: "int | None" = None,
+) -> None:
+    """Append one entry to the Admin panel's "son işlemler" history (db.meta
+    _id "job_runs", newest first, capped to 40) — see admin.tsx. `status` is
+    one of "ok" / "partial" / "error". Before this, a job's outcome only
+    ever showed up as a live progress bar WHILE it ran; the moment it
+    stopped (finished, ran out of quota, or crashed) that information was
+    gone, so "it just stopped" had no answer anywhere in the app.
+    """
+    entry = {
+        "job": job,
+        "label": _JOB_LABELS.get(job, job),
+        "status": status,
+        "detail": detail,
+        "reason": reason,
+        "done": done,
+        "total": total,
+        "pct": round(100 * done / total) if (done is not None and total) else None,
+        "started_at": started_at,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.meta.update_one(
+        {"_id": "job_runs"},
+        {"$push": {"items": {"$each": [entry], "$position": 0, "$slice": 40}}},
+        upsert=True,
+    )
+
+
+async def _run_tracked(job: str, coro) -> None:
+    """Fire-and-forget wrapper for every admin sweep launched via
+    asyncio.create_task (and every scheduled job — see on_startup). Each
+    run_fashion_* function already records its own success/partial outcome
+    at its return points; this only exists to catch the case none of them
+    handle: the coroutine raising outright (a DB hiccup, a bug). Without
+    this, `scraping` stays stuck true with a frozen progress bar until the
+    next process restart (see the old "Clear stale scraping:true on
+    startup" band-aid), and nothing ever explains why.
+    """
+    started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        await coro
+    except Exception as exc:
+        logger.exception("%s crashed", job)
+        if job != "catalog_scrape":  # this job's live state lives in db.meta._id "fashion"
+            await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False, "phase": "interrupted"}})
+        await _record_job_run(
+            job, status="error", started_at=started_at,
+            reason=f"Beklenmeyen hata: {type(exc).__name__}: {exc}"[:300],
+        )
+
 
 # ----------------------------- Models -----------------------------
 def normalize_ident(value: str) -> str:
@@ -135,6 +201,7 @@ async def run_scrape(reason: str = "manual") -> dict:
     async with _scrape_lock:
         logger.info("Scrape started (%s)", reason)
         started = datetime.now(timezone.utc)
+        started_at = started.isoformat()
         proxy_key = await get_proxy_key()
         products, stats = await asyncio.to_thread(scraper.collect_products, proxy_key)
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -162,6 +229,14 @@ async def run_scrape(reason: str = "manual") -> dict:
             "Scrape done (%s): %d products, %d cats ok / %d failed, %.1fs",
             reason, len(products), stats["categories_ok"], stats["categories_failed"],
             (datetime.now(timezone.utc) - started).total_seconds(),
+        )
+        await _record_job_run(
+            "catalog_scrape",
+            status="ok" if not stats["categories_failed"] else "partial",
+            started_at=started_at,
+            done=stats["categories_ok"], total=stats["categories_ok"] + stats["categories_failed"],
+            detail=f"{len(products)} ürün, {stats['categories_ok']}/{stats['categories_ok'] + stats['categories_failed']} kategori",
+            reason="Bazı kategoriler taranamadı (kaynak/proxy hatası)." if stats["categories_failed"] else "",
         )
         # Enrich real manufacturing origins in the background (per manufacturer code).
         asyncio.create_task(enrich_origins(proxy_key))
@@ -202,7 +277,7 @@ async def _seed_if_empty():
     count = await db.products.count_documents({})
     if count == 0:
         logger.info("Product catalog empty — running initial scrape in background.")
-        asyncio.create_task(run_scrape("initial_seed"))
+        asyncio.create_task(_run_tracked("catalog_scrape", run_scrape("initial_seed")))
     else:
         logger.info("Catalog present: %d products.", count)
 
@@ -890,7 +965,7 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 "groups_done": saved,
             }
             await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
-        except Exception:
+        except Exception as exc:
             logger.exception("Fashion scrape (%s): merge/save failed", reason)
             meta = {
                 "last_scrape": now_iso,
@@ -901,12 +976,25 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 "scraping": False,
             }
             await db.meta.update_one({"_id": "fashion"}, {"$set": meta}, upsert=True)
+            await _record_job_run(
+                "fashion_backfill" if backfill else "fashion_scrape",
+                status="error", started_at=start_iso,
+                detail=f"{len(raw_items)} ham kayıt tarandı ama kaydedilemedi",
+                reason=f"Birleştirme/kayıt aşamasında hata: {type(exc).__name__}: {exc}"[:300],
+            )
             return {"status": "error", **meta}
 
         logger.info(
             "Fashion scrape done (%s): %d raw items -> %d/%d groups saved, %.1fs",
             reason, len(raw_items), saved, len(groups),
             (datetime.now(timezone.utc) - started).total_seconds(),
+        )
+        await _record_job_run(
+            "fashion_backfill" if backfill else "fashion_scrape",
+            status="ok" if saved >= len(groups) else "partial",
+            started_at=start_iso, done=saved, total=len(groups),
+            detail=f"{saved}/{len(groups)} koleksiyon kaydedildi ({len(raw_items)} ham kayıt)",
+            reason="" if saved >= len(groups) else "Bazı koleksiyonlar zaman aşımı/hata nedeniyle kaydedilemedi; bir sonraki taramada tekrar denenecek.",
         )
         return {"status": "ok", **meta}
 
@@ -915,7 +1003,7 @@ async def _seed_fashion_if_empty():
     count = await db.fashion.count_documents({})
     if count == 0:
         logger.info("Fashion feed empty — running initial fashion scrape in background.")
-        asyncio.create_task(run_fashion_scrape("initial_seed"))
+        asyncio.create_task(_run_tracked("fashion_scrape", run_fashion_scrape("initial_seed")))
     else:
         logger.info("Fashion feed present: %d items.", count)
 
@@ -954,7 +1042,7 @@ async def _backfill_fashion_if_needed():
             upsert=True,
         )
 
-    asyncio.create_task(_run())
+    asyncio.create_task(_run_tracked("fashion_backfill", _run()))
 
 
 async def _migrate_fashion_schema():
@@ -1645,6 +1733,7 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
 
     fmeta = await db.meta.find_one({"_id": "fashion"}, {"_id": 0}) or {}
     smeta = await db.meta.find_one({"_id": "scrape"}, {"_id": 0}) or {}
+    job_runs = ((await db.meta.find_one({"_id": "job_runs"}, {"_id": 0})) or {}).get("items", [])
 
     ph = {"photos": 0, "tagged": 0, "taggable": 0}
     for r in facet.get("photos_by_source", []):
@@ -1691,6 +1780,10 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
             "run_done": fmeta.get("tags_done", 0),
             "run_total": fmeta.get("tags_total", 0),
         },
+        # Recent-history log for every admin sweep/scrape (newest first) —
+        # what ran, when, how far it got, and why if it didn't finish. See
+        # _record_job_run; this is what survives after a live run stops.
+        "job_runs": job_runs,
         "scrape": {
             "fashion_last": fmeta.get("last_scrape"),
             "fashion_running": bool(fmeta.get("scraping")),
@@ -2143,7 +2236,7 @@ async def admin_fashion_scrape(admin: Annotated[dict, Depends(require_admin)]):
     # can now run well past typical HTTP client/proxy timeouts if awaited inline.
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_scrape("manual"))
+    asyncio.create_task(_run_tracked("fashion_scrape", run_fashion_scrape("manual")))
     return {"status": "started"}
 
 
@@ -2156,7 +2249,7 @@ async def admin_fashion_backfill(admin: Annotated[dict, Depends(require_admin)])
     # the twice-weekly schedule ever runs on its own.
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_scrape("backfill_2026", backfill=True))
+    asyncio.create_task(_run_tracked("fashion_backfill", run_fashion_scrape("backfill_2026", backfill=True)))
     return {"status": "started"}
 
 
@@ -2234,6 +2327,7 @@ async def run_fashion_cover_fix() -> dict:
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
         all_docs = await db.fashion.find(
             {"fp_source_id": {"$ne": None}},
             {"_id": 0, "source_id": 1, "fp_source_id": 1, "gallery_fetched": 1, "images": 1},
@@ -2266,6 +2360,10 @@ async def run_fashion_cover_fix() -> dict:
         await asyncio.gather(*(_run_one(d) for d in docs))
         logger.info("Fashion cover fix: done, %d/%d cover(s) upgraded.", fixed, len(docs))
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        await _record_job_run(
+            "fashion_cover_fix", status="ok", started_at=started_at,
+            done=fixed, total=len(docs), detail=f"{fixed}/{len(docs)} kapak güncellendi",
+        )
         return {"status": "ok", "total": len(docs), "fixed": fixed}
 
 
@@ -2276,7 +2374,7 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
     # their low-res cover, this can run well past typical HTTP timeouts.
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_cover_fix())
+    asyncio.create_task(_run_tracked("fashion_cover_fix", run_fashion_cover_fix()))
     return {"status": "started"}
 
 
@@ -2328,6 +2426,7 @@ async def run_fashion_thumbnails_backfill() -> dict:
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
         all_docs = await db.fashion.find(
             {"images.0": {"$exists": True}},
             {"_id": 0, "source_id": 1, "images": 1, "image": 1, "images_thumb": 1},
@@ -2360,6 +2459,10 @@ async def run_fashion_thumbnails_backfill() -> dict:
         await asyncio.gather(*(_run_one(d) for d in docs))
         logger.info("Fashion thumbnails: done, %d/%d collection(s) updated.", fixed, len(docs))
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        await _record_job_run(
+            "fashion_thumbnails", status="ok", started_at=started_at,
+            done=fixed, total=len(docs), detail=f"{fixed}/{len(docs)} koleksiyona küçük resim eklendi",
+        )
         return {"status": "ok", "total": len(docs), "fixed": fixed}
 
 
@@ -2368,7 +2471,7 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
     # Fire-and-forget, same reasoning as /admin/fashion-fix-covers.
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_thumbnails_backfill())
+    asyncio.create_task(_run_tracked("fashion_thumbnails", run_fashion_thumbnails_backfill()))
     return {"status": "started"}
 
 
@@ -2457,6 +2560,7 @@ async def run_fashion_repair_urls() -> dict:
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
         docs = await db.fashion.find(
             {}, {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_thumb": 1},
         ).to_list(length=None)
@@ -2490,6 +2594,10 @@ async def run_fashion_repair_urls() -> dict:
         await asyncio.gather(*(_one(d) for d in docs))
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
         logger.info("Fashion URL repair: rewrote photo URLs on %d/%d collection(s).", fixed_docs, len(docs))
+        await _record_job_run(
+            "fashion_repair_urls", status="ok", started_at=started_at,
+            done=fixed_docs, total=len(docs), detail=f"{fixed_docs}/{len(docs)} koleksiyonun adresi düzeltildi",
+        )
         return {"status": "ok", "docs_fixed": fixed_docs, "docs_total": len(docs)}
 
 
@@ -2497,7 +2605,7 @@ async def run_fashion_repair_urls() -> dict:
 async def admin_fashion_repair_urls(admin: Annotated[dict, Depends(require_admin)]):
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_repair_urls())
+    asyncio.create_task(_run_tracked("fashion_repair_urls", run_fashion_repair_urls()))
     return {"status": "started"}
 
 
@@ -2515,10 +2623,15 @@ async def run_fashion_tag_photos() -> dict:
     _fashion_lock with them so nothing races over the same documents.
     """
     if not gemini_client.ENABLED:
+        await _record_job_run(
+            "fashion_tag_photos", status="error", started_at=datetime.now(timezone.utc).isoformat(),
+            reason="Gemini API anahtarı tanımlı değil (GEMINI_API_KEY / GEMINI_API_KEYS ortam değişkeni eksik).",
+        )
         return {"status": "gemini_disabled"}
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
         # A re-scrape replaces `images` but leaves `image_tags` — if the new
         # gallery is shorter, trim the tags back to a valid prefix so the
         # remaining photos get (re-)tagged and progress counts stay sane.
@@ -2550,6 +2663,7 @@ async def run_fashion_tag_photos() -> dict:
         # and retry until a full pass makes zero progress — cooldowns clear
         # between passes, so this drains as far as the day's quota allows.
         tagged = 0
+        stopped_early = False
         while need:
             batch_docs = await db.fashion.find(
                 {"source_id": {"$in": need}},
@@ -2569,11 +2683,39 @@ async def run_fashion_tag_photos() -> dict:
             need = [d["source_id"] for d in still if len(d.get("image_tags") or []) < _doc_taggable(d)]
             if pass_tagged == 0:
                 logger.info("Fashion tagging: a full pass tagged nothing (quota spent or photos unreachable) — stopping, resumes next run.")
+                stopped_early = True
                 break
             logger.info("Fashion tagging: pass done (+%d), %d collection(s) still need work.", pass_tagged, len(need))
 
         logger.info("Fashion tagging: run finished, %d photo(s) tagged.", tagged)
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+
+        status, reason = "ok", ""
+        if stopped_early or tagged < total_photos:
+            status = "partial"
+            slots = gemini_client.slot_status()
+            if slots.get("all_cooling"):
+                mins = max(1, round((slots.get("resumes_in_s") or 0) / 60))
+                reason = (
+                    f"Günlük Gemini kotası tükendi — tüm API anahtarları/modelleri geçici olarak "
+                    f"soğumada (~{mins} dk sonra tekrar denenecek). Kalan fotoğraflar otomatik olarak "
+                    f"bir sonraki taramada (her gün 04:00) etiketlenmeye devam edecek."
+                )
+            elif slots.get("cooling_count"):
+                reason = (
+                    "Gemini anahtarlarının bir kısmı soğumada, bir kısmı fotoğraflara erişilemedi ya da "
+                    "yanıt ayrıştırılamadı. Kalan fotoğraflar bir sonraki taramada tekrar denenecek."
+                )
+            else:
+                reason = (
+                    "Bazı fotoğraflara ulaşılamadı (kaynak/CDN erişim sorunu) ya da yapay zeka yanıtı "
+                    "ayrıştırılamadı. Kalan fotoğraflar bir sonraki taramada tekrar denenecek."
+                )
+        await _record_job_run(
+            "fashion_tag_photos", status=status, started_at=started_at,
+            done=tagged, total=total_photos, reason=reason,
+            detail=f"{tagged}/{total_photos} fotoğraf etiketlendi",
+        )
         return {"status": "ok", "total_photos": total_photos, "tagged": tagged}
 
 
@@ -2586,7 +2728,7 @@ async def admin_fashion_tag_photos(admin: Annotated[dict, Depends(require_admin)
         raise HTTPException(400, "Gemini API anahtarı yapılandırılmamış.")
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_tag_photos())
+    asyncio.create_task(_run_tracked("fashion_tag_photos", run_fashion_tag_photos()))
     return {"status": "started"}
 
 
@@ -2603,6 +2745,7 @@ async def run_fashion_prune_old() -> dict:
     have gone by without ever managing to date it, so it's stale cruft that
     would otherwise pile up forever (Resort / Pre-Fall pre-parser-fix).
     """
+    started_at = datetime.now(timezone.utc).isoformat()
     floor = _min_recent_season_rank()
     stale_cut = (datetime.now(timezone.utc) - timedelta(days=_UNDATED_STALE_DAYS)).isoformat()
     doomed = await db.fashion.find(
@@ -2618,6 +2761,10 @@ async def run_fashion_prune_old() -> dict:
             {"$set": {"last_prune": datetime.now(timezone.utc).isoformat(),
                       "recent_months": FASHION_RECENT_MONTHS}},
             upsert=True,
+        )
+        await _record_job_run(
+            "fashion_prune_old", status="ok", started_at=started_at,
+            detail="silinecek eski koleksiyon yok",
         )
         return {"status": "ok", "deleted": 0, "photos_deleted": 0, "season_rank_floor": floor}
 
@@ -2654,6 +2801,11 @@ async def run_fashion_prune_old() -> dict:
                   "recent_months": FASHION_RECENT_MONTHS}},
         upsert=True,
     )
+    await _record_job_run(
+        "fashion_prune_old", status="ok", started_at=started_at,
+        done=res.deleted_count, total=res.deleted_count,
+        detail=f"{res.deleted_count} eski koleksiyon + {len(url_list)} fotoğraf silindi",
+    )
     return {
         "status": "ok",
         "deleted": res.deleted_count,
@@ -2667,7 +2819,7 @@ async def admin_fashion_prune(admin: Annotated[dict, Depends(require_admin)]):
     # Can now take a while (deletes photos from R2 too), so fire-and-forget.
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_prune_old())
+    asyncio.create_task(_run_tracked("fashion_prune_old", run_fashion_prune_old()))
     return {"status": "started"}
 
 
@@ -2692,6 +2844,7 @@ async def run_fashion_clean_cruft() -> dict:
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
         doomed = await db.fashion.find(
             {"$or": [
                 {"season_rank": {"$lt": 0}},
@@ -2710,6 +2863,10 @@ async def run_fashion_clean_cruft() -> dict:
                 {"_id": "fashion"},
                 {"$set": {"scraping": False,
                           "last_cruft_clean": datetime.now(timezone.utc).isoformat()}},
+            )
+            await _record_job_run(
+                "fashion_clean_cruft", status="ok", started_at=started_at,
+                detail="silinecek bozuk kayıt yok",
             )
             return {"status": "ok", "deleted": 0, "photos_deleted": 0}
 
@@ -2742,6 +2899,11 @@ async def run_fashion_clean_cruft() -> dict:
             {"$set": {"scraping": False, "cruft_done": len(doomed),
                       "last_cruft_clean": datetime.now(timezone.utc).isoformat()}},
         )
+        await _record_job_run(
+            "fashion_clean_cruft", status="ok", started_at=started_at,
+            done=res.deleted_count, total=res.deleted_count,
+            detail=f"{res.deleted_count} bozuk koleksiyon + {len(url_list)} fotoğraf silindi",
+        )
         return {"status": "ok", "deleted": res.deleted_count, "photos_deleted": len(url_list)}
 
 
@@ -2751,7 +2913,7 @@ async def admin_fashion_clean_cruft(admin: Annotated[dict, Depends(require_admin
     # /admin/fashion-prune.
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_clean_cruft())
+    asyncio.create_task(_run_tracked("fashion_clean_cruft", run_fashion_clean_cruft()))
     return {"status": "started"}
 
 
@@ -2894,6 +3056,7 @@ async def run_fashion_merge_duplicates() -> dict:
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
         docs = await db.fashion.find({}, {"_id": 0}).to_list(length=None)
         groups: dict = {}
         for d in docs:
@@ -2953,6 +3116,11 @@ async def run_fashion_merge_duplicates() -> dict:
             len(multi), docs_removed, images_dropped, len(singles_to_relabel),
         )
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        await _record_job_run(
+            "fashion_merge_duplicates", status="ok", started_at=started_at,
+            done=len(multi), total=len(multi),
+            detail=f"{len(multi)} grup birleştirildi ({docs_removed} yinelenen silindi, {len(singles_to_relabel)} sezon etiketi düzeltildi)",
+        )
         return {
             "status": "ok",
             "groups_merged": len(multi),
@@ -2969,7 +3137,7 @@ async def admin_fashion_merge_duplicates(admin: Annotated[dict, Depends(require_
     # to compare.
     if _fashion_lock.locked():
         return {"status": "already_running"}
-    asyncio.create_task(run_fashion_merge_duplicates())
+    asyncio.create_task(_run_tracked("fashion_merge_duplicates", run_fashion_merge_duplicates()))
     return {"status": "started"}
 
 
@@ -2987,6 +3155,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def _scheduled_catalog_scrape():
+    await _run_tracked("catalog_scrape", run_scrape("scheduled_mon_thu_08:00"))
+
+
+async def _scheduled_fashion_scrape():
+    await _run_tracked("fashion_scrape", run_fashion_scrape("scheduled_mon_wed_07:00"))
+
+
+async def _scheduled_fashion_tag_photos():
+    await _run_tracked("fashion_tag_photos", run_fashion_tag_photos())
+
+
+async def _scheduled_fashion_prune():
+    await _run_tracked("fashion_prune_old", run_fashion_prune_old())
 
 
 @app.on_event("startup")
@@ -3010,8 +3194,7 @@ async def on_startup():
     # which is UTC on Railway. Without `timezone=` here these jobs silently
     # fired at 08:00/07:00 UTC (11:00/10:00 Istanbul), not the advertised time.
     scheduler.add_job(
-        run_scrape, CronTrigger(day_of_week="mon,thu", hour=8, minute=0, timezone="Europe/Istanbul"),
-        args=["scheduled_mon_thu_08:00"],
+        _scheduled_catalog_scrape, CronTrigger(day_of_week="mon,thu", hour=8, minute=0, timezone="Europe/Istanbul"),
         id="scheduled_scrape", replace_existing=True,
     )
     # COZA Fashion: refresh runway collections Mondays and Wednesdays at
@@ -3020,8 +3203,7 @@ async def on_startup():
     # so an unchanged collection just gets its updated_at bumped and only
     # genuinely new collections add a new entry.
     scheduler.add_job(
-        run_fashion_scrape, CronTrigger(day_of_week="mon,wed", hour=7, minute=0, timezone="Europe/Istanbul"),
-        args=["scheduled_mon_wed_07:00"],
+        _scheduled_fashion_scrape, CronTrigger(day_of_week="mon,wed", hour=7, minute=0, timezone="Europe/Istanbul"),
         id="scheduled_fashion_scrape", replace_existing=True,
     )
     # Runway photo tagging (see run_fashion_tag_photos / gemini_client.
@@ -3033,21 +3215,37 @@ async def on_startup():
     # in scope is tagged. Self-guards on gemini_client.ENABLED, so it's a
     # harmless no-op if no GEMINI_API_KEY(S) are set.
     scheduler.add_job(
-        run_fashion_tag_photos, CronTrigger(hour=4, minute=0, timezone="Europe/Istanbul"),
+        _scheduled_fashion_tag_photos, CronTrigger(hour=4, minute=0, timezone="Europe/Istanbul"),
         id="scheduled_fashion_tag_firstview", replace_existing=True,
     )
     # Roll the recent-window forward every night (also runs after each
     # scrape). Just before the tag sweep so freshly-aged-out collections
     # aren't tagged. Plain DB deletes, no network — cheap.
     scheduler.add_job(
-        run_fashion_prune_old, CronTrigger(hour=3, minute=30, timezone="Europe/Istanbul"),
+        _scheduled_fashion_prune, CronTrigger(hour=3, minute=30, timezone="Europe/Istanbul"),
         id="scheduled_fashion_prune", replace_existing=True,
     )
     scheduler.start()
     # A scrape/sweep can't survive a process restart, so a lingering
     # scraping:true here (e.g. the box was OOM-killed mid-backfill) is
-    # always stale — clear it so the UI doesn't show a frozen progress bar.
-    await db.meta.update_one({"_id": "fashion", "scraping": True}, {"$set": {"scraping": False, "phase": "interrupted"}})
+    # always stale — clear it so the UI doesn't show a frozen progress bar,
+    # and record it in the "son işlemler" history so a restart mid-sweep
+    # actually explains itself instead of just quietly resetting.
+    stale = await db.meta.find_one_and_update(
+        {"_id": "fashion", "scraping": True},
+        {"$set": {"scraping": False, "phase": "interrupted"}},
+    )
+    if stale:
+        job = {"tagging_photos": "fashion_tag_photos", "tagging_firstview": "fashion_tag_photos",
+               "fixing_covers": "fashion_cover_fix", "generating_thumbnails": "fashion_thumbnails",
+               "merging_duplicates": "fashion_merge_duplicates", "repairing_urls": "fashion_repair_urls",
+               "cleaning_cruft": "fashion_clean_cruft"}.get(stale.get("phase"), "fashion_scrape")
+        await _record_job_run(
+            job, status="error",
+            started_at=stale.get("scrape_started_at") or datetime.now(timezone.utc).isoformat(),
+            reason=f"Sunucu yeniden başladı (ör. bellek yetersizliği/deploy) ve '{stale.get('phase')}' "
+                   f"aşamasında yarım kaldı. Kaldığı yerden devam etmek için işlemi tekrar başlatın.",
+        )
     await _seed_if_empty()
     await _migrate_fashion_schema()
     await _dedupe_existing_fashion_docs()

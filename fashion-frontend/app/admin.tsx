@@ -7,7 +7,7 @@ import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
-import { api, type AdminDashboard } from "@/src/api/client";
+import { api, type AdminDashboard, type JobRun } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
 import { formatDate } from "@/src/utils/format";
@@ -35,6 +35,14 @@ function fmtWhen(iso: string | null | undefined): string {
         : `${Math.round(h / 24)} gün`;
   return `${formatDate(iso)} · ${diff >= 0 ? rel + " sonra" : rel + " önce"}`;
 }
+
+const WARN_COLOR = "#C98A2C";
+
+const STATUS_META: Record<JobRun["status"], { icon: keyof typeof Feather.glyphMap; word: string }> = {
+  ok: { icon: "check-circle", word: "başarılı" },
+  partial: { icon: "alert-triangle", word: "yarım kaldı" },
+  error: { icon: "x-circle", word: "başarısız" },
+};
 
 const PHASE_LABELS: Record<string, string> = {
   collecting: "Kaynaklar taranıyor",
@@ -405,6 +413,41 @@ export default function AdminPanel() {
               <Row k="Güncellendi" v={fmtWhen(d.generated_at)} />
             </Section>
 
+            {/* Son İşlemler — her tarama/etiketleme/temizlik sonrası burada:
+                ne çalıştı, ne zaman, yüzde kaçta durdu, başarılı mı, değilse
+                neden. Bir işlem çalışırken görünmez (yukarıdaki canlı kart
+                onu gösterir); burası SADECE biteni/duranı listeler. */}
+            {d.job_runs?.length > 0 && (
+              <Section title="Son İşlemler">
+                {d.job_runs.map((r, i) => {
+                  const meta = STATUS_META[r.status] ?? STATUS_META.error;
+                  const color = r.status === "ok" ? colors.success : r.status === "partial" ? WARN_COLOR : colors.error;
+                  return (
+                    <View
+                      key={`${r.job}-${r.finished_at}-${i}`}
+                      style={[styles.jobRow, i > 0 && { borderTopColor: colors.border, borderTopWidth: StyleSheet.hairlineWidth }]}
+                    >
+                      <View style={styles.row}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1 }}>
+                          <Feather name={meta.icon} size={13} color={color} />
+                          <Text style={{ color: colors.onSurface, fontWeight: "700", fontSize: fontSize.sm }}>{r.label}</Text>
+                        </View>
+                        <Text style={{ color, fontWeight: "700", fontSize: fontSize.xs }}>
+                          {meta.word}{r.pct != null ? ` · %${r.pct}` : ""}
+                        </Text>
+                      </View>
+                      <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 2 }}>
+                        {fmtWhen(r.finished_at)}{!!r.detail && ` · ${r.detail}`}
+                      </Text>
+                      {!!r.reason && (
+                        <Text style={{ color, fontSize: fontSize.xs, marginTop: 4 }}>{r.reason}</Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </Section>
+            )}
+
             {!!msg && (
               <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, textAlign: "center", marginTop: spacing.lg }}>
                 {msg}
@@ -452,6 +495,7 @@ const styles = StyleSheet.create({
   statRow: { flexDirection: "row", gap: 10 },
   stat: { flex: 1, borderWidth: StyleSheet.hairlineWidth, borderRadius: 10, padding: 14, alignItems: "flex-start" },
   row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 7 },
+  jobRow: { paddingVertical: 9 },
   btn: {
     flexDirection: "row",
     alignItems: "center",
