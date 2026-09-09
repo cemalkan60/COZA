@@ -378,19 +378,16 @@ def check_keys(timeout: int = 12) -> dict:
 # Google retires these silently (2.0/2.5-flash-lite went 404 in Sep 2026),
 # so which to actually use is decided by a live probe, not this list.
 _CANDIDATE_MODELS = [
-    "gemini-3.5-flash-lite",
-    "gemini-flash-lite-latest",
-    "gemini-flash-latest",
-    "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
-    "gemini-3-flash",
-    "gemini-3-pro-preview",
+    "gemini-3.5-flash-lite",      # current default
+    "gemini-3.6-flash",           # named by the retired 2.5/2.0-flash 404s
+    "gemini-3.6-flash-lite",      # a lite sibling may exist
+    "gemini-3.1-pro-preview",     # named by the retired 3-pro-preview 404
+    "gemini-flash-latest",        # alias -> newest full flash
+    "gemini-flash-lite-latest",   # alias -> newest flash-lite
 ]
 
 
-def discover_models(timeout: int = 10) -> dict:
+def discover_models(timeout: int = 15) -> dict:
     """Probe each candidate model once (against the first key only — model
     availability is per free-tier project, not per key) so an operator can
     see which are alive and not quota-blocked, then add the good ones to
