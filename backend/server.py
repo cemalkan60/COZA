@@ -2187,26 +2187,50 @@ async def fashion_looks(
         match["category"] = {"$in": ["women", "haute-couture"]}
     elif gender == "male":
         match["category"] = "men"
-    if q and q.strip():
-        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
-        match["$or"] = [{"brand_tr": rx}, {"title_tr": rx}, {"season_label": rx}, {"city": rx}]
+
+    q = (q or "").strip()
+    # "pantolon" / "jean" / "yün" / "siyah" etc. -> the Gemini tag words for
+    # that garment/colour/material/pattern, so the search box also filters on
+    # what's IN the photos, not just brand/season/city text.
+    qtags = fashion_tag_map.free_text_conditions(q) if q else {}
+    if q:
+        rx = {"$regex": re.escape(q), "$options": "i"}
+        ors = [{"brand_tr": rx}, {"title_tr": rx}, {"season_label": rx}, {"city": rx}]
+        if qtags:
+            ors.append({"image_tags": {"$elemMatch": {"$or": [{f: c} for f, c in qtags.items()]}}})
+        match["$or"] = ors
 
     tconds = fashion_tag_map.tag_match_conditions(item=item, color=color, material=material, pattern=pattern)
     if tconds:
         match["image_tags"] = {"$elemMatch": tconds}
 
+    q_re = re.escape(q) if q else ""
     pipeline: list = [
         {"$match": match},
         {"$project": {
             "_id": 0, "sid": "$source_id", "brand_tr": 1, "season_label": 1,
             "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1,
             "season_rank": 1, "updated_at": 1, "feed_seq": 1,
+            # did this collection match the query by TEXT (brand/season/city)?
+            # If so, every one of its photos is a valid hit; if it only
+            # matched via qtags, keep just the photos whose tags match.
+            "q_text_hit": {"$or": [
+                {"$regexMatch": {"input": {"$ifNull": ["$brand_tr", ""]}, "regex": q_re, "options": "i"}},
+                {"$regexMatch": {"input": {"$ifNull": ["$title_tr", ""]}, "regex": q_re, "options": "i"}},
+                {"$regexMatch": {"input": {"$ifNull": ["$season_label", ""]}, "regex": q_re, "options": "i"}},
+                {"$regexMatch": {"input": {"$ifNull": ["$city", ""]}, "regex": q_re, "options": "i"}},
+            ]} if q else False,
         }},
         {"$unwind": {"path": "$image_tags", "includeArrayIndex": "i"}},
     ]
+    post_conds: list = []
     if tconds:
-        # After $unwind, image_tags is one object — keep only matching photos.
-        pipeline.append({"$match": {f"image_tags.{k}": v for k, v in tconds.items()}})
+        post_conds.append({f"image_tags.{k}": v for k, v in tconds.items()})
+    if qtags:
+        # photo's own tag matches the query, OR the collection matched by text
+        post_conds.append({"$or": [{"q_text_hit": True}, *[{f"image_tags.{f}": c} for f, c in qtags.items()]]})
+    if post_conds:
+        pipeline.append({"$match": {"$and": post_conds} if len(post_conds) > 1 else post_conds[0]})
     pipeline += [
         {"$project": {
             "source_id": {"$concat": ["$sid", "#", {"$toString": "$i"}]},

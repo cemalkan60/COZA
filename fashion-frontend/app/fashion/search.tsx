@@ -233,12 +233,12 @@ export default function FashionSearch() {
             contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 12 }}
           >
             {FILTER_KEYS.map((f) => {
-              const active = !!selected[f.key];
+              const active = !!selected[f];
               return (
                 <Pressable
-                  key={f.key}
-                  testID={`look-filter-${f.key}`}
-                  onPress={() => setOpenModal(f.key)}
+                  key={f}
+                  testID={`look-filter-${f}`}
+                  onPress={() => setOpenModal(f)}
                   style={[
                     styles.filterBtn,
                     { borderColor: active ? colors.brand : colors.border, backgroundColor: active ? colors.brand : colors.surfaceSecondary },
@@ -248,7 +248,7 @@ export default function FashionSearch() {
                     numberOfLines={1}
                     style={{ color: active ? colors.onBrand : colors.onSurface, fontSize: 12, fontWeight: "700", maxWidth: 130 }}
                   >
-                    {currentLabel(f.key)}
+                    {currentLabel(f)}
                   </Text>
                   <Feather name="chevron-down" size={13} color={active ? colors.onBrand : colors.brandSecondary} />
                 </Pressable>
