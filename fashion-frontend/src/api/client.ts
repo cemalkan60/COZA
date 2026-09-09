@@ -190,6 +190,9 @@ export const api = {
       models_ok: number; models_total: number; detail: string;
     }[];
     slots: { key_index: number; key_tail: string; model: string; ok: boolean; quota_exhausted: boolean; detail: string }[];
+    // Bottom line: can tagging actually run right now? Same logic as the
+    // Settings tag button's tag_state (see _tagging_readiness in server.py).
+    verdict?: { can_run: boolean; label: string; untagged?: number };
   }> => request("/admin/gemini-check", {}, true),
   // Everything the admin dashboard renders, in one call. Admin-only (403 for viewers).
   adminDashboard: (): Promise<AdminDashboard> => request("/admin/dashboard", {}, true),

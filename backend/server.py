@@ -1708,8 +1708,15 @@ async def get_settings(admin: Annotated[dict, Depends(require_admin)]):
 async def admin_gemini_check(admin: Annotated[dict, Depends(require_admin)]):
     """Fire one tiny live call per configured GEMINI_API_KEYS entry and
     report which work. Never returns key material (position + 4-char tail
-    only). Blocking HTTP, so run it off the event loop."""
-    return await asyncio.to_thread(gemini_client.check_keys)
+    only). Blocking HTTP, so run it off the event loop.
+
+    `verdict` is the bottom line the user actually cares about — whether
+    tagging will do anything right now — computed the same way as the
+    Settings button's tag_state, so a "keys OK" grid never sits next to a
+    "quota full" tagging result without an explanation."""
+    res = await asyncio.to_thread(gemini_client.check_keys)
+    res["verdict"] = await _tagging_readiness()
+    return res
 
 
 @api.get("/admin/dashboard")
@@ -2263,6 +2270,55 @@ async def fashion_analytics(user: Annotated[dict, Depends(get_current_user)]):
     }
 
 
+async def _tagging_readiness(untagged: "int | None" = None) -> dict:
+    """Whether pressing "start tagging" right now will actually do anything —
+    one plain-language line, shared by the Settings button and the Gemini
+    key test so they never disagree.
+
+    Trusts the last real tagging run over a 1-request key probe: a tiny
+    "ping" slips through the per-minute limit while a real burst of hundreds
+    gets 429'd, so a quota-limited run in the last 6h means "still no" even
+    when every key pings OK and the in-memory cooldowns have since expired.
+    """
+    if untagged is None:
+        agg = await db.fashion.aggregate([
+            {"$project": {"n": {"$size": {"$ifNull": ["$images", []]}},
+                          "t": {"$min": [{"$size": {"$ifNull": ["$image_tags", []]}},
+                                         {"$min": [{"$size": {"$ifNull": ["$images", []]}}, _TAG_MAX_PHOTOS_PER_DOC]}]}}},
+            {"$group": {"_id": None,
+                        "taggable": {"$sum": {"$min": ["$n", _TAG_MAX_PHOTOS_PER_DOC]}},
+                        "tagged": {"$sum": "$t"}}},
+        ]).to_list(1)
+        s = agg[0] if agg else {}
+        untagged = max(0, s.get("taggable", 0) - s.get("tagged", 0))
+
+    fmeta = await db.meta.find_one({"_id": "fashion"}, {"_id": 0, "scraping": 1, "phase": 1}) or {}
+    ss = gemini_client.slot_status()
+    jr = (await db.meta.find_one({"_id": "job_runs"}, {"_id": 0}) or {}).get("items", [])
+    last_tag = next((r for r in jr if r.get("job") == "fashion_tag_photos"), None)
+    quota_recent = False
+    if last_tag and last_tag.get("status") in ("partial", "error") and "kota" in (last_tag.get("reason") or "").lower():
+        try:
+            fin = datetime.fromisoformat((last_tag.get("finished_at") or "").replace("Z", "+00:00"))
+            quota_recent = datetime.now(timezone.utc) - fin < timedelta(hours=6)
+        except Exception:
+            quota_recent = False
+
+    if not gemini_client.ENABLED:
+        return {"can_run": False, "label": "Gemini anahtarı tanımlı değil", "untagged": untagged}
+    if fmeta.get("scraping") and fmeta.get("phase") in ("tagging_photos", "tagging_firstview"):
+        return {"can_run": False, "label": "Etiketleme şu anda çalışıyor", "untagged": untagged}
+    if untagged <= 0:
+        return {"can_run": False, "label": "Tüm fotoğraflar etiketli", "untagged": 0}
+    if ss.get("all_cooling") or quota_recent:
+        secs = ss.get("resumes_in_s")
+        when = f" (~{max(1, round(secs / 60))} dk)" if (ss.get("all_cooling") and secs) else ""
+        return {"can_run": False,
+                "label": f"Günlük Gemini kotası dolu — gece 04:00'te devam edecek{when}",
+                "untagged": untagged}
+    return {"can_run": True, "label": f"Hazır — {untagged} fotoğraf etiketlenecek", "untagged": untagged}
+
+
 @api.get("/fashion/meta")
 async def fashion_meta(user: Annotated[dict, Depends(get_current_user)]):
     meta = await db.meta.find_one({"_id": "fashion"}, {"_id": 0}) or {}
@@ -2293,34 +2349,10 @@ async def fashion_meta(user: Annotated[dict, Depends(get_current_user)]):
     meta["photos_tagged"] = stats.get("photos_tagged", 0)
     meta["photos_taggable"] = stats.get("photos_taggable", 0)
 
-    # Honest one-liner for the Settings "Fotoğraf Etiketle" button, so it
-    # says the real state ("kota dolu — 04:00'te", "hepsi etiketli",
-    # "hazır — N fotoğraf") instead of always looking ready and then doing
-    # nothing when pressed.
+    # Honest one-liner for the Settings "Fotoğraf Etiketle" button (and the
+    # Gemini key test's verdict — same helper, so the two never disagree).
     untagged = max(0, stats.get("photos_taggable", 0) - stats.get("photos_tagged", 0))
-    ss = gemini_client.slot_status()
-    jr = (await db.meta.find_one({"_id": "job_runs"}, {"_id": 0}) or {}).get("items", [])
-    last_tag = next((r for r in jr if r.get("job") == "fashion_tag_photos"), None)
-    quota_recent = False
-    if last_tag and last_tag.get("status") in ("partial", "error") and "kota" in (last_tag.get("reason") or "").lower():
-        try:
-            fin = datetime.fromisoformat((last_tag.get("finished_at") or "").replace("Z", "+00:00"))
-            quota_recent = datetime.now(timezone.utc) - fin < timedelta(hours=6)
-        except Exception:
-            quota_recent = False
-    if not gemini_client.ENABLED:
-        ts = {"can_run": False, "label": "Gemini anahtarı tanımlı değil"}
-    elif meta.get("scraping") and meta.get("phase") in ("tagging_photos", "tagging_firstview"):
-        ts = {"can_run": False, "label": "Etiketleme şu anda çalışıyor"}
-    elif untagged <= 0:
-        ts = {"can_run": False, "label": "Tüm fotoğraflar etiketli"}
-    elif ss.get("all_cooling") or quota_recent:
-        secs = ss.get("resumes_in_s")
-        when = f" (~{max(1, round(secs / 60))} dk)" if (ss.get("all_cooling") and secs) else ""
-        ts = {"can_run": False, "label": f"Günlük Gemini kotası dolu — gece 04:00'te devam edecek{when}"}
-    else:
-        ts = {"can_run": True, "label": f"Hazır — {untagged} fotoğraf etiketlenecek"}
-    meta["tag_state"] = ts
+    meta["tag_state"] = await _tagging_readiness(untagged)
     return meta
 
 

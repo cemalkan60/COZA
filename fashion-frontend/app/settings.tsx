@@ -414,8 +414,21 @@ export default function Settings() {
                   <Text style={{ color: colors.error, fontSize: 12 }}>{geminiCheck.error}</Text>
                 ) : (
                   <>
+                    {!!geminiCheck.verdict && (
+                      <Text
+                        style={{
+                          color: geminiCheck.verdict.can_run ? colors.success : colors.error,
+                          fontWeight: "800",
+                          fontSize: 13,
+                          marginBottom: 12,
+                        }}
+                      >
+                        {geminiCheck.verdict.can_run ? "✅ " : "⛔ "}
+                        {geminiCheck.verdict.label}
+                      </Text>
+                    )}
                     <View style={styles.metaRow}>
-                      <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Çalışan slot</Text>
+                      <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Geçerli anahtar</Text>
                       <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
                         {geminiCheck.slots_ok ?? 0} / {geminiCheck.slot_count} ({geminiCheck.key_count} anahtar × {geminiCheck.models?.length ?? 0} model)
                       </Text>
@@ -435,7 +448,7 @@ export default function Settings() {
                             marginLeft: 12,
                           }}
                         >
-                          {k.ok ? (k.quota_exhausted ? "⚠︎ kota dolu" : "✓ çalışıyor") : "✗ " + (k.detail || "hata")}
+                          {k.ok ? (k.quota_exhausted ? "⚠︎ kota dolu" : "✓ geçerli") : "✗ " + (k.detail || "hata")}
                         </Text>
                       </View>
                     ))}
