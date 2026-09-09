@@ -95,6 +95,42 @@ _DL_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="gemini-img")
 
 ENABLED = bool(_KEYS)
 
+# --- Per-run failure tally (why did a tagging pass tag nothing?) -------------
+# tag_images / _download_image bump these counters by category so the caller
+# (run_fashion_tag_photos) can write a REAL reason into the Admin panel's
+# "son işlemler" history instead of guessing from slot_status(). Keys are
+# short stable slugs; the server maps them to a Turkish sentence.
+#   dl_http_404 / dl_http_403 / dl_http_5xx / dl_http_other  photo download HTTP error
+#   dl_timeout / dl_conn / dl_other                          photo download network error
+#   dl_not_image                                             download ok but not an image
+#   gemini_all_cooling                                       every key on cooldown (daily quota)
+#   gemini_no_reply                                          Gemini returned nothing (not cooling)
+#   gemini_bad_json                                          reply had no / unparseable JSON
+#   gemini_count_mismatch                                    reply had the wrong number of items
+#   ok                                                       photo got a tag
+_TAG_STATS_LOCK = threading.Lock()
+_TAG_STATS: dict = {}
+
+
+def reset_tag_stats() -> None:
+    """Clear the failure tally — call once at the start of a tagging sweep."""
+    with _TAG_STATS_LOCK:
+        _TAG_STATS.clear()
+
+
+def tag_stats() -> dict:
+    """Snapshot of the failure tally since the last reset_tag_stats()."""
+    with _TAG_STATS_LOCK:
+        return dict(_TAG_STATS)
+
+
+def _tag_stat(reason: str, n: int = 1) -> None:
+    if n <= 0:
+        return
+    with _TAG_STATS_LOCK:
+        _TAG_STATS[reason] = _TAG_STATS.get(reason, 0) + n
+
+
 _IMG_DOWNLOAD_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -426,17 +462,45 @@ def _clean_tag(obj) -> "Optional[dict]":
 
 
 def _download_image(image_url: str) -> "Optional[dict]":
-    """Fetch one image and return a generateContent inline_data part, or None."""
+    """Fetch one image and return a generateContent inline_data part, or None.
+    On any failure, records the reason in the per-run tally (see _tag_stat) so
+    the caller can report WHY a tagging pass stalled instead of guessing."""
     try:
         r = requests.get(image_url, headers=_IMG_DOWNLOAD_HEADERS, timeout=15)
         r.raise_for_status()
-        mime = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
-        if not mime.startswith("image/"):
-            mime = "image/jpeg"
-        return {"inline_data": {"mime_type": mime, "data": base64.b64encode(r.content).decode("ascii")}}
+    except requests.Timeout:
+        _tag_stat("dl_timeout")
+        logger.warning("gemini_client: image download timed out: %r", image_url)
+        return None
+    except requests.HTTPError as exc:
+        code = getattr(exc.response, "status_code", 0) or 0
+        bucket = (
+            "dl_http_404" if code == 404 else
+            "dl_http_403" if code == 403 else
+            "dl_http_5xx" if 500 <= code < 600 else
+            "dl_http_other"
+        )
+        _tag_stat(bucket)
+        logger.warning("gemini_client: image download HTTP %s: %r", code, image_url)
+        return None
+    except requests.RequestException as exc:
+        _tag_stat("dl_conn")
+        logger.warning("gemini_client: image download failed (%s): %r", type(exc).__name__, image_url)
+        return None
     except Exception as exc:  # noqa: BLE001
+        _tag_stat("dl_other")
         logger.warning("gemini_client: failed to download image %r: %s", image_url, exc)
         return None
+    mime = (r.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip().lower()
+    if mime in ("text/html", "application/json", "application/xml", "text/xml", "text/plain"):
+        # A 200 that's actually an error page / bucket-listing XML — feeding it
+        # to Gemini just burns a request. Treat it as an unreachable photo.
+        _tag_stat("dl_not_image")
+        logger.warning("gemini_client: download was %s, not an image: %r", mime, image_url)
+        return None
+    if not mime.startswith("image/"):
+        mime = "image/jpeg"
+    return {"inline_data": {"mime_type": mime, "data": base64.b64encode(r.content).decode("ascii")}}
 
 
 def tag_images(image_urls: list) -> list:
@@ -461,18 +525,28 @@ def tag_images(image_urls: list) -> list:
 
     out: list = [None] * n
 
+    def _blame_no_reply(count: int) -> None:
+        """A None from _generate is either 'every key on cooldown' (daily
+        quota spent — recovers itself) or 'asked but got nothing back'."""
+        _tag_stat("gemini_all_cooling" if slot_status().get("all_cooling") else "gemini_no_reply", count)
+
     # One good image left -> the single-object prompt parses more reliably
     # than asking for a 1-element array.
     if len(ok_idx) == 1:
         i = ok_idx[0]
         text = _generate([{"text": _TAG_PROMPT_ONE}, downloaded[i]], max_output_tokens=256)
-        if text:
-            m = re.search(r"\{.*\}", text, re.DOTALL)
-            if m:
-                try:
-                    out[i] = _clean_tag(json.loads(m.group(0)))
-                except Exception:  # noqa: BLE001
-                    pass
+        if not text:
+            _blame_no_reply(1)
+            return out
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if not m:
+            _tag_stat("gemini_bad_json")
+            return out
+        try:
+            out[i] = _clean_tag(json.loads(m.group(0)))
+            _tag_stat("ok")
+        except Exception:  # noqa: BLE001
+            _tag_stat("gemini_bad_json")
         return out
 
     parts = [{"text": _tag_prompt_batch(len(ok_idx))}]
@@ -481,24 +555,29 @@ def tag_images(image_urls: list) -> list:
     # ~90 output tokens per object is plenty for this fixed 4-field shape.
     text = _generate(parts, max_output_tokens=64 + 90 * len(ok_idx), timeout=60)
     if not text:
+        _blame_no_reply(len(ok_idx))
         return out
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if not m:
         logger.warning("gemini_client: batch reply had no JSON array")
+        _tag_stat("gemini_bad_json", len(ok_idx))
         return out
     try:
         arr = json.loads(m.group(0))
     except Exception as exc:  # noqa: BLE001
         logger.warning("gemini_client: batch JSON array unparseable: %s", exc)
+        _tag_stat("gemini_bad_json", len(ok_idx))
         return out
     if not isinstance(arr, list) or len(arr) != len(ok_idx):
         logger.warning(
             "gemini_client: batch returned %s items, expected %d",
             len(arr) if isinstance(arr, list) else type(arr).__name__, len(ok_idx),
         )
+        _tag_stat("gemini_count_mismatch", len(ok_idx))
         return out
     for pos, i in enumerate(ok_idx):
         out[i] = _clean_tag(arr[pos])
+    _tag_stat("ok", len(ok_idx))
     return out
 
 

@@ -2642,6 +2642,10 @@ async def run_fashion_tag_photos() -> dict:
         return {"status": "already_running"}
     async with _fashion_lock:
         started_at = datetime.now(timezone.utc).isoformat()
+        # Fresh failure tally for this run — gemini_client bumps it per photo
+        # (download 404 / timeout / quota / bad reply / ok) so the outcome
+        # below can name the real reason a pass stalled, not a guess.
+        gemini_client.reset_tag_stats()
         # A re-scrape replaces `images` but leaves `image_tags` — if the new
         # gallery is shorter, trim the tags back to a valid prefix so the
         # remaining photos get (re-)tagged and progress counts stay sane.
@@ -2685,11 +2689,17 @@ async def run_fashion_tag_photos() -> dict:
             results = await asyncio.gather(*(_tag_one_doc(d, sem) for d in batch_docs))
             pass_tagged = sum(results)
             tagged += pass_tagged
-            # re-read: which of this pass's docs still aren't fully tagged?
+            # A doc that gained zero tags this pass is stuck on something that
+            # won't clear within this run — a dead (404) photo in the middle of
+            # its gallery, or the day's quota running out mid-doc. Drop it from
+            # `need` so we don't re-download (and re-count) the same failing
+            # photo every pass; the nightly 04:00 sweep retries it fresh.
+            stuck = {d["source_id"] for d, got in zip(batch_docs, results) if got == 0}
+            retry_ids = [d["source_id"] for d in batch_docs if d["source_id"] not in stuck]
             still = await db.fashion.find(
-                {"source_id": {"$in": [d["source_id"] for d in batch_docs]}},
+                {"source_id": {"$in": retry_ids}},
                 {"_id": 0, "source_id": 1, "images": 1, "image_tags": 1},
-            ).to_list(length=None)
+            ).to_list(length=None) if retry_ids else []
             need = [d["source_id"] for d in still if len(d.get("image_tags") or []) < _doc_taggable(d)]
             if pass_tagged == 0:
                 logger.info("Fashion tagging: a full pass tagged nothing (quota spent or photos unreachable) — stopping, resumes next run.")
@@ -2700,33 +2710,69 @@ async def run_fashion_tag_photos() -> dict:
         logger.info("Fashion tagging: run finished, %d photo(s) tagged.", tagged)
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
 
+        # Turn the per-photo failure tally into a plain-language reason, so
+        # "it stopped" has a real answer in the Admin panel instead of a
+        # guess from slot_status().
+        stats = gemini_client.tag_stats()
+
+        def _sum(*keys: str) -> int:
+            return sum(stats.get(k, 0) for k in keys)
+
+        dl_404 = _sum("dl_http_404")
+        dl_403 = _sum("dl_http_403")
+        dl_5xx = _sum("dl_http_5xx", "dl_http_other")
+        dl_net = _sum("dl_timeout", "dl_conn", "dl_other")
+        dl_notimg = _sum("dl_not_image")
+        g_quota = _sum("gemini_all_cooling")
+        g_noreply = _sum("gemini_no_reply")
+        g_badreply = _sum("gemini_bad_json", "gemini_count_mismatch")
+        fail_total = dl_404 + dl_403 + dl_5xx + dl_net + dl_notimg + g_quota + g_noreply + g_badreply
+
+        bits = []
+        if dl_404:
+            bits.append(f"{dl_404} fotoğraf depolamada yok (404) — bunlar ancak bir kez tam 'geçmişi tara' ile geri gelir")
+        if dl_403:
+            bits.append(f"{dl_403} fotoğraf erişime kapalı (403)")
+        if dl_notimg:
+            bits.append(f"{dl_notimg} adres fotoğraf yerine hata sayfası döndürdü")
+        if dl_5xx:
+            bits.append(f"{dl_5xx} fotoğrafta depolama geçici hata verdi")
+        if dl_net:
+            bits.append(f"{dl_net} fotoğraf indirilemedi (bağlantı/zaman aşımı)")
+        if g_quota:
+            bits.append(f"{g_quota} fotoğrafta günlük Gemini kotası doluydu")
+        if g_noreply:
+            bits.append(f"{g_noreply} fotoğrafta Gemini yanıt vermedi")
+        if g_badreply:
+            bits.append(f"{g_badreply} fotoğrafta Gemini yanıtı okunamadı")
+
         status, reason = "ok", ""
         if stopped_early or tagged < total_photos:
             status = "partial"
-            slots = gemini_client.slot_status()
-            if slots.get("all_cooling"):
-                mins = max(1, round((slots.get("resumes_in_s") or 0) / 60))
-                reason = (
-                    f"Günlük Gemini kotası tükendi — tüm API anahtarları/modelleri geçici olarak "
-                    f"soğumada (~{mins} dk sonra tekrar denenecek). Kalan fotoğraflar otomatik olarak "
-                    f"bir sonraki taramada (her gün 04:00) etiketlenmeye devam edecek."
-                )
-            elif slots.get("cooling_count"):
-                reason = (
-                    "Gemini anahtarlarının bir kısmı soğumada, bir kısmı fotoğraflara erişilemedi ya da "
-                    "yanıt ayrıştırılamadı. Kalan fotoğraflar bir sonraki taramada tekrar denenecek."
-                )
+            if bits:
+                reason = "Duruş nedeni — " + "; ".join(bits) + ". Kalanlar her gün 04:00'teki taramada tekrar denenir."
             else:
-                reason = (
-                    "Bazı fotoğraflara ulaşılamadı (kaynak/CDN erişim sorunu) ya da yapay zeka yanıtı "
-                    "ayrıştırılamadı. Kalan fotoğraflar bir sonraki taramada tekrar denenecek."
-                )
+                slots = gemini_client.slot_status()
+                if slots.get("all_cooling"):
+                    mins = max(1, round((slots.get("resumes_in_s") or 0) / 60))
+                    reason = (
+                        f"Günlük Gemini kotası tükendi — tüm anahtarlar ~{mins} dk soğumada. "
+                        f"Kalanlar her gün 04:00'teki taramada tekrar denenir."
+                    )
+                else:
+                    reason = (
+                        "Bir kısım fotoğrafa ulaşılamadı ya da yapay zeka yanıtı okunamadı. "
+                        "Kalanlar bir sonraki taramada tekrar denenir."
+                    )
+        detail = f"{tagged}/{total_photos} fotoğraf etiketlendi"
+        if fail_total:
+            detail += f" · {fail_total} başarısız deneme"
+        logger.info("Fashion tagging: failure tally %s", stats or "{}")
         await _record_job_run(
             "fashion_tag_photos", status=status, started_at=started_at,
-            done=tagged, total=total_photos, reason=reason,
-            detail=f"{tagged}/{total_photos} fotoğraf etiketlendi",
+            done=tagged, total=total_photos, reason=reason, detail=detail,
         )
-        return {"status": "ok", "total_photos": total_photos, "tagged": tagged}
+        return {"status": "ok", "total_photos": total_photos, "tagged": tagged, "stats": stats}
 
 
 @api.post("/admin/fashion-tag-firstview")
