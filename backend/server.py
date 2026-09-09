@@ -2058,6 +2058,7 @@ async def fashion_collections(
     category: Optional[str] = None,
     city: Optional[str] = None,
     source: Optional[str] = None,
+    brand: Optional[str] = None,
     sort: str = "newest",
     q: Optional[str] = None,
     skip: int = Query(0, ge=0),
@@ -2080,6 +2081,9 @@ async def fashion_collections(
         query["city"] = city
     if source:
         query["sources"] = source
+    if brand and brand.strip():
+        # exact house match (case-insensitive) — for the brand page
+        query["brand_tr"] = {"$regex": f"^{re.escape(brand.strip())}$", "$options": "i"}
     if q:
         qs = q.strip()
         query["$or"] = [
@@ -2226,23 +2230,26 @@ async def fashion_looks(
     if tconds:
         match["image_tags"] = {"$elemMatch": tconds}
 
-    q_re = re.escape(q) if q else ""
+    proj = {
+        "_id": 0, "sid": "$source_id", "brand_tr": 1, "season_label": 1,
+        "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1,
+        "season_rank": 1, "updated_at": 1, "feed_seq": 1,
+    }
+    if q:
+        # did this collection match the query by TEXT (brand/season/city)? If
+        # so every photo of it is a hit; if it only matched via qtags, keep
+        # just the photos whose own tags match. (Only add this field when
+        # there IS a query — a literal in an inclusion $project would break it.)
+        q_re = re.escape(q)
+        proj["q_text_hit"] = {"$or": [
+            {"$regexMatch": {"input": {"$ifNull": ["$brand_tr", ""]}, "regex": q_re, "options": "i"}},
+            {"$regexMatch": {"input": {"$ifNull": ["$title_tr", ""]}, "regex": q_re, "options": "i"}},
+            {"$regexMatch": {"input": {"$ifNull": ["$season_label", ""]}, "regex": q_re, "options": "i"}},
+            {"$regexMatch": {"input": {"$ifNull": ["$city", ""]}, "regex": q_re, "options": "i"}},
+        ]}
     pipeline: list = [
         {"$match": match},
-        {"$project": {
-            "_id": 0, "sid": "$source_id", "brand_tr": 1, "season_label": 1,
-            "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1,
-            "season_rank": 1, "updated_at": 1, "feed_seq": 1,
-            # did this collection match the query by TEXT (brand/season/city)?
-            # If so, every one of its photos is a valid hit; if it only
-            # matched via qtags, keep just the photos whose tags match.
-            "q_text_hit": {"$or": [
-                {"$regexMatch": {"input": {"$ifNull": ["$brand_tr", ""]}, "regex": q_re, "options": "i"}},
-                {"$regexMatch": {"input": {"$ifNull": ["$title_tr", ""]}, "regex": q_re, "options": "i"}},
-                {"$regexMatch": {"input": {"$ifNull": ["$season_label", ""]}, "regex": q_re, "options": "i"}},
-                {"$regexMatch": {"input": {"$ifNull": ["$city", ""]}, "regex": q_re, "options": "i"}},
-            ]} if q else False,
-        }},
+        {"$project": proj},
         {"$unwind": {"path": "$image_tags", "includeArrayIndex": "i"}},
     ]
     post_conds: list = []
