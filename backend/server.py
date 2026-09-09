@@ -1719,6 +1719,15 @@ async def admin_gemini_check(admin: Annotated[dict, Depends(require_admin)]):
     return res
 
 
+@api.get("/admin/gemini-models")
+async def admin_gemini_models(admin: Annotated[dict, Depends(require_admin)]):
+    """Probe a list of candidate Gemini models (against key 1) so the
+    operator can see which still work and add them to GEMINI_MODELS — every
+    extra working model is another free-tier daily quota bucket across the
+    same keys. Read-only; slow-ish (one request per candidate)."""
+    return await asyncio.to_thread(gemini_client.discover_models)
+
+
 @api.get("/admin/dashboard")
 async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
     """Everything the admin panel needs in one call. Admin-only (viewers get

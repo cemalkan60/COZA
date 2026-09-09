@@ -372,6 +372,51 @@ def check_keys(timeout: int = 12) -> dict:
     return out
 
 
+# Models worth probing as ADD-ONS to the rotation. Every (key, model) pair
+# on the free tier carries its OWN separate daily quota, so each model that
+# still works multiplies total tagging capacity across the same 8 keys.
+# Google retires these silently (2.0/2.5-flash-lite went 404 in Sep 2026),
+# so which to actually use is decided by a live probe, not this list.
+_CANDIDATE_MODELS = [
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-3-flash",
+    "gemini-3-pro-preview",
+]
+
+
+def discover_models(timeout: int = 10) -> dict:
+    """Probe each candidate model once (against the first key only — model
+    availability is per free-tier project, not per key) so an operator can
+    see which are alive and not quota-blocked, then add the good ones to
+    GEMINI_MODELS. Read-only; never touches the live rotation."""
+    out = {"configured": list(_MODELS), "candidates": []}
+    if not _KEYS:
+        return out
+    key = _KEYS[0]
+    for i, m in enumerate(_CANDIDATE_MODELS):
+        if i:
+            time.sleep(1.0)  # don't trip the per-minute limit and false-positive "quota"
+        r = _probe(key, m, timeout)
+        out["candidates"].append({
+            "model": m,
+            "ok": r["ok"],
+            "quota_exhausted": r["quota_exhausted"],
+            "configured": m in _MODELS,
+            "detail": r["detail"],
+        })
+    # Suggested env value: the working models, current ones first.
+    good = [c["model"] for c in out["candidates"] if c["ok"]]
+    good.sort(key=lambda m: (m not in _MODELS, _CANDIDATE_MODELS.index(m)))
+    out["suggested_env"] = ",".join(good)
+    return out
+
+
 # --------------------------------------------------------------------------
 # Brand-name resolution (text only)
 # --------------------------------------------------------------------------

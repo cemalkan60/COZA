@@ -194,6 +194,13 @@ export const api = {
     // Settings tag button's tag_state (see _tagging_readiness in server.py).
     verdict?: { can_run: boolean; label: string; untagged?: number };
   }> => request("/admin/gemini-check", {}, true),
+  // Probe candidate Gemini models — each working one is another free-tier
+  // daily quota bucket to add to GEMINI_MODELS. See discover_models.
+  geminiModels: (): Promise<{
+    configured: string[];
+    candidates: { model: string; ok: boolean; quota_exhausted: boolean; configured: boolean; detail: string }[];
+    suggested_env: string;
+  }> => request("/admin/gemini-models", {}, true),
   // Everything the admin dashboard renders, in one call. Admin-only (403 for viewers).
   adminDashboard: (): Promise<AdminDashboard> => request("/admin/dashboard", {}, true),
 };

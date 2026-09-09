@@ -24,6 +24,8 @@ export default function Settings() {
   const [scrapeMsg, setScrapeMsg] = useState("");
   const [geminiCheck, setGeminiCheck] = useState<any>(null);
   const [geminiChecking, setGeminiChecking] = useState(false);
+  const [models, setModels] = useState<any>(null);
+  const [modelsChecking, setModelsChecking] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -165,6 +167,20 @@ export default function Settings() {
       setGeminiCheck({ error: e?.message || "Kontrol edilemedi." });
     } finally {
       setGeminiChecking(false);
+    }
+  };
+
+  const runModelScan = async () => {
+    setModelsChecking(true);
+    setModels(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      const res = await api.geminiModels();
+      setModels(res);
+    } catch (e: any) {
+      setModels({ error: e?.message || "Taranamadı." });
+    } finally {
+      setModelsChecking(false);
     }
   };
 
@@ -474,6 +490,58 @@ export default function Settings() {
                       <Text style={{ color: colors.error, fontSize: 12, marginTop: 8 }}>
                         Backend hiç anahtar görmüyor — Railway&apos;de GEMINI_API_KEYS ayarlı mı?
                       </Text>
+                    )}
+                  </>
+                )}
+              </View>
+            )}
+            <Pressable
+              testID="gemini-models"
+              onPress={runModelScan}
+              disabled={modelsChecking}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: modelsChecking ? 0.6 : 1 }]}
+            >
+              <Feather name="layers" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
+                {modelsChecking ? "Taranıyor…" : "Kullanılabilir Modelleri Bul"}
+              </Text>
+            </Pressable>
+            {!!models && (
+              <View style={[styles.metaCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                {models.error ? (
+                  <Text style={{ color: colors.error, fontSize: 12 }}>{models.error}</Text>
+                ) : (
+                  <>
+                    <Text style={{ color: colors.brandSecondary, fontSize: 11, marginBottom: 10 }}>
+                      Her çalışan model = anahtar başına ayrı bir günlük kota. İyi olanları Railway&apos;de{" "}
+                      <Text style={{ fontWeight: "800" }}>GEMINI_MODELS</Text> değişkenine virgülle ekle.
+                    </Text>
+                    {(models.candidates ?? []).map((c: any) => (
+                      <View key={c.model} style={[styles.metaRow, { marginTop: 6 }]}>
+                        <Text style={{ color: colors.brandSecondary, fontSize: 12, flexShrink: 1 }}>
+                          {c.model}{c.configured ? " · kullanılıyor" : ""}
+                        </Text>
+                        <Text
+                          style={{
+                            color: c.ok ? (c.quota_exhausted ? colors.brandSecondary : colors.success) : colors.error,
+                            fontWeight: "700",
+                            fontSize: 12,
+                            textAlign: "right",
+                            marginLeft: 12,
+                            flexShrink: 1,
+                          }}
+                        >
+                          {c.ok ? (c.quota_exhausted ? "⚠︎ kota dolu (geçerli)" : "✓ eklenebilir") : "✗ " + (c.detail || "yok")}
+                        </Text>
+                      </View>
+                    ))}
+                    {!!models.suggested_env && (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ color: colors.brandSecondary, fontSize: 11 }}>Önerilen değer:</Text>
+                        <Text selectable style={{ color: colors.onSurface, fontSize: 12, marginTop: 4, fontWeight: "700" }}>
+                          GEMINI_MODELS={models.suggested_env}
+                        </Text>
+                      </View>
                     )}
                   </>
                 )}
