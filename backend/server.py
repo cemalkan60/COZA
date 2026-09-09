@@ -2108,6 +2108,86 @@ async def fashion_collections(
 _THIN_GALLERY_MAX = 2
 
 
+def _tag_profile(image_tags: list, per_facet: int = 3) -> dict:
+    """The few most common item/color/material words across a collection's
+    photo tags — a cheap fingerprint for the "similar collections" match."""
+    from collections import Counter
+    counts = {"item": Counter(), "color": Counter(), "material": Counter()}
+    for tg in image_tags or []:
+        if not isinstance(tg, dict):
+            continue
+        for f in counts:
+            v = (tg.get(f) or "").strip().lower()
+            if v and v not in ("none", "n/a", "unknown", "plain", "solid"):
+                counts[f][v] += 1
+    return {f: [w for w, _ in c.most_common(per_facet)] for f, c in counts.items()}
+
+
+@api.get("/fashion/collections/{source_id}/similar")
+async def fashion_similar(source_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    """Up to 12 other collections that resemble this one — weighted by
+    shared photo tags + same house + near season + same city."""
+    src = await db.fashion.find_one(
+        {"source_id": source_id},
+        {"_id": 0, "brand_tr": 1, "season": 1, "season_rank": 1, "city": 1, "category": 1,
+         "image_tags": {"$slice": 120}},
+    )
+    if not src:
+        raise HTTPException(404, "Koleksiyon bulunamadı.")
+    prof = _tag_profile(src.get("image_tags") or [])
+    tag_words = {w for ws in prof.values() for w in ws}
+    ors: list = []
+    if src.get("brand_tr"):
+        ors.append({"brand_tr": src["brand_tr"]})
+    if src.get("season"):
+        ors.append({"season": src["season"]})
+    if src.get("city"):
+        ors.append({"city": src["city"]})
+    for f, ws in prof.items():
+        if ws:
+            ors.append({f"image_tags.{f}": {"$in": ws}})
+    if not ors:
+        return {"items": []}
+
+    cands = await db.fashion.find(
+        {"$and": [{"source_id": {"$ne": source_id}}, {"$or": ors}]},
+        {"_id": 0, "source_id": 1, "brand_tr": 1, "season": 1, "season_label": 1, "season_rank": 1,
+         "city": 1, "image": 1, "image_thumb": 1, "images": 1, "images_thumb": 1,
+         "image_tags": {"$slice": 60}},
+    ).limit(250).to_list(length=250)
+
+    s_rank = src.get("season_rank")
+    scored = []
+    for c in cands:
+        score = 0
+        if src.get("brand_tr") and c.get("brand_tr") == src["brand_tr"]:
+            score += 3
+        if src.get("season") and c.get("season") == src["season"]:
+            score += 2
+        elif s_rank is not None and c.get("season_rank") is not None and abs(c["season_rank"] - s_rank) <= 1:
+            score += 1
+        if src.get("city") and c.get("city") == src["city"]:
+            score += 1
+        cprof = _tag_profile(c.get("image_tags") or [])
+        cwords = {w for ws in cprof.values() for w in ws}
+        score += min(4, len(tag_words & cwords))
+        if score > 0:
+            scored.append((score, c))
+    scored.sort(key=lambda t: (t[0], t[1].get("season_rank") or -1), reverse=True)
+
+    out = []
+    for _, c in scored[:12]:
+        out.append({
+            "source_id": c["source_id"],
+            "brand_tr": c.get("brand_tr", ""),
+            "season": c.get("season", ""),
+            "season_label": c.get("season_label", ""),
+            "image": (c.get("image_thumb") or c.get("image")
+                      or (c.get("images_thumb") or [None])[0] or (c.get("images") or [None])[0]),
+        })
+    return {"items": out}
+
+
 @api.get("/fashion/collections/{source_id}")
 async def fashion_collection_detail(source_id: str):
     """Full runway gallery (all photos) for one collection, fetched on demand and cached.
