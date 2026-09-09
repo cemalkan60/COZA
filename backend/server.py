@@ -2622,12 +2622,11 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
 # few hundred photos (firstview_scraper._MAX_GALLERY_IMAGES) — while still
 # bounding a pathological doc. Lower it via env if Gemini quota gets tight.
 _TAG_MAX_PHOTOS_PER_DOC = int(os.environ.get("FASHION_TAG_MAX_PHOTOS_PER_DOC", "400"))
-# Photos per Gemini request (see gemini_client.tag_images). The free tier's
-# ceiling is requests/DAY, so packing more photos per request stretches it —
-# but flash-lite gets flaky returning a clean N-object JSON array past ~6
-# images (malformed reply -> whole batch wasted -> quota spent for nothing),
-# so 6 is the sweet spot. Raise via env once a better model is available.
-_TAG_BATCH = int(os.environ.get("GEMINI_TAG_BATCH", "6"))
+# Photos per Gemini request (see gemini_client.tag_images). flash-lite got
+# flaky returning a clean N-object JSON array past ~6 images; gemini-3.6-flash
+# (paid) handles structured output better, so 8. Drop back to 6 via
+# GEMINI_TAG_BATCH if "yanıt okunamadı" counts climb.
+_TAG_BATCH = int(os.environ.get("GEMINI_TAG_BATCH", "8"))
 # Wall-clock budget for one tag_images() call, scaled by batch size. Generous
 # on purpose: a batch that's waiting out a per-key throttle delay, or slot
 # cooldowns forcing rotation, can otherwise look timed-out when it was only
@@ -2930,7 +2929,7 @@ async def run_fashion_tag_photos() -> dict:
             upsert=True,
         )
 
-        sem = asyncio.Semaphore(int(os.environ.get("FASHION_TAG_DOC_CONCURRENCY", "12")))
+        sem = asyncio.Semaphore(int(os.environ.get("FASHION_TAG_DOC_CONCURRENCY", "24")))
         # Keep going in passes: a batch that fails (a slot cooling out on a
         # per-minute 429, a briefly-unreachable photo) makes _tag_one_doc
         # abandon the rest of that doc for the pass. Without a loop the whole

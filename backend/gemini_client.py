@@ -81,17 +81,17 @@ _MODELS = _split_env("GEMINI_MODELS") or (
     else ["gemini-3.5-flash-lite"]
 )
 
-# Minimum seconds between two requests that reuse the SAME key (a free
-# project's rate limit is per-project, so this is tracked per key, not
-# globally -- with N keys the effective aggregate spacing is ~1/N of this).
-# 3s ~= 20 req/min/key; if a key's real ceiling is tighter the odd 429 just
-# cools that one (key,model) slot for a bit while the others keep going.
-_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "3.0"))
+# Minimum seconds between two requests that reuse the SAME key (rate limits
+# are per-project, tracked per key). Default 0.25s (~240 req/min/key) suits
+# a single PAID key — the free tier is far tighter, so set
+# GEMINI_MIN_INTERVAL_S=3 in the env if you go back to free keys. A too-low
+# value just earns the odd 429, which cools that slot briefly.
+_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "0.25"))
 
 # Image downloads for a batch run in parallel (each _download_image is a
 # blocking requests.get) -- serial downloads were most of a batch's
 # wall-clock time, leaving the per-key request budget under-used.
-_DL_POOL = ThreadPoolExecutor(max_workers=8, thread_name_prefix="gemini-img")
+_DL_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="gemini-img")
 
 ENABLED = bool(_KEYS)
 
