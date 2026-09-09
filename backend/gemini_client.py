@@ -228,10 +228,28 @@ def _endpoint(model: str) -> str:
     return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
-def _generate(parts: list, max_output_tokens: int, timeout: int = 40) -> "Optional[str]":
+def _gen_config(max_output_tokens: int, *, response_json: bool, bare: bool = False) -> dict:
+    cfg = {"temperature": 0, "maxOutputTokens": max_output_tokens}
+    if bare:
+        return cfg
+    # A bounded classification / lookup never needs the model to "think" —
+    # on gemini-2.5+/3.x thinking burns the output-token budget before any
+    # answer is emitted, which showed up as ~100% "yanıt okunamadı".
+    cfg["thinkingConfig"] = {"thinkingBudget": 0}
+    if response_json:
+        cfg["responseMimeType"] = "application/json"
+    return cfg
+
+
+def _generate(
+    parts: list, max_output_tokens: int, timeout: int = 40, response_json: bool = False,
+) -> "Optional[str]":
     """One generateContent call. Rotates through (key, model) slots on 429 /
     503 / network error until one succeeds or all are cooling. Returns the
-    concatenated text of the first candidate, or None."""
+    concatenated text of the first candidate (thinking parts skipped), or None.
+
+    response_json asks the API for a raw JSON body (no markdown fence / prose)
+    — used by the tagging calls, which parse the reply as JSON."""
     if not ENABLED:
         return None
     attempts = max(len(_SLOTS), 1)
@@ -241,19 +259,34 @@ def _generate(parts: list, max_output_tokens: int, timeout: int = 40) -> "Option
             logger.warning("gemini_client: every (key,model) slot is on cooldown")
             return None
         _throttle(slot.key)
-        try:
-            resp = requests.post(
-                _endpoint(slot.model),
-                params={"key": slot.key},
-                json={
-                    "contents": [{"parts": parts}],
-                    "generationConfig": {"temperature": 0, "maxOutputTokens": max_output_tokens},
-                },
-                timeout=timeout,
-            )
-        except requests.RequestException as exc:
-            logger.warning("gemini_client: network error on %s: %s", slot.model, exc)
-            _cool(slot, quota=False)
+        bare = False
+        for _try in range(2):
+            try:
+                resp = requests.post(
+                    _endpoint(slot.model),
+                    params={"key": slot.key},
+                    json={
+                        "contents": [{"parts": parts}],
+                        "generationConfig": _gen_config(max_output_tokens, response_json=response_json, bare=bare),
+                    },
+                    timeout=timeout,
+                )
+            except requests.RequestException as exc:
+                logger.warning("gemini_client: network error on %s: %s", slot.model, exc)
+                _cool(slot, quota=False)
+                resp = None
+                break
+            # An older model may reject thinkingConfig / responseMimeType with
+            # a 400 — retry once with a plain config before giving up on the slot.
+            if resp.status_code == 400 and not bare and (
+                "thinking" in resp.text.lower() or "responsemimetype" in resp.text.lower()
+                or "not supported" in resp.text.lower() or "unknown name" in resp.text.lower()
+            ):
+                logger.info("gemini_client: %s rejected extended config, retrying bare", slot.model)
+                bare = True
+                continue
+            break
+        if resp is None:
             continue
         if resp.status_code in (429, 503):
             ra = None
@@ -274,7 +307,8 @@ def _generate(parts: list, max_output_tokens: int, timeout: int = 40) -> "Option
             if not candidates:
                 return None
             parts_out = (candidates[0].get("content") or {}).get("parts") or []
-            return "".join(p.get("text", "") for p in parts_out).strip()
+            # Skip internal reasoning parts — only the real answer text.
+            return "".join(p.get("text", "") for p in parts_out if not p.get("thought")).strip()
         except Exception as exc:  # noqa: BLE001
             logger.warning("gemini_client: unparseable response body: %s", exc)
             return None
@@ -576,7 +610,7 @@ def tag_images(image_urls: list) -> list:
     # than asking for a 1-element array.
     if len(ok_idx) == 1:
         i = ok_idx[0]
-        text = _generate([{"text": _TAG_PROMPT_ONE}, downloaded[i]], max_output_tokens=256)
+        text = _generate([{"text": _TAG_PROMPT_ONE}, downloaded[i]], max_output_tokens=256, response_json=True)
         if not text:
             _blame_no_reply(1)
             return out
@@ -595,7 +629,7 @@ def tag_images(image_urls: list) -> list:
     for i in ok_idx:
         parts.append(downloaded[i])
     # ~90 output tokens per object is plenty for this fixed 4-field shape.
-    text = _generate(parts, max_output_tokens=64 + 90 * len(ok_idx), timeout=60)
+    text = _generate(parts, max_output_tokens=64 + 90 * len(ok_idx), timeout=60, response_json=True)
     if not text:
         _blame_no_reply(len(ok_idx))
         return out
