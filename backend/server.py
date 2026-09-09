@@ -2325,9 +2325,13 @@ async def _tagging_readiness(untagged: "int | None" = None) -> dict:
         return {"can_run": False, "label": "Etiketleme şu anda çalışıyor", "untagged": untagged}
     if untagged <= 0:
         return {"can_run": False, "label": "Tüm fotoğraflar etiketli", "untagged": 0}
-    if ss.get("all_cooling") or quota_recent:
+    if ss.get("all_cooling") and not ss.get("all_quota_cooling"):
+        return {"can_run": False,
+                "label": "Gemini isteği reddediyor (model/ayar uyumsuzluğu) — Railway loglarına bak",
+                "untagged": untagged}
+    if ss.get("all_quota_cooling") or quota_recent:
         secs = ss.get("resumes_in_s")
-        when = f" (~{max(1, round(secs / 60))} dk)" if (ss.get("all_cooling") and secs) else ""
+        when = f" (~{max(1, round(secs / 60))} dk)" if (ss.get("all_quota_cooling") and secs) else ""
         return {"can_run": False,
                 "label": f"Günlük Gemini kotası dolu — gece 04:00'te devam edecek{when}",
                 "untagged": untagged}
@@ -2993,9 +2997,11 @@ async def run_fashion_tag_photos() -> dict:
         dl_net = _sum("dl_timeout", "dl_conn", "dl_other")
         dl_notimg = _sum("dl_not_image")
         g_quota = _sum("gemini_all_cooling")
+        g_rejected = _sum("gemini_slots_errored")
         g_noreply = _sum("gemini_no_reply")
         g_badreply = _sum("gemini_bad_json", "gemini_count_mismatch")
-        fail_total = dl_404 + dl_403 + dl_5xx + dl_net + dl_notimg + g_quota + g_noreply + g_badreply
+        fail_total = (dl_404 + dl_403 + dl_5xx + dl_net + dl_notimg
+                      + g_quota + g_rejected + g_noreply + g_badreply)
 
         bits = []
         if dl_404:
@@ -3010,6 +3016,8 @@ async def run_fashion_tag_photos() -> dict:
             bits.append(f"{dl_net} fotoğraf indirilemedi (bağlantı/zaman aşımı)")
         if g_quota:
             bits.append(f"{g_quota} fotoğrafta günlük Gemini kotası doluydu")
+        if g_rejected:
+            bits.append(f"{g_rejected} fotoğrafta Gemini isteği reddetti (model/ayar uyumsuzluğu) — Railway loglarına bak")
         if g_noreply:
             bits.append(f"{g_noreply} fotoğrafta Gemini yanıt vermedi")
         if g_badreply:

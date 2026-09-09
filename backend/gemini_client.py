@@ -103,7 +103,8 @@ ENABLED = bool(_KEYS)
 #   dl_http_404 / dl_http_403 / dl_http_5xx / dl_http_other  photo download HTTP error
 #   dl_timeout / dl_conn / dl_other                          photo download network error
 #   dl_not_image                                             download ok but not an image
-#   gemini_all_cooling                                       every key on cooldown (daily quota)
+#   gemini_all_cooling                                       every key cooled by a real 429 (daily/rate quota)
+#   gemini_slots_errored                                     every key cooled by a 400/other (request rejected)
 #   gemini_no_reply                                          Gemini returned nothing (not cooling)
 #   gemini_bad_json                                          reply had no / unparseable JSON
 #   gemini_count_mismatch                                    reply had the wrong number of items
@@ -149,13 +150,14 @@ _IMG_DOWNLOAD_HEADERS = {
 # have quota. When every slot is cooling, callers get None and the sweep
 # just resumes on its next run (image_tags is a resumable prefix of images).
 class _Slot:
-    __slots__ = ("key", "model", "cool_until", "fails")
+    __slots__ = ("key", "model", "cool_until", "fails", "cooled_quota")
 
     def __init__(self, key: str, model: str):
         self.key = key
         self.model = model
         self.cool_until = 0.0
         self.fails = 0
+        self.cooled_quota = False  # last cooldown was a 429 (vs a 400/network error)
 
 
 _SLOTS = [_Slot(k, m) for k in _KEYS for m in _MODELS]
@@ -192,6 +194,7 @@ def _cool(slot: "_Slot", *, quota: bool, retry_after: "float | None" = None) -> 
     _COOL_MAX_S. Network/5xx cools briefly."""
     with _slot_lock:
         slot.fails += 1
+        slot.cooled_quota = quota
         if retry_after is not None:
             delay = max(5.0, min(retry_after + 2.0, _COOL_MAX_S))
         elif quota:
@@ -205,6 +208,7 @@ def _slot_ok(slot: "_Slot") -> None:
     with _slot_lock:
         slot.fails = 0
         slot.cool_until = 0.0
+        slot.cooled_quota = False
 
 
 def _throttle(key: str) -> None:
@@ -276,13 +280,12 @@ def _generate(
                 _cool(slot, quota=False)
                 resp = None
                 break
-            # An older model may reject thinkingConfig / responseMimeType with
-            # a 400 — retry once with a plain config before giving up on the slot.
-            if resp.status_code == 400 and not bare and (
-                "thinking" in resp.text.lower() or "responsemimetype" in resp.text.lower()
-                or "not supported" in resp.text.lower() or "unknown name" in resp.text.lower()
-            ):
-                logger.info("gemini_client: %s rejected extended config, retrying bare", slot.model)
+            # ANY 400 on the first try → retry once with a plain config
+            # (thinkingConfig / responseMimeType are the usual rejects, but
+            # the error text varies by model, so don't gate on keywords).
+            if resp.status_code == 400 and not bare:
+                logger.info("gemini_client: %s -> 400, retrying with plain config: %s",
+                            slot.model, (resp.text or "")[:180])
                 bare = True
                 continue
             break
@@ -357,10 +360,15 @@ def slot_status() -> dict:
     with _slot_lock:
         cooling = [s for s in _SLOTS if s.cool_until > now]
         soonest = min((s.cool_until for s in cooling), default=None)
+        all_cooling = bool(_SLOTS) and len(cooling) == len(_SLOTS)
+        all_quota = all_cooling and all(s.cooled_quota for s in cooling)
     return {
         "slot_count": len(_SLOTS),
         "cooling_count": len(cooling),
-        "all_cooling": bool(_SLOTS) and len(cooling) == len(_SLOTS),
+        "all_cooling": all_cooling,
+        # every slot cooling AND every one of them cooled by a real 429 —
+        # tells "daily/rate quota" apart from "the model rejected the request"
+        "all_quota_cooling": all_quota,
         "resumes_in_s": max(0, round(soonest - now)) if soonest is not None else None,
     }
 
@@ -602,9 +610,16 @@ def tag_images(image_urls: list) -> list:
     out: list = [None] * n
 
     def _blame_no_reply(count: int) -> None:
-        """A None from _generate is either 'every key on cooldown' (daily
-        quota spent — recovers itself) or 'asked but got nothing back'."""
-        _tag_stat("gemini_all_cooling" if slot_status().get("all_cooling") else "gemini_no_reply", count)
+        """A None from _generate: every slot cooled by a real 429 (quota /
+        rate), every slot cooled by a 400/other (the model rejected the
+        request), or simply no usable reply."""
+        ss = slot_status()
+        if ss.get("all_quota_cooling"):
+            _tag_stat("gemini_all_cooling", count)
+        elif ss.get("all_cooling"):
+            _tag_stat("gemini_slots_errored", count)
+        else:
+            _tag_stat("gemini_no_reply", count)
 
     # One good image left -> the single-object prompt parses more reliably
     # than asking for a 1-element array.
