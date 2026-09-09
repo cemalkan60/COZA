@@ -1,5 +1,5 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useState } from "react";
-import { View } from "react-native";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { Platform, View } from "react-native";
 import { Image, type ImageContentFit } from "expo-image";
 
 import { fashionImageSource, FASHION_IMAGE_CACHE_POLICY } from "./RetryImage";
@@ -40,6 +40,7 @@ function clamp(value: number, min: number, max: number) {
 export type ZoomableImageHandle = {
   zoomIn: () => void;
   zoomOut: () => void;
+  resetZoom: () => void;
 };
 
 // Pinch-to-zoom + pan + double-tap image, meant for a full-screen viewer page.
@@ -128,11 +129,53 @@ export const ZoomableImage = forwardRef<
     notifyZoom(true);
   };
 
+  // Zoom so that the image point currently under (focalX, focalY) — an
+  // offset from the viewer's centre — stays put. Used by web mouse-wheel
+  // zoom so it tracks the cursor instead of always zooming to the middle.
+  const zoomToward = (nextScale: number, focalX: number, focalY: number) => {
+    const s0 = savedScale.value;
+    const target = clamp(nextScale, MIN_SCALE, MAX_SCALE);
+    if (target <= MIN_SCALE) {
+      zoomTo(MIN_SCALE);
+      return;
+    }
+    const ratio = target / s0;
+    const bounds = boundsFor(target);
+    const tx = clamp(focalX - ratio * (focalX - savedTranslateX.value), -bounds.x, bounds.x);
+    const ty = clamp(focalY - ratio * (focalY - savedTranslateY.value), -bounds.y, bounds.y);
+    scale.value = withTiming(target, { duration: 90 });
+    translateX.value = withTiming(tx, { duration: 90 });
+    translateY.value = withTiming(ty, { duration: 90 });
+    savedScale.value = target;
+    savedTranslateX.value = tx;
+    savedTranslateY.value = ty;
+    notifyZoom(true);
+  };
+
+  const containerRef = useRef<View>(null);
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const el = containerRef.current as unknown as HTMLElement | null;
+    if (!el || typeof el.addEventListener !== "function") return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const focalX = e.clientX - rect.left - rect.width / 2;
+      const focalY = e.clientY - rect.top - rect.height / 2;
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      zoomToward(savedScale.value * factor, focalX, focalY);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
       zoomIn: () => zoomTo(savedScale.value + BUTTON_ZOOM_STEP),
       zoomOut: () => zoomTo(savedScale.value - BUTTON_ZOOM_STEP),
+      resetZoom: () => zoomTo(MIN_SCALE),
     }),
     [], // shared values are stable refs — this handle never needs to change
   );
@@ -203,7 +246,7 @@ export const ZoomableImage = forwardRef<
     // oversized hit area that swallowed clicks meant for anything
     // overlapping it -- including the +/- zoom buttons the parent screen
     // overlays on top of this component.
-    <View style={{ width, height, overflow: "hidden" }}>
+    <View ref={containerRef} style={{ width, height, overflow: "hidden" }}>
       <GestureDetector gesture={composed}>
         <Animated.View style={[{ width, height }, animatedStyle]}>
           <Image

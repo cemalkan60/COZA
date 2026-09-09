@@ -311,6 +311,8 @@ export default function FashionSearch() {
 
       <Modal visible={!!viewerItem} animationType="fade" transparent onRequestClose={() => setViewerItem(null)}>
         <View style={styles.viewerOverlay}>
+          {/* Tapping the dark area around the photo closes the viewer. */}
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setViewerItem(null)} />
           <Pressable
             testID="look-viewer-close"
             onPress={() => setViewerItem(null)}
@@ -320,7 +322,7 @@ export default function FashionSearch() {
             <Feather name="x" size={26} color="#fff" />
           </Pressable>
           {viewerItem && (
-            <View style={styles.viewerImageWrap}>
+            <View style={styles.viewerImageWrap} pointerEvents="box-none">
               <ZoomableImage
                 uri={fashionImageUri(viewerItem.image)}
                 width={width * 0.92}
