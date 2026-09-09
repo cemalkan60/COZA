@@ -149,6 +149,28 @@ class ProxyKeyBody(BaseModel):
     storage_note: str = Field(default="", max_length=200)
 
 
+# --- COZA Lens "boards" (Pinterest-style saved photos in nested folders) ---
+class BoardCreateBody(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    parent_id: Optional[str] = Field(default=None, max_length=64)
+
+
+class BoardUpdateBody(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    parent_id: Optional[str] = Field(default=None, max_length=64)  # "" / "root" -> move to root
+
+
+class SavePhotoBody(BaseModel):
+    source_id: str = Field(min_length=1, max_length=200)
+    photo_index: int = Field(ge=0, le=2000)
+    image: str = Field(min_length=1, max_length=1000)
+    image_thumb: str = Field(default="", max_length=1000)
+    brand_tr: str = Field(default="", max_length=200)
+    season: str = Field(default="", max_length=40)
+    season_label: str = Field(default="", max_length=80)
+    url: str = Field(default="", max_length=1000)
+
+
 # ----------------------------- Auth helpers -----------------------------
 def hash_pw(pw: str) -> str:
     return bcrypt.hashpw(pw.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
@@ -2261,6 +2283,143 @@ async def fashion_looks(
     return {"items": rows}
 
 
+# ---------------- COZA Lens boards (saved photos, nested folders) -------------
+_BOARD_PHOTO_PAGE = 120
+
+
+async def _board_or_404(user_id: str, board_id: str) -> dict:
+    b = await db.boards.find_one({"id": board_id, "user_id": user_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Pano bulunamadı.")
+    return b
+
+
+async def _descendant_board_ids(user_id: str, root_id: str) -> list:
+    """root_id + every board nested under it (any depth)."""
+    all_boards = await db.boards.find({"user_id": user_id}, {"_id": 0, "id": 1, "parent_id": 1}).to_list(length=2000)
+    children: dict = {}
+    for b in all_boards:
+        children.setdefault(b.get("parent_id"), []).append(b["id"])
+    out, stack = [], [root_id]
+    while stack:
+        cur = stack.pop()
+        out.append(cur)
+        stack.extend(children.get(cur, []))
+    return out
+
+
+@api.get("/fashion/boards")
+async def list_boards(user: Annotated[dict, Depends(get_current_user)]):
+    """Every board the user has (flat; the app builds the tree from
+    parent_id) with a photo count and a cover (newest saved photo)."""
+    boards = await db.boards.find({"user_id": user["id"]}, {"_id": 0}).sort("name", 1).to_list(length=2000)
+    counts = await db.saved_photos.aggregate([
+        {"$match": {"user_id": user["id"]}},
+        {"$sort": {"added_at": -1}},
+        {"$group": {"_id": "$board_id", "n": {"$sum": 1}, "cover": {"$first": "$image_thumb"},
+                    "cover_full": {"$first": "$image"}}},
+    ]).to_list(length=2000)
+    cmap = {c["_id"]: c for c in counts}
+    for b in boards:
+        c = cmap.get(b["id"], {})
+        b["photo_count"] = c.get("n", 0)
+        b["cover"] = c.get("cover") or c.get("cover_full") or None
+    return {"boards": boards}
+
+
+@api.post("/fashion/boards")
+async def create_board(body: BoardCreateBody, user: Annotated[dict, Depends(get_current_user)]):
+    parent_id = body.parent_id or None
+    if parent_id:
+        await _board_or_404(user["id"], parent_id)
+    if await db.boards.count_documents({"user_id": user["id"]}) >= 500:
+        raise HTTPException(400, "Çok fazla pano var.")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {"id": str(uuid.uuid4()), "user_id": user["id"], "name": body.name.strip(),
+           "parent_id": parent_id, "created_at": now, "updated_at": now}
+    await db.boards.insert_one(dict(doc))
+    doc.pop("_id", None)
+    doc["photo_count"] = 0
+    doc["cover"] = None
+    return doc
+
+
+@api.patch("/fashion/boards/{board_id}")
+async def update_board(board_id: str, body: BoardUpdateBody, user: Annotated[dict, Depends(get_current_user)]):
+    await _board_or_404(user["id"], board_id)
+    upd: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if body.name is not None:
+        upd["name"] = body.name.strip()
+    if body.parent_id is not None:
+        new_parent = body.parent_id or None
+        if new_parent in ("root", ""):
+            new_parent = None
+        if new_parent == board_id or (new_parent and new_parent in await _descendant_board_ids(user["id"], board_id)):
+            raise HTTPException(400, "Bir pano kendi içine taşınamaz.")
+        if new_parent:
+            await _board_or_404(user["id"], new_parent)
+        upd["parent_id"] = new_parent
+    await db.boards.update_one({"id": board_id, "user_id": user["id"]}, {"$set": upd})
+    return {"status": "ok"}
+
+
+@api.delete("/fashion/boards/{board_id}")
+async def delete_board(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    await _board_or_404(user["id"], board_id)
+    ids = await _descendant_board_ids(user["id"], board_id)
+    await db.saved_photos.delete_many({"user_id": user["id"], "board_id": {"$in": ids}})
+    await db.boards.delete_many({"user_id": user["id"], "id": {"$in": ids}})
+    return {"status": "ok", "deleted_boards": len(ids)}
+
+
+@api.get("/fashion/boards/{board_id}/photos")
+async def board_photos(board_id: str, user: Annotated[dict, Depends(get_current_user)], skip: int = 0):
+    await _board_or_404(user["id"], board_id)
+    rows = await db.saved_photos.find(
+        {"user_id": user["id"], "board_id": board_id}, {"_id": 0, "user_id": 0},
+    ).sort("added_at", -1).skip(max(0, skip)).limit(_BOARD_PHOTO_PAGE).to_list(length=_BOARD_PHOTO_PAGE)
+    return {"items": rows}
+
+
+@api.post("/fashion/boards/{board_id}/photos")
+async def save_photo(board_id: str, body: SavePhotoBody, user: Annotated[dict, Depends(get_current_user)]):
+    await _board_or_404(user["id"], board_id)
+    key = {"user_id": user["id"], "board_id": board_id,
+           "source_id": body.source_id, "photo_index": body.photo_index}
+    await db.saved_photos.update_one(
+        key,
+        {"$set": {"image": body.image, "image_thumb": body.image_thumb or body.image,
+                  "brand_tr": body.brand_tr, "season": body.season, "season_label": body.season_label,
+                  "url": body.url},
+         "$setOnInsert": {**key, "added_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"status": "ok"}
+
+
+@api.delete("/fashion/boards/{board_id}/photos/{source_id}/{photo_index}")
+async def unsave_photo(board_id: str, source_id: str, photo_index: int,
+                       user: Annotated[dict, Depends(get_current_user)]):
+    await db.saved_photos.delete_one({
+        "user_id": user["id"], "board_id": board_id,
+        "source_id": source_id, "photo_index": photo_index,
+    })
+    return {"status": "ok"}
+
+
+@api.get("/fashion/saved-keys")
+async def saved_keys(user: Annotated[dict, Depends(get_current_user)]):
+    """Which photos the user has saved anywhere -> "<source_id>#<index>" list
+    plus the board ids each is in, so the gallery can show a filled bookmark."""
+    rows = await db.saved_photos.find(
+        {"user_id": user["id"]}, {"_id": 0, "source_id": 1, "photo_index": 1, "board_id": 1},
+    ).to_list(length=20000)
+    by_key: dict = {}
+    for r in rows:
+        by_key.setdefault(f"{r['source_id']}#{r['photo_index']}", []).append(r["board_id"])
+    return {"saved": by_key}
+
+
 @api.get("/fashion/analytics")
 async def fashion_analytics(user: Annotated[dict, Depends(get_current_user)]):
     """COZA-style aggregates over the fashion feed: seasons & top brands."""
@@ -3574,6 +3733,11 @@ async def on_startup():
     await db.fashion.create_index("category")
     await db.fashion.create_index("city")
     await db.fashion.create_index([("season_rank", -1), ("feed_seq", 1)])
+    await db.boards.create_index([("user_id", 1), ("parent_id", 1)])
+    await db.saved_photos.create_index(
+        [("user_id", 1), ("board_id", 1), ("source_id", 1), ("photo_index", 1)], unique=True,
+    )
+    await db.saved_photos.create_index([("user_id", 1), ("board_id", 1), ("added_at", -1)])
     await seed_users()
     # A CronTrigger built standalone (as below) does NOT inherit the
     # scheduler's `timezone=` — it defaults to the host's local system time,

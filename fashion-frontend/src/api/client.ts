@@ -90,6 +90,40 @@ export type FashionLookQuery = {
   skip?: number;
 };
 
+export type Board = {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  photo_count?: number;
+  cover?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type SavedPhoto = {
+  board_id: string;
+  source_id: string;
+  photo_index: number;
+  image: string;
+  image_thumb: string;
+  brand_tr: string;
+  season: string;
+  season_label: string;
+  url: string;
+  added_at: string;
+};
+
+export type SavePhotoInput = {
+  source_id: string;
+  photo_index: number;
+  image: string;
+  image_thumb?: string;
+  brand_tr?: string;
+  season?: string;
+  season_label?: string;
+  url?: string;
+};
+
 async function request(path: string, init: RequestInit = {}, auth = false) {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
@@ -142,6 +176,26 @@ export const api = {
   fashionLookFilters: (): Promise<FashionLookFilters> => request("/fashion/looks/filters", {}, true),
   fashionLooks: (params: FashionLookQuery = {}): Promise<{ items: FashionLookItem[] }> =>
     request(`/fashion/looks${toQuery(params as Record<string, unknown>)}`, {}, true),
+
+  // ---- COZA Lens boards (saved photos in nested folders) ----
+  boardsList: (): Promise<{ boards: Board[] }> => request("/fashion/boards", {}, true),
+  boardCreate: (name: string, parent_id?: string | null): Promise<Board> =>
+    request("/fashion/boards", { method: "POST", body: JSON.stringify({ name, parent_id: parent_id ?? null }) }, true),
+  boardUpdate: (id: string, patch: { name?: string; parent_id?: string | null }) =>
+    request(`/fashion/boards/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }, true),
+  boardDelete: (id: string) =>
+    request(`/fashion/boards/${encodeURIComponent(id)}`, { method: "DELETE" }, true),
+  boardPhotos: (id: string, skip = 0): Promise<{ items: SavedPhoto[] }> =>
+    request(`/fashion/boards/${encodeURIComponent(id)}/photos${toQuery({ skip })}`, {}, true),
+  savePhoto: (boardId: string, photo: SavePhotoInput) =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/photos`, { method: "POST", body: JSON.stringify(photo) }, true),
+  unsavePhoto: (boardId: string, sourceId: string, photoIndex: number) =>
+    request(
+      `/fashion/boards/${encodeURIComponent(boardId)}/photos/${encodeURIComponent(sourceId)}/${photoIndex}`,
+      { method: "DELETE" },
+      true,
+    ),
+  savedKeys: (): Promise<{ saved: Record<string, string[]> }> => request("/fashion/saved-keys", {}, true),
   fashionScrape: () => request("/admin/fashion-scrape", { method: "POST" }, true),
   // One-off full historical pull (everything since Jan 2026, not just each
   // source's latest page) — much slower than fashionScrape, see its comment

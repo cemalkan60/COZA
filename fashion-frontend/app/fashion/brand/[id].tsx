@@ -16,9 +16,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
+import { api } from "@/src/api/client";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
 import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/ZoomableImage";
+import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import RetryImage from "@/src/components/RetryImage";
 
 export default function BrandGallery() {
@@ -47,6 +49,12 @@ export default function BrandGallery() {
   const [loading, setLoading] = useState(true);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [viewerZoomed, setViewerZoomed] = useState(false);
+  const [savedKeys, setSavedKeys] = useState<Record<string, string[]>>({});
+  const [saveSheetIndex, setSaveSheetIndex] = useState<number | null>(null);
+  const refreshSaved = useCallback(() => {
+    api.savedKeys().then((r) => setSavedKeys(r.saved || {})).catch(() => {});
+  }, []);
+  useEffect(() => { refreshSaved(); }, [refreshSaved]);
   const viewerIndexRef = useRef<number | null>(null);
   viewerIndexRef.current = viewerIndex;
   const imagesLengthRef = useRef(0);
@@ -282,6 +290,21 @@ export default function BrandGallery() {
             <Feather name="x" size={26} color="#fff" />
           </Pressable>
           {viewerIndex !== null && (
+            <Pressable
+              testID="brand-viewer-save"
+              onPress={() => setSaveSheetIndex(viewerIndex)}
+              style={[styles.viewerClose, { top: insets.top + 12, left: 16, right: undefined }]}
+              hitSlop={12}
+            >
+              <Feather
+                name="bookmark"
+                size={22}
+                color={(savedKeys[`${id}#${viewerIndex}`]?.length ?? 0) > 0 ? "#fff" : "#fff"}
+                style={{ opacity: (savedKeys[`${id}#${viewerIndex}`]?.length ?? 0) > 0 ? 1 : 0.55 }}
+              />
+            </Pressable>
+          )}
+          {viewerIndex !== null && (
             <>
               <FlatList
                 ref={viewerListRef}
@@ -377,6 +400,26 @@ export default function BrandGallery() {
           )}
         </View>
       </Modal>
+
+      <SaveToBoardSheet
+        visible={saveSheetIndex !== null}
+        onClose={() => setSaveSheetIndex(null)}
+        photo={
+          saveSheetIndex !== null && images[saveSheetIndex]
+            ? {
+                source_id: id,
+                photo_index: saveSheetIndex,
+                image: images[saveSheetIndex],
+                image_thumb: imagesThumb[saveSheetIndex] || images[saveSheetIndex],
+                brand_tr: title,
+                season: seasonRaw,
+                season_label: season,
+              }
+            : null
+        }
+        savedBoardIds={saveSheetIndex !== null ? savedKeys[`${id}#${saveSheetIndex}`] || [] : []}
+        onChange={refreshSaved}
+      />
     </View>
   );
 }

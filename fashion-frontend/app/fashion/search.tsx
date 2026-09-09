@@ -21,8 +21,17 @@ import { api, FashionLookFilters, FashionLookItem, FashionLookOption } from "@/s
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
+import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
+
+// Lens source_id is "<collection source_id>#<photo index>" (see fashion_looks).
+function splitLookId(sid: string): { source_id: string; photo_index: number } {
+  const i = sid.lastIndexOf("#");
+  return i < 0
+    ? { source_id: sid, photo_index: 0 }
+    : { source_id: sid.slice(0, i), photo_index: parseInt(sid.slice(i + 1), 10) || 0 };
+}
 
 type FilterKey = "season" | "item" | "color" | "material" | "pattern";
 
@@ -51,6 +60,12 @@ export default function FashionSearch() {
   const [hasMore, setHasMore] = useState(false);
   const [openModal, setOpenModal] = useState<FilterKey | null>(null);
   const [viewerItem, setViewerItem] = useState<FashionLookItem | null>(null);
+  const [saveItem, setSaveItem] = useState<FashionLookItem | null>(null);
+  const [savedKeys, setSavedKeys] = useState<Record<string, string[]>>({});
+  const refreshSaved = useCallback(() => {
+    api.savedKeys().then((r) => setSavedKeys(r.saved || {})).catch(() => {});
+  }, []);
+  useEffect(() => { refreshSaved(); }, [refreshSaved]);
   const [q, setQ] = useState("");
   const [qActive, setQActive] = useState("");
 
@@ -322,6 +337,21 @@ export default function FashionSearch() {
             <Feather name="x" size={26} color="#fff" />
           </Pressable>
           {viewerItem && (
+            <Pressable
+              testID="look-viewer-save"
+              onPress={() => setSaveItem(viewerItem)}
+              style={[styles.viewerClose, { top: insets.top + 12, left: 16, right: undefined }]}
+              hitSlop={12}
+            >
+              <Feather
+                name="bookmark"
+                size={22}
+                color="#fff"
+                style={{ opacity: (savedKeys[viewerItem.source_id]?.length ?? 0) > 0 ? 1 : 0.55 }}
+              />
+            </Pressable>
+          )}
+          {viewerItem && (
             <View style={styles.viewerImageWrap} pointerEvents="box-none">
               <ZoomableImage
                 uri={fashionImageUri(viewerItem.image)}
@@ -338,6 +368,24 @@ export default function FashionSearch() {
           )}
         </View>
       </Modal>
+
+      <SaveToBoardSheet
+        visible={!!saveItem}
+        onClose={() => setSaveItem(null)}
+        photo={
+          saveItem
+            ? {
+                ...splitLookId(saveItem.source_id),
+                image: saveItem.image || "",
+                image_thumb: saveItem.image || "",
+                brand_tr: saveItem.brand_tr || "",
+                season_label: saveItem.season_text_tr || "",
+              }
+            : null
+        }
+        savedBoardIds={saveItem ? savedKeys[saveItem.source_id] || [] : []}
+        onChange={refreshSaved}
+      />
     </View>
   );
 }
