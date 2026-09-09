@@ -354,14 +354,38 @@ export default function Settings() {
             <Pressable
               testID="fashion-tag-firstview"
               onPress={triggerTagPhotos}
-              disabled={scraping}
-              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+              disabled={scraping || meta?.tag_state?.can_run === false}
+              style={[
+                styles.refreshBtn,
+                { borderColor: colors.border, opacity: scraping || meta?.tag_state?.can_run === false ? 0.5 : 1 },
+              ]}
             >
-              <Feather name="tag" size={16} color={colors.onSurface} />
-              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "Fotoğraf Etiketlemeyi Başlat"}
+              <Feather
+                name={meta?.tag_state?.can_run === false ? "clock" : "tag"}
+                size={16}
+                color={meta?.tag_state?.can_run === false ? colors.brandSecondary : colors.onSurface}
+              />
+              <Text
+                style={{
+                  color: meta?.tag_state?.can_run === false ? colors.brandSecondary : colors.onSurface,
+                  fontWeight: "700",
+                  marginLeft: 8,
+                  flexShrink: 1,
+                  textAlign: "center",
+                }}
+              >
+                {scraping
+                  ? "Başlatılıyor…"
+                  : meta?.tag_state?.can_run === false
+                    ? meta.tag_state.label
+                    : "Fotoğraf Etiketlemeyi Başlat"}
               </Text>
             </Pressable>
+            {meta?.tag_state?.can_run === true && (
+              <Text style={{ color: colors.brandSecondary, fontSize: 11, marginTop: 4, textAlign: "center" }}>
+                {meta.tag_state.label}
+              </Text>
+            )}
             <Pressable
               testID="fashion-drop-dead-images"
               onPress={triggerDropDeadImages}

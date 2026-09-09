@@ -2292,6 +2292,35 @@ async def fashion_meta(user: Annotated[dict, Depends(get_current_user)]):
     meta["photos_total"] = stats.get("photos_total", 0)
     meta["photos_tagged"] = stats.get("photos_tagged", 0)
     meta["photos_taggable"] = stats.get("photos_taggable", 0)
+
+    # Honest one-liner for the Settings "Fotoğraf Etiketle" button, so it
+    # says the real state ("kota dolu — 04:00'te", "hepsi etiketli",
+    # "hazır — N fotoğraf") instead of always looking ready and then doing
+    # nothing when pressed.
+    untagged = max(0, stats.get("photos_taggable", 0) - stats.get("photos_tagged", 0))
+    ss = gemini_client.slot_status()
+    jr = (await db.meta.find_one({"_id": "job_runs"}, {"_id": 0}) or {}).get("items", [])
+    last_tag = next((r for r in jr if r.get("job") == "fashion_tag_photos"), None)
+    quota_recent = False
+    if last_tag and last_tag.get("status") in ("partial", "error") and "kota" in (last_tag.get("reason") or "").lower():
+        try:
+            fin = datetime.fromisoformat((last_tag.get("finished_at") or "").replace("Z", "+00:00"))
+            quota_recent = datetime.now(timezone.utc) - fin < timedelta(hours=6)
+        except Exception:
+            quota_recent = False
+    if not gemini_client.ENABLED:
+        ts = {"can_run": False, "label": "Gemini anahtarı tanımlı değil"}
+    elif meta.get("scraping") and meta.get("phase") in ("tagging_photos", "tagging_firstview"):
+        ts = {"can_run": False, "label": "Etiketleme şu anda çalışıyor"}
+    elif untagged <= 0:
+        ts = {"can_run": False, "label": "Tüm fotoğraflar etiketli"}
+    elif ss.get("all_cooling") or quota_recent:
+        secs = ss.get("resumes_in_s")
+        when = f" (~{max(1, round(secs / 60))} dk)" if (ss.get("all_cooling") and secs) else ""
+        ts = {"can_run": False, "label": f"Günlük Gemini kotası dolu — gece 04:00'te devam edecek{when}"}
+    else:
+        ts = {"can_run": True, "label": f"Hazır — {untagged} fotoğraf etiketlenecek"}
+    meta["tag_state"] = ts
     return meta
 
 
