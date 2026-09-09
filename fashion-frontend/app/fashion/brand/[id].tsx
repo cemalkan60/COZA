@@ -9,6 +9,7 @@ import {
   Platform,
   Pressable,
   Modal,
+  ScrollView,
   useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -55,6 +56,12 @@ export default function BrandGallery() {
     api.savedKeys().then((r) => setSavedKeys(r.saved || {})).catch(() => {});
   }, []);
   useEffect(() => { refreshSaved(); }, [refreshSaved]);
+  const [similar, setSimilar] = useState<
+    { source_id: string; brand_tr: string; season: string; season_label: string; image: string | null }[]
+  >([]);
+  useEffect(() => {
+    if (id) api.fashionSimilar(id).then((r) => setSimilar(r.items || [])).catch(() => {});
+  }, [id]);
   const viewerIndexRef = useRef<number | null>(null);
   viewerIndexRef.current = viewerIndex;
   const imagesLengthRef = useRef(0);
@@ -221,9 +228,15 @@ export default function BrandGallery() {
       <Pressable testID="brand-back" onPress={() => goBack(router, "/fashion")} hitSlop={10}>
         <Feather name="chevron-left" size={26} color={colors.onSurface} />
       </Pressable>
-      <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.onSurface }]}>
-        {headerLabel || t("detail.gallery")}
-      </Text>
+      <Pressable
+        style={{ flex: 1 }}
+        disabled={!title}
+        onPress={() => title && router.push(`/fashion/house?brand=${encodeURIComponent(title)}` as any)}
+      >
+        <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.onSurface }]}>
+          {headerLabel || t("detail.gallery")}
+        </Text>
+      </Pressable>
       <View style={{ width: 26 }} />
     </View>
   );
@@ -272,6 +285,40 @@ export default function BrandGallery() {
             />
           </Pressable>
         )}
+        ListFooterComponent={
+          similar.length > 0 ? (
+            <View style={{ marginTop: 8, marginBottom: insets.bottom + 24 }}>
+              <Text style={{ color: colors.onSurface, fontWeight: "800", fontSize: 15, marginBottom: 12, marginLeft: 4 }}>
+                {t("detail.similar")}
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: 8 }}>
+                {similar.map((s) => (
+                  <Pressable
+                    key={s.source_id}
+                    onPress={() =>
+                      router.replace(
+                        `/fashion/brand/${encodeURIComponent(s.source_id)}?title=${encodeURIComponent(s.brand_tr)}&season=${encodeURIComponent(s.season)}` as any,
+                      )
+                    }
+                    style={{ width: 130 }}
+                  >
+                    <View style={{ width: 130, aspectRatio: 3 / 4, borderRadius: 4, overflow: "hidden", backgroundColor: colors.surfaceTertiary, borderWidth: 1, borderColor: colors.border }}>
+                      {s.image ? (
+                        <RetryImage uri={fashionImageUri(s.image)} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={200} />
+                      ) : null}
+                    </View>
+                    <Text numberOfLines={1} style={{ color: colors.onSurface, fontSize: 12, fontWeight: "700", marginTop: 5 }}>
+                      {s.brand_tr}
+                    </Text>
+                    <Text numberOfLines={1} style={{ color: colors.brandSecondary, fontSize: 11 }}>
+                      {formatSeason(s.season, s.season_label)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          ) : null
+        }
       />
 
       <Modal

@@ -165,12 +165,17 @@ export const api = {
       category?: string;
       city?: string;
       source?: string;
+      brand?: string;
       sort?: "newest" | "oldest" | "updated";
       q?: string;
       skip?: number;
       limit?: number;
     } = {},
   ) => request(`/fashion/collections${toQuery(params as Record<string, unknown>)}`, {}, true),
+  fashionSimilar: (
+    sourceId: string,
+  ): Promise<{ items: { source_id: string; brand_tr: string; season: string; season_label: string; image: string | null }[] }> =>
+    request(`/fashion/collections/${encodeURIComponent(sourceId)}/similar`, {}, true),
   fashionAnalytics: () => request("/fashion/analytics", {}, true),
   fashionMeta: () => request("/fashion/meta", {}, true),
   fashionLookFilters: (): Promise<FashionLookFilters> => request("/fashion/looks/filters", {}, true),
