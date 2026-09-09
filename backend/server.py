@@ -2519,6 +2519,16 @@ async def _tag_one_doc(doc: dict, sem: asyncio.Semaphore) -> int:
             lo = len(tags)
             hi = min(lo + _TAG_BATCH, target)
             batch_urls = [images_thumb[i] if i < len(images_thumb) else images[i] for i in range(lo, hi)]
+            # Self-heal the same "URL points at a bucket that no longer holds
+            # the object" case run_fashion_repair_urls fixes in bulk (bucket
+            # count changed, or one was emptied by hand) -- a doc that hasn't
+            # been through that sweep yet would otherwise 404 on every single
+            # photo here and the whole pass looks like "quota/CDN trouble"
+            # with nothing actually wrong with Gemini. No-ops (returns the
+            # same URL) for a live source-site URL that was never cached.
+            batch_urls = await asyncio.to_thread(
+                lambda urls=batch_urls: [image_store.find_object_url(u) or u for u in urls]
+            )
             try:
                 results = await asyncio.wait_for(
                     asyncio.to_thread(gemini_client.tag_images, batch_urls),
