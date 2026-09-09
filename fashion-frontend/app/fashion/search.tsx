@@ -1,5 +1,5 @@
 // frontend/app/fashion/search.tsx
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -24,6 +24,7 @@ import { ZoomableImage } from "@/src/components/ZoomableImage";
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
+import { storage } from "@/src/utils/storage";
 
 // Lens source_id is "<collection source_id>#<photo index>" (see fashion_looks).
 function splitLookId(sid: string): { source_id: string; photo_index: number } {
@@ -68,6 +69,8 @@ export default function FashionSearch() {
   useEffect(() => { refreshSaved(); }, [refreshSaved]);
   const [q, setQ] = useState("");
   const [qActive, setQActive] = useState("");
+  const [recent, setRecent] = useState<string[]>([]);
+  const recentReady = useRef(false);
 
   const PAGE = 90;
 
@@ -75,6 +78,27 @@ export default function FashionSearch() {
     const t = setTimeout(() => setQActive(q.trim()), 350);
     return () => clearTimeout(t);
   }, [q]);
+
+  // Recent searches — device-local, newest first, capped at 10. Stored as a
+  // newline-joined string (storage only round-trips primitives).
+  const RECENT_KEY = "coza.lens.recent";
+  useEffect(() => {
+    storage
+      .getItem<string>(RECENT_KEY, "")
+      .then((raw) => setRecent((raw || "").split("\n").filter(Boolean).slice(0, 10)))
+      .finally(() => {
+        recentReady.current = true;
+      });
+  }, []);
+  useEffect(() => {
+    const term = qActive.trim();
+    if (!recentReady.current || term.length < 2) return;
+    setRecent((cur) => {
+      const next = [term, ...cur.filter((r) => r.toLowerCase() !== term.toLowerCase())].slice(0, 10);
+      storage.setItem(RECENT_KEY, next.join("\n"));
+      return next;
+    });
+  }, [qActive]);
 
   useEffect(() => {
     api
@@ -203,6 +227,45 @@ export default function FashionSearch() {
             </Pressable>
           )}
         </View>
+
+        {!q.trim() && recent.length > 0 && (
+          <View style={{ marginTop: 10 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700", letterSpacing: 0.4 }}>
+                {t("lens.recent").toUpperCase()}
+              </Text>
+              <Pressable
+                onPress={() => {
+                  setRecent([]);
+                  storage.setItem("coza.lens.recent", "");
+                }}
+                hitSlop={8}
+              >
+                <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700" }}>{t("lens.clearRecent")}</Text>
+              </Pressable>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {recent.map((r) => (
+                <Pressable
+                  key={r}
+                  onPress={() => setQ(r)}
+                  style={{
+                    paddingHorizontal: 12,
+                    height: 30,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    backgroundColor: colors.surfaceSecondary,
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text style={{ color: colors.onSurface, fontSize: 12, fontWeight: "600" }}>{r}</Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        )}
       </View>
 
       {loading ? (

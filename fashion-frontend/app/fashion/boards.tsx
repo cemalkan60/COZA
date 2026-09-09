@@ -20,6 +20,7 @@ import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
+import { shareBoard } from "@/src/utils/shareBoard";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
 
 export default function Boards() {
@@ -242,6 +243,18 @@ export default function Boards() {
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
         <Pressable style={styles.menuOverlay} onPress={() => setMenuOpen(false)}>
           <View style={[styles.menu, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            {photos.length > 0 && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  shareBoard(current?.name || "COZA", photos);
+                }}
+              >
+                <Feather name="share-2" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.share")}</Text>
+              </Pressable>
+            )}
             <Pressable
               style={styles.menuItem}
               onPress={() => {
