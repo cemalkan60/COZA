@@ -277,6 +277,24 @@ def _probe(key: str, model: str, timeout: int) -> dict:
     return res
 
 
+def slot_status() -> dict:
+    """Cheap, in-memory snapshot of the (key,model) rotation — no network
+    calls, unlike check_keys(). Used to tell the Admin panel WHY a tagging
+    pass tagged nothing: every slot cooling means the day's quota is spent
+    (recovers on its own); anything else means photos were unreachable or
+    replies didn't parse (see tag_images)."""
+    now = time.monotonic()
+    with _slot_lock:
+        cooling = [s for s in _SLOTS if s.cool_until > now]
+        soonest = min((s.cool_until for s in cooling), default=None)
+    return {
+        "slot_count": len(_SLOTS),
+        "cooling_count": len(cooling),
+        "all_cooling": bool(_SLOTS) and len(cooling) == len(_SLOTS),
+        "resumes_in_s": max(0, round(soonest - now)) if soonest is not None else None,
+    }
+
+
 def check_keys(timeout: int = 12) -> dict:
     """Diagnostic: probe EVERY (key, model) slot the rotation would use, so an
     operator can see the real working parallelism — a mistyped key or a

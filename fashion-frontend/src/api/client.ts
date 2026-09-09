@@ -191,6 +191,18 @@ export const api = {
 };
 
 type LabelCount = { label: string; count: number };
+export type JobRun = {
+  job: string;
+  label: string;
+  status: "ok" | "partial" | "error";
+  detail: string;
+  reason: string;
+  done: number | null;
+  total: number | null;
+  pct: number | null;
+  started_at: string | null;
+  finished_at: string;
+};
 export type AdminDashboard = {
   generated_at: string;
   collections: {
@@ -217,6 +229,7 @@ export type AdminDashboard = {
   };
   window: { recent_months: number; last_prune: string | null };
   tagging: { running: boolean; phase: string | null; run_done: number; run_total: number };
+  job_runs: JobRun[];
   scrape: {
     fashion_last: string | null;
     fashion_running: boolean;
