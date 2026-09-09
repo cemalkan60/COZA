@@ -1,11 +1,12 @@
 // frontend/app/settings.tsx
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
+import { goBack } from "@/src/utils/nav";
 import { api } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
@@ -180,13 +181,18 @@ export default function Settings() {
           { paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
         ]}
       >
-        <Pressable testID="settings-back" onPress={() => router.back()} hitSlop={10}>
+        <Pressable testID="settings-back" onPress={() => goBack(router, "/fashion")} hitSlop={10}>
           <Feather name="chevron-left" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]}>Ayarlar</Text>
         <View style={{ width: 26 }} />
       </View>
 
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+        showsVerticalScrollIndicator={false}
+      >
       <Text style={{ color: colors.brandSecondary, fontSize: 12, marginTop: 20, marginHorizontal: spacing.xl }}>
         {user?.name || user?.email}
       </Text>
@@ -421,6 +427,7 @@ export default function Settings() {
           <Text style={{ color: colors.error, fontWeight: "700", marginLeft: 8 }}>Çıkış Yap</Text>
         </Pressable>
       </View>
+      </ScrollView>
     </View>
   );
 }

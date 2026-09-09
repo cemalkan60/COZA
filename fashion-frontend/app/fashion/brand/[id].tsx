@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { fashionImageUri } from "@/src/utils/fashionImage";
+import { goBack } from "@/src/utils/nav";
 import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/ZoomableImage";
 import RetryImage from "@/src/components/RetryImage";
 
@@ -206,7 +207,7 @@ export default function BrandGallery() {
         { paddingTop: insets.top + 8, paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
       ]}
     >
-      <Pressable testID="brand-back" onPress={() => router.back()} hitSlop={10}>
+      <Pressable testID="brand-back" onPress={() => goBack(router, "/fashion")} hitSlop={10}>
         <Feather name="chevron-left" size={26} color={colors.onSurface} />
       </Pressable>
       <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.onSurface }]}>

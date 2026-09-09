@@ -11,6 +11,7 @@ import { api, type AdminDashboard, type JobRun } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
 import { formatDate } from "@/src/utils/format";
+import { goBack } from "@/src/utils/nav";
 import { BarChart, DonutChart, ProgressBar } from "@/src/components/Charts";
 
 const JOB_LABELS: Record<string, string> = {
@@ -174,7 +175,7 @@ export default function AdminPanel() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface, paddingTop: insets.top + 12 }}>
       <View style={[styles.header, { paddingHorizontal: spacing.xl, borderBottomColor: colors.divider }]}>
-        <Pressable testID="admin-back" onPress={() => router.back()} hitSlop={10}>
+        <Pressable testID="admin-back" onPress={() => goBack(router, "/settings")} hitSlop={10}>
           <Feather name="chevron-left" size={26} color={colors.onSurface} />
         </Pressable>
         <Text style={[styles.title, { color: colors.onSurface }]}>Admin Panel</Text>

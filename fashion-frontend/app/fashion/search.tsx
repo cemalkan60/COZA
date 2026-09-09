@@ -21,6 +21,7 @@ import { api, FashionLookFilters, FashionLookItem, FashionLookOption } from "@/s
 import { useTheme } from "@/src/theme/ThemeContext";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
 import { fashionImageUri } from "@/src/utils/fashionImage";
+import { goBack } from "@/src/utils/nav";
 
 type FilterKey = "season" | "item" | "color" | "material" | "pattern";
 
@@ -158,7 +159,7 @@ export default function FashionSearch() {
           { paddingTop: insets.top + 8, paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
         ]}
       >
-        <Pressable testID="fashion-search-back" onPress={() => router.back()} hitSlop={10}>
+        <Pressable testID="fashion-search-back" onPress={() => goBack(router, "/fashion")} hitSlop={10}>
           <Feather name="chevron-left" size={26} color={colors.onSurface} />
         </Pressable>
         <View style={{ flex: 1, flexDirection: "row", alignItems: "baseline" }}>
