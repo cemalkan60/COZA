@@ -9,11 +9,13 @@ import * as Haptics from "expo-haptics";
 import { goBack } from "@/src/utils/nav";
 import { api } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
+import { useT } from "@/src/i18n";
 import { useAuth } from "@/src/context/AuthContext";
 import { formatDate } from "@/src/utils/format";
 
 export default function Settings() {
   const { colors, spacing, mode, toggle } = useTheme();
+  const { t, lang, setLang, langs } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, signOut } = useAuth();
@@ -215,7 +217,7 @@ export default function Settings() {
         <Pressable testID="settings-back" onPress={() => goBack(router, "/fashion")} hitSlop={10}>
           <Feather name="chevron-left" size={26} color={colors.onSurface} />
         </Pressable>
-        <Text style={[styles.title, { color: colors.onSurface }]}>Ayarlar</Text>
+        <Text style={[styles.title, { color: colors.onSurface }]}>{t("settings.title")}</Text>
         <View style={{ width: 26 }} />
       </View>
 
@@ -232,7 +234,7 @@ export default function Settings() {
         <View style={[styles.row, { borderColor: colors.border }]}>
           <Feather name={mode === "dark" ? "moon" : "sun"} size={18} color={colors.onSurfaceSecondary} />
           <Text style={{ color: colors.onSurface, fontWeight: "600", flex: 1, marginLeft: 12 }}>
-            {mode === "dark" ? "Koyu Mod" : "Açık Mod"}
+            {mode === "dark" ? t("settings.darkMode") : t("settings.lightMode")}
           </Text>
           <Switch
             testID="theme-toggle"
@@ -246,20 +248,49 @@ export default function Settings() {
           />
         </View>
 
+        <View style={{ marginTop: 12 }}>
+          <Text style={{ color: colors.brandSecondary, fontSize: 12, marginBottom: 8, marginLeft: 2 }}>
+            {t("settings.language")}
+          </Text>
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            {langs.map((l) => (
+              <Pressable
+                key={l.code}
+                testID={`lang-${l.code}`}
+                onPress={() => setLang(l.code)}
+                style={{
+                  flex: 1,
+                  height: 44,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderColor: lang === l.code ? colors.brand : colors.border,
+                  backgroundColor: lang === l.code ? colors.brand : colors.surfaceSecondary,
+                }}
+              >
+                <Text style={{ color: lang === l.code ? colors.onBrand : colors.onSurface, fontWeight: "700", fontSize: 13 }}>
+                  {l.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
         {isAdmin && (
           <>
             <View style={[styles.metaCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <View style={styles.metaRow}>
-                <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Toplam koleksiyon</Text>
+                <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>{t("settings.totalCollections")}</Text>
                 <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{meta?.item_count ?? "—"}</Text>
               </View>
               <View style={[styles.metaRow, { marginTop: 10 }]}>
-                <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Son güncelleme</Text>
+                <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>{t("settings.lastUpdate")}</Text>
                 <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{formatDate(meta?.last_scrape)}</Text>
               </View>
               {meta?.photos_taggable != null && (
                 <View style={[styles.metaRow, { marginTop: 10 }]}>
-                  <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>Yapay zeka etiketli fotoğraf</Text>
+                  <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>{t("settings.taggedPhotos")}</Text>
                   <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
                     {`${meta?.photos_tagged ?? 0} / ${meta?.photos_taggable ?? "?"}`}
                   </Text>
@@ -309,7 +340,7 @@ export default function Settings() {
               style={[styles.refreshBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
             >
               <Feather name="bar-chart-2" size={16} color={colors.onSurface} />
-              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>Admin Panel</Text>
+              <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>{t("settings.adminPanel")}</Text>
             </Pressable>
 
             <Pressable
@@ -320,7 +351,7 @@ export default function Settings() {
             >
               <Feather name="refresh-cw" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "Şimdi Güncelle"}
+                {scraping ? t("settings.starting") : t("settings.refreshNow")}
               </Text>
             </Pressable>
             <Pressable
@@ -331,7 +362,7 @@ export default function Settings() {
             >
               <Feather name="database" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "2026 Ocak'tan İtibaren Tümünü Tara"}
+                {scraping ? t("settings.starting") : t("settings.backfill")}
               </Text>
             </Pressable>
             <Pressable
@@ -342,7 +373,7 @@ export default function Settings() {
             >
               <Feather name="image" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "Kapak Fotoğraflarını Düzelt"}
+                {scraping ? t("settings.starting") : t("settings.fixCovers")}
               </Text>
             </Pressable>
             <Pressable
@@ -353,7 +384,7 @@ export default function Settings() {
             >
               <Feather name="git-merge" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "Yinelenen Koleksiyonları Birleştir"}
+                {scraping ? t("settings.starting") : t("settings.mergeDuplicates")}
               </Text>
             </Pressable>
             <Pressable
@@ -364,7 +395,7 @@ export default function Settings() {
             >
               <Feather name="zap" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "Küçük Resimleri Oluştur"}
+                {scraping ? t("settings.starting") : t("settings.fixThumbnails")}
               </Text>
             </Pressable>
             <Pressable
@@ -394,7 +425,7 @@ export default function Settings() {
                   ? "Başlatılıyor…"
                   : meta?.tag_state?.can_run === false
                     ? meta.tag_state.label
-                    : "Fotoğraf Etiketlemeyi Başlat"}
+                    : t("settings.startTagging")}
               </Text>
             </Pressable>
             {meta?.tag_state?.can_run === true && (
@@ -410,7 +441,7 @@ export default function Settings() {
             >
               <Feather name="trash-2" size={16} color={colors.error} />
               <Text style={{ color: colors.error, fontWeight: "700", marginLeft: 8 }}>
-                {scraping ? "Başlatılıyor…" : "Ölü Fotoğrafları Temizle"}
+                {scraping ? t("settings.starting") : t("settings.dropDeadImages")}
               </Text>
             </Pressable>
             <Pressable
@@ -421,7 +452,7 @@ export default function Settings() {
             >
               <Feather name="key" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {geminiChecking ? "Kontrol ediliyor…" : "Gemini Anahtarlarını Test Et"}
+                {geminiChecking ? t("settings.checking") : t("settings.testGeminiKeys")}
               </Text>
             </Pressable>
             {!!geminiCheck && (
@@ -503,7 +534,7 @@ export default function Settings() {
             >
               <Feather name="layers" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
-                {modelsChecking ? "Taranıyor…" : "Kullanılabilir Modelleri Bul"}
+                {modelsChecking ? t("settings.scanning") : t("settings.findModels")}
               </Text>
             </Pressable>
             {!!models && (
@@ -561,7 +592,7 @@ export default function Settings() {
           style={[styles.logout, { borderColor: colors.border }]}
         >
           <Feather name="log-out" size={16} color={colors.error} />
-          <Text style={{ color: colors.error, fontWeight: "700", marginLeft: 8 }}>Çıkış Yap</Text>
+          <Text style={{ color: colors.error, fontWeight: "700", marginLeft: 8 }}>{t("settings.logout")}</Text>
         </Pressable>
       </View>
       </ScrollView>

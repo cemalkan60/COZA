@@ -19,22 +19,18 @@ import { Feather } from "@expo/vector-icons";
 
 import { api, FashionLookFilters, FashionLookItem, FashionLookOption } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
+import { useT } from "@/src/i18n";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
 
 type FilterKey = "season" | "item" | "color" | "material" | "pattern";
 
-const FILTER_META: { key: FilterKey; label: string }[] = [
-  { key: "season", label: "Mevsim" },
-  { key: "item", label: "Öğe" },
-  { key: "color", label: "Renk" },
-  { key: "material", label: "Malzeme" },
-  { key: "pattern", label: "Model" },
-];
+const FILTER_KEYS: FilterKey[] = ["season", "item", "color", "material", "pattern"];
 
 export default function FashionSearch() {
   const { colors, spacing } = useTheme();
+  const { t, formatSeason } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
@@ -117,10 +113,13 @@ export default function FashionSearch() {
     setOpenModal(null);
   };
 
+  const filterLabel = (key: FilterKey): string =>
+    key === "season" ? t("feed.seasonFilter") : t(`lens.${key}`);
+
   const genderTabs: FashionLookOption[] = filters?.genders || [
-    { value: "", label: "Tümü" },
-    { value: "female", label: "Bayanlar" },
-    { value: "male", label: "Erkekler" },
+    { value: "", label: t("common.all") },
+    { value: "female", label: t("category.women") },
+    { value: "male", label: t("category.men") },
   ];
 
   const flatOptionsFor = (key: FilterKey): FashionLookOption[] | undefined => {
@@ -134,7 +133,8 @@ export default function FashionSearch() {
 
   const currentLabel = (key: FilterKey): string => {
     const val = selected[key];
-    if (!val) return FILTER_META.find((f) => f.key === key)!.label;
+    if (!val) return filterLabel(key);
+    if (key === "season") return formatSeason(val, flatOptionsFor("season")?.find((o) => o.value === val)?.label);
     if (key === "item") {
       for (const g of filters?.items || []) {
         const opt = g.options.find((o) => o.value === val);
@@ -175,7 +175,7 @@ export default function FashionSearch() {
             testID="look-search-input"
             value={q}
             onChangeText={setQ}
-            placeholder="Marka, sezon ara…"
+            placeholder={t("lens.searchPlaceholder")}
             placeholderTextColor={colors.brandSecondary}
             style={{ flex: 1, color: colors.onSurface, fontSize: 14, paddingVertical: 8 }}
             autoCapitalize="none"
@@ -232,7 +232,7 @@ export default function FashionSearch() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 12 }}
           >
-            {FILTER_META.map((f) => {
+            {FILTER_KEYS.map((f) => {
               const active = !!selected[f.key];
               return (
                 <Pressable
@@ -258,9 +258,7 @@ export default function FashionSearch() {
 
           {items.length === 0 ? (
             <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
-              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
-                Bu filtreye uygun sonuç bulunamadı.
-              </Text>
+              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>{t("lens.empty")}</Text>
             </View>
           ) : (
             <>
@@ -289,7 +287,7 @@ export default function FashionSearch() {
                     <ActivityIndicator color={colors.onSurface} size="small" />
                   ) : (
                     <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
-                      Daha Fazla Yükle ({items.length})
+                      {t("common.loadMore")} ({items.length})
                     </Text>
                   )}
                 </Pressable>
@@ -302,7 +300,7 @@ export default function FashionSearch() {
       <FilterModal
         visible={!!openModal}
         onClose={() => setOpenModal(null)}
-        title={openModal ? FILTER_META.find((f) => f.key === openModal)!.label : ""}
+        title={openModal ? filterLabel(openModal) : ""}
         colors={colors}
         bottomInset={insets.bottom}
         selected={openModal ? selected[openModal] : ""}
@@ -401,6 +399,7 @@ function FilterModal({
   flatOptions?: FashionLookOption[];
   groupedOptions?: { group: string; options: FashionLookOption[] }[];
 }) {
+  const { t } = useT();
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
@@ -413,7 +412,7 @@ function FilterModal({
             </Pressable>
           </View>
           <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
-            <OptionRow label="Tümü" active={!selected} onPress={() => onSelect("")} colors={colors} />
+            <OptionRow label={t("common.all")} active={!selected} onPress={() => onSelect("")} colors={colors} />
             {flatOptions?.map((o) => (
               <OptionRow
                 key={o.value}

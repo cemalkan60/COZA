@@ -10,6 +10,7 @@ import { StatusBar } from "expo-status-bar";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ThemeProvider, useTheme } from "@/src/theme/ThemeContext";
 import { AuthProvider } from "@/src/context/AuthContext";
+import { LanguageProvider } from "@/src/i18n";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -62,9 +63,11 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <KeyboardProvider>
           <ThemeProvider>
-            <AuthProvider>
-              <ThemedShell />
-            </AuthProvider>
+            <LanguageProvider>
+              <AuthProvider>
+                <ThemedShell />
+              </AuthProvider>
+            </LanguageProvider>
           </ThemeProvider>
         </KeyboardProvider>
       </SafeAreaProvider>

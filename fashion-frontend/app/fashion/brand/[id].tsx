@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "@/src/theme/ThemeContext";
+import { useT } from "@/src/i18n";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
 import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/ZoomableImage";
@@ -23,6 +24,7 @@ import RetryImage from "@/src/components/RetryImage";
 export default function BrandGallery() {
   const params = useLocalSearchParams();
   const { colors, spacing } = useTheme();
+  const { t, formatSeason } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
@@ -31,7 +33,8 @@ export default function BrandGallery() {
   const titleParam = (params.title as string) || "";
   const title = titleParam ? decodeURIComponent(titleParam) : "";
   const seasonParam = (params.season as string) || "";
-  const season = seasonParam ? decodeURIComponent(seasonParam) : "";
+  const seasonRaw = seasonParam ? decodeURIComponent(seasonParam) : "";
+  const season = seasonRaw ? formatSeason(seasonRaw, seasonRaw) : "";
   const headerLabel = season ? `${title} (${season})` : title;
 
   const [images, setImages] = useState<string[]>([]);
@@ -211,7 +214,7 @@ export default function BrandGallery() {
         <Feather name="chevron-left" size={26} color={colors.onSurface} />
       </Pressable>
       <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.onSurface }]}>
-        {headerLabel || "Koleksiyon"}
+        {headerLabel || t("detail.gallery")}
       </Text>
       <View style={{ width: 26 }} />
     </View>
@@ -231,7 +234,7 @@ export default function BrandGallery() {
       <View style={{ flex: 1, backgroundColor: colors.surface }}>
         {header}
         <View style={styles.noContent}>
-          <Text style={{ color: colors.brandSecondary }}>Bu koleksiyona ait görsel bulunamadı.</Text>
+          <Text style={{ color: colors.brandSecondary }}>{t("lens.empty")}</Text>
         </View>
       </View>
     );

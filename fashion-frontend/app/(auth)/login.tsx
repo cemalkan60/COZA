@@ -13,11 +13,13 @@ import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 
 import { useTheme } from "@/src/theme/ThemeContext";
+import { useT } from "@/src/i18n";
 import { useAuth } from "@/src/context/AuthContext";
 import { Logo } from "@/src/components/Logo";
 
 export default function Login() {
   const { colors, spacing } = useTheme();
+  const { t } = useT();
   const { signIn } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -29,7 +31,7 @@ export default function Login() {
 
   const submit = async () => {
     if (!email.trim() || !password) {
-      setError("Lütfen kullanıcı adı ve şifrenizi girin.");
+      setError(t("auth.error"));
       return;
     }
     setLoading(true);
@@ -39,7 +41,7 @@ export default function Login() {
       await signIn(email, password);
       router.replace("/fashion");
     } catch (e: any) {
-      setError(e?.message || "Giriş başarısız.");
+      setError(e?.message || t("auth.error"));
     } finally {
       setLoading(false);
     }
@@ -66,18 +68,18 @@ export default function Login() {
           <Logo size={44} />
         </View>
 
-        <Text style={[styles.title, { color: colors.onSurface }]}>Giriş Yap</Text>
+        <Text style={[styles.title, { color: colors.onSurface }]}>{t("auth.signIn")}</Text>
 
         <Field
-          label="KULLANICI ADI"
+          label={t("auth.email").toUpperCase()}
           value={email}
           onChangeText={setEmail}
-          placeholder="kullanıcı adı"
+          placeholder={t("auth.email").toLowerCase()}
           autoCapitalize="none"
           testID="login-email"
         />
         <Field
-          label="ŞİFRE"
+          label={t("auth.password").toUpperCase()}
           value={password}
           onChangeText={setPassword}
           placeholder="••••••••"
@@ -100,7 +102,7 @@ export default function Login() {
           {loading ? (
             <ActivityIndicator color={colors.onBrand} />
           ) : (
-            <Text style={[styles.buttonText, { color: colors.onBrand }]}>Giriş Yap</Text>
+            <Text style={[styles.buttonText, { color: colors.onBrand }]}>{loading ? t("auth.signingIn") : t("auth.signIn")}</Text>
           )}
         </Pressable>
       </KeyboardAwareScrollView>

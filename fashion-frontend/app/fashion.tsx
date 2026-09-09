@@ -18,20 +18,18 @@ import { Feather } from "@expo/vector-icons";
 
 import { api, FashionItem, FashionAnalytics } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
+import { useT } from "@/src/i18n";
 import { formatDate } from "@/src/utils/format";
 import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 import RetryImage from "@/src/components/RetryImage";
 
 const { width } = Dimensions.get("window");
 
-const CATEGORIES: { value: string; label: string }[] = [
-  { value: "women", label: "Kadın" },
-  { value: "men", label: "Erkek" },
-  { value: "haute-couture", label: "Haute Couture" },
-];
+const CATEGORY_VALUES = ["women", "men", "haute-couture"] as const;
 
 export default function Fashion() {
   const { colors, spacing } = useTheme();
+  const { t, formatSeason } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
@@ -125,16 +123,16 @@ export default function Fashion() {
   const cityChips = analytics?.cities || [];
 
   const SORT_OPTS = [
-    { value: "newest", label: "En Yeni" },
-    { value: "oldest", label: "En Eski" },
-    { value: "updated", label: "Son Güncellenen" },
+    { value: "newest", label: t("feed.sortNewest") },
+    { value: "oldest", label: t("feed.sortOldest") },
+    { value: "updated", label: t("feed.sortUpdated") },
   ];
   const SOURCE_OPTS = [
-    { value: "", label: "Tüm Kaynaklar" },
+    { value: "", label: t("feed.allSources") },
     { value: "firstview", label: "FirstView" },
     { value: "fashion-press", label: "fashion-press" },
   ];
-  const sortLabel = SORT_OPTS.find((o) => o.value === sort)?.label || "Sırala";
+  const sortLabel = SORT_OPTS.find((o) => o.value === sort)?.label || t("feed.sort");
   const sourceLabel = source ? SOURCE_OPTS.find((o) => o.value === source)?.label : undefined;
 
   // show all items (no 6-limit)
@@ -151,7 +149,7 @@ export default function Fashion() {
       >
         <View style={{ flex: 1 }}>
           <Text style={[styles.brandLine, { color: colors.onSurface }]}>
-            COZA <Text style={{ color: colors.brandSecondary }}>FASHION</Text>
+            COZA <Text style={{ color: colors.brandSecondary }}>{t("feed.title")}</Text>
           </Text>
         </View>
         <Pressable
@@ -180,7 +178,7 @@ export default function Fashion() {
             testID="fashion-search-input"
             value={q}
             onChangeText={setQ}
-            placeholder="Marka, sezon, şehir ara…"
+            placeholder={t("feed.searchPlaceholder")}
             placeholderTextColor={colors.brandSecondary}
             style={{ flex: 1, color: colors.onSurface, fontSize: 14, paddingVertical: 8 }}
             autoCapitalize="none"
@@ -206,13 +204,13 @@ export default function Fashion() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />}
         >
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 14 }}>
-            <Chip label="Tümü" active={!category} onPress={() => setCategory(undefined)} colors={colors} />
-            {CATEGORIES.map((c) => (
+            <Chip label={t("common.all")} active={!category} onPress={() => setCategory(undefined)} colors={colors} />
+            {CATEGORY_VALUES.map((c) => (
               <Chip
-                key={c.value}
-                label={c.label}
-                active={category === c.value}
-                onPress={() => setCategory((cur) => (cur === c.value ? undefined : c.value))}
+                key={c}
+                label={t(`category.${c}`)}
+                active={category === c}
+                onPress={() => setCategory((cur) => (cur === c ? undefined : c))}
                 colors={colors}
               />
             ))}
@@ -233,7 +231,7 @@ export default function Fashion() {
             />
             <FilterPill
               testID="fashion-filter-source"
-              label="Kaynak"
+              label={t("feed.source")}
               value={sourceLabel}
               active={!!source}
               onPress={() => setOpenModal("source")}
@@ -242,8 +240,8 @@ export default function Fashion() {
             {seasonChips.length > 0 && (
               <FilterPill
                 testID="fashion-filter-season"
-                label="Sezon"
-                value={season ? seasonChips.find((s) => s.code === season)?.label : undefined}
+                label={t("feed.seasonFilter")}
+                value={season ? formatSeason(season, seasonChips.find((s) => s.code === season)?.label) : undefined}
                 active={!!season}
                 onPress={() => setOpenModal("season")}
                 colors={colors}
@@ -252,7 +250,7 @@ export default function Fashion() {
             {cityChips.length > 0 && (
               <FilterPill
                 testID="fashion-filter-city"
-                label="Şehir"
+                label={t("feed.city")}
                 value={city}
                 active={!!city}
                 onPress={() => setOpenModal("city")}
@@ -267,7 +265,7 @@ export default function Fashion() {
                 <>
                   <Feather name="wifi-off" size={26} color={colors.brandSecondary} />
                   <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
-                    İçerik yüklenemedi. Bağlantını kontrol edip tekrar dene.
+                    {t("feed.loadError")}
                   </Text>
                   <Pressable
                     testID="fashion-retry"
@@ -277,11 +275,11 @@ export default function Fashion() {
                     }}
                     style={[styles.loadMoreBtn, { borderColor: colors.border, paddingHorizontal: 28, alignSelf: "center" }]}
                   >
-                    <Text style={{ color: colors.onSurface, fontWeight: "700" }}>Tekrar Dene</Text>
+                    <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{t("common.retry")}</Text>
                   </Pressable>
                 </>
               ) : (
-                <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>Henüz içerik yok. İçerik her gün 07:00'de otomatik güncellenir.</Text>
+                <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>{t("feed.empty")}</Text>
               )}
             </View>
           ) : (
@@ -302,9 +300,9 @@ export default function Fashion() {
               {loadingMore ? (
                 <ActivityIndicator color={colors.onSurface} size="small" />
               ) : moreError ? (
-                <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>Yüklenemedi — tekrar dene</Text>
+                <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>{t("feed.loadMoreError")}</Text>
               ) : (
-                <Text style={{ color: colors.onSurface, fontWeight: "700" }}>Daha Fazla Yükle ({items.length}/{total})</Text>
+                <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{t("common.loadMore")} ({items.length}/{total})</Text>
               )}
             </Pressable>
           )}
@@ -313,7 +311,7 @@ export default function Fashion() {
             <View style={[styles.note, { backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}>
               <Feather name="info" size={14} color={colors.brandSecondary} />
               <Text style={[styles.noteText, { color: colors.brandSecondary }]}>
-                İçerik fashion-press.net ve FirstView'dan derlenir. Her gün 07:00'de otomatik güncellenir. Son güncelleme: {formatDate(analytics.last_scrape)}
+                {t("feed.note", { date: formatDate(analytics.last_scrape) })}
               </Text>
             </View>
           )}
@@ -324,18 +322,18 @@ export default function Fashion() {
         visible={openModal !== null}
         onClose={() => setOpenModal(null)}
         title={
-          openModal === "city" ? "Şehir"
-            : openModal === "season" ? "Sezon"
-              : openModal === "source" ? "Kaynak"
-                : "Sırala"
+          openModal === "city" ? t("feed.city")
+            : openModal === "season" ? t("feed.seasonFilter")
+              : openModal === "source" ? t("feed.source")
+                : t("feed.sort")
         }
         colors={colors}
         bottomInset={insets.bottom}
         options={
           openModal === "city"
-            ? [{ value: "", label: "Tüm Şehirler" }, ...cityChips.map((c) => ({ value: c, label: c }))]
+            ? [{ value: "", label: t("feed.allCities") }, ...cityChips.map((c) => ({ value: c, label: c }))]
             : openModal === "season"
-              ? [{ value: "", label: "Tüm Sezonlar" }, ...seasonChips.map((s) => ({ value: s.code, label: s.label }))]
+              ? [{ value: "", label: t("feed.allSeasons") }, ...seasonChips.map((s) => ({ value: s.code, label: formatSeason(s.code, s.label) }))]
               : openModal === "source"
                 ? SOURCE_OPTS
                 : SORT_OPTS
@@ -360,6 +358,7 @@ export default function Fashion() {
 
 function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }) {
   const router = useRouter();
+  const { formatSeason } = useT();
   // The grid only ever shows this card at a small fixed size, so it loads
   // the small resized copy (image_thumb) instead of the full-resolution
   // runway photo -- confirmed live as the main cause of slow/blank-looking
@@ -389,7 +388,7 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
     // so the first photo could paint before that fetch resolved, but it
     // leaked the source domain straight into the visible/shareable URL.)
     const title = encodeURIComponent(it.brand_tr || it.title_tr || "");
-    const season = encodeURIComponent(it.season_label || "");
+    const season = encodeURIComponent(it.season || "");
     router.push(`/fashion/brand/${encodeURIComponent(it.source_id)}?title=${title}&season=${season}`);
   };
 
@@ -414,8 +413,8 @@ function FashionCard({ item, colors }: { item: FashionItem | null; colors: any }
       </View>
       <Text numberOfLines={1} style={[styles.cardBrand, { color: colors.onSurface }]}>
         {item.brand_tr || item.title_tr}
-        {item.season_label ? (
-          <Text style={[styles.cardSeason, { color: colors.brandSecondary }]}> ({item.season_label})</Text>
+        {item.season || item.season_label ? (
+          <Text style={[styles.cardSeason, { color: colors.brandSecondary }]}> ({formatSeason(item.season, item.season_label)})</Text>
         ) : null}
       </Text>
     </Pressable>
