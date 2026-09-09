@@ -2929,15 +2929,15 @@ async def run_fashion_tag_photos() -> dict:
             upsert=True,
         )
 
-        sem = asyncio.Semaphore(int(os.environ.get("FASHION_TAG_DOC_CONCURRENCY", "24")))
-        # Keep going in passes: a batch that fails (a slot cooling out on a
-        # per-minute 429, a briefly-unreachable photo) makes _tag_one_doc
-        # abandon the rest of that doc for the pass. Without a loop the whole
-        # sweep would then just end early ("tagged 200, stopped"). Re-query
-        # and retry until a full pass makes zero progress — cooldowns clear
-        # between passes, so this drains as far as the day's quota allows.
+        sem = asyncio.Semaphore(int(os.environ.get("FASHION_TAG_DOC_CONCURRENCY", "6")))
+        # Keep going in passes. When a whole pass tags nothing, tell a
+        # per-minute rate limit (every slot cooling for a SHORT while — wait
+        # it out and retry the same docs) apart from the daily cap being
+        # spent (long / no cooldown — stop, the 04:00 run resumes).
+        max_rate_waits = int(os.environ.get("FASHION_TAG_RATE_WAITS", "10"))
         tagged = 0
         stopped_early = False
+        rate_waits = 0
         while need:
             batch_docs = await db.fashion.find(
                 {"source_id": {"$in": need}},
@@ -2949,11 +2949,24 @@ async def run_fashion_tag_photos() -> dict:
             results = await asyncio.gather(*(_tag_one_doc(d, sem) for d in batch_docs))
             pass_tagged = sum(results)
             tagged += pass_tagged
-            # A doc that gained zero tags this pass is stuck on something that
-            # won't clear within this run — a dead (404) photo in the middle of
-            # its gallery, or the day's quota running out mid-doc. Drop it from
-            # `need` so we don't re-download (and re-count) the same failing
-            # photo every pass; the nightly 04:00 sweep retries it fresh.
+
+            if pass_tagged == 0:
+                ss = gemini_client.slot_status()
+                wait = ss.get("resumes_in_s") or 0
+                if ss.get("all_cooling") and 0 < wait <= 150 and rate_waits < max_rate_waits:
+                    rate_waits += 1
+                    logger.info("Fashion tagging: all slots cooling ~%ss (rate limit) — waiting, retry %d/%d.",
+                                wait, rate_waits, max_rate_waits)
+                    await asyncio.sleep(wait + 3)
+                    continue  # same `need`, try again
+                logger.info("Fashion tagging: a full pass tagged nothing (daily quota spent or photos unreachable) — stopping, resumes next run.")
+                stopped_early = True
+                break
+
+            rate_waits = 0  # real progress refills the patience budget
+            # A doc that gained zero while others progressed is stuck on a dead
+            # (404) photo mid-gallery — drop it so we don't re-hit it; the
+            # nightly 04:00 sweep retries it fresh.
             stuck = {d["source_id"] for d, got in zip(batch_docs, results) if got == 0}
             retry_ids = [d["source_id"] for d in batch_docs if d["source_id"] not in stuck]
             still = await db.fashion.find(
@@ -2961,10 +2974,6 @@ async def run_fashion_tag_photos() -> dict:
                 {"_id": 0, "source_id": 1, "images": 1, "image_tags": 1},
             ).to_list(length=None) if retry_ids else []
             need = [d["source_id"] for d in still if len(d.get("image_tags") or []) < _doc_taggable(d)]
-            if pass_tagged == 0:
-                logger.info("Fashion tagging: a full pass tagged nothing (quota spent or photos unreachable) — stopping, resumes next run.")
-                stopped_early = True
-                break
             logger.info("Fashion tagging: pass done (+%d), %d collection(s) still need work.", pass_tagged, len(need))
 
         logger.info("Fashion tagging: run finished, %d photo(s) tagged.", tagged)

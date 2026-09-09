@@ -82,11 +82,11 @@ _MODELS = _split_env("GEMINI_MODELS") or (
 )
 
 # Minimum seconds between two requests that reuse the SAME key (rate limits
-# are per-project, tracked per key). Default 0.25s (~240 req/min/key) suits
-# a single PAID key — the free tier is far tighter, so set
-# GEMINI_MIN_INTERVAL_S=3 in the env if you go back to free keys. A too-low
-# value just earns the odd 429, which cools that slot briefly.
-_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "0.25"))
+# are per-project, tracked per key). Default 0.6s (~100 req/min/key) — a
+# brand-new PAID account starts with modest rate limits that ramp up with
+# use, and bursting past them just earns 429s. Lower it once limits grow;
+# set GEMINI_MIN_INTERVAL_S=3 if you go back to free keys.
+_MIN_INTERVAL_S = float(os.environ.get("GEMINI_MIN_INTERVAL_S", "0.6"))
 
 # Image downloads for a batch run in parallel (each _download_image is a
 # blocking requests.get) -- serial downloads were most of a batch's
