@@ -249,6 +249,11 @@ export type AdminDashboard = {
   users: { email?: string; name?: string; role?: string }[];
   system: {
     db_name: string;
+    sources?: {
+      active: string[];
+      disabled: { name: string; reason: string }[];
+      yield_baseline?: Record<string, { ewma: number; samples: number }>;
+    };
     r2?: {
       enabled: boolean; buckets: number; hosts: string[]; fullres_max_px: number | null;
       cors?: { index: number; bucket: string; host: string; ok: boolean; detail: string }[];

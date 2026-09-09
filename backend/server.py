@@ -788,6 +788,43 @@ async def _finalize_and_save_group(g: dict, sem: asyncio.Semaphore, now_iso: str
 BACKFILL_FASHION_PRESS_SEASONS = ("2026-27aw", "2027ss", "2027-28aw")
 BACKFILL_FIRSTVIEW_YEARS = (2026, 2027)
 
+# Sites a regular (non-backfill) scrape always hits. _check_scrape_yield
+# watches each one's item count run-over-run and warns when it craters —
+# the signature of a scraper whose CSS selectors / URL patterns broke
+# against a site redesign (how the firstview season-format change went
+# unnoticed for weeks, only ever logged, never surfaced in the app).
+_SCRAPE_YIELD_SITES = ("fashion-press", "firstview")
+
+
+async def _check_scrape_yield(by_source: dict) -> list:
+    """Fold this run's per-site counts into a rolling baseline (meta doc
+    `fashion_scrape_yield`) and return a list of plain-language warnings for
+    any site whose yield just collapsed vs. its recent norm. A run that
+    already looks broken is NOT folded into the baseline, so the alarm keeps
+    tripping instead of quietly redefining "normal" as zero."""
+    doc = await db.meta.find_one({"_id": "fashion_scrape_yield"}) or {}
+    stats = dict(doc.get("sites") or {})
+    warnings: list = []
+    for site in _SCRAPE_YIELD_SITES:
+        got = int(by_source.get(site, 0))
+        s = stats.get(site) or {}
+        ewma = float(s.get("ewma", 0.0))
+        samples = int(s.get("samples", 0))
+        if samples >= 3 and ewma >= 10 and got < max(2, 0.2 * ewma):
+            warnings.append(
+                f"{site}: bu taramada yalnızca {got} kayıt geldi (son ortalama ~{round(ewma)}). "
+                f"Sitenin sayfa yapısı değişip kazıyıcı bozulmuş olabilir — kontrol edilmeli."
+            )
+        else:
+            stats[site] = {
+                "ewma": float(got) if samples == 0 else round(0.4 * got + 0.6 * ewma, 1),
+                "samples": samples + 1,
+            }
+    await db.meta.update_one(
+        {"_id": "fashion_scrape_yield"}, {"$set": {"sites": stats}}, upsert=True,
+    )
+    return warnings
+
 
 async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> dict:
     """Scrape runway collections (women / men / haute couture) from
@@ -903,6 +940,17 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
             by_source[r.get("source", "?")] = by_source.get(r.get("source", "?"), 0) + 1
         logger.info("Fashion scrape (%s): %d raw items collected (%s)", reason, len(raw_items), by_source)
 
+        # Broken-scraper alarm (regular scrapes only — backfill volume swings
+        # too wildly for a baseline). Surfaces in the job-run history below.
+        scrape_warnings: list = []
+        if not backfill:
+            try:
+                scrape_warnings = await _check_scrape_yield(by_source)
+                for w in scrape_warnings:
+                    logger.warning("Fashion scrape (%s): %s", reason, w)
+            except Exception:
+                logger.exception("Fashion scrape (%s): yield check failed", reason)
+
         try:
             await _resolve_brand_names(raw_items)
         except Exception:
@@ -989,12 +1037,17 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
             reason, len(raw_items), saved, len(groups),
             (datetime.now(timezone.utc) - started).total_seconds(),
         )
+        saved_all = saved >= len(groups)
+        reason_bits = []
+        if not saved_all:
+            reason_bits.append("Bazı koleksiyonlar zaman aşımı/hata nedeniyle kaydedilemedi; bir sonraki taramada tekrar denenecek.")
+        reason_bits.extend(scrape_warnings)
         await _record_job_run(
             "fashion_backfill" if backfill else "fashion_scrape",
-            status="ok" if saved >= len(groups) else "partial",
+            status="ok" if (saved_all and not scrape_warnings) else "partial",
             started_at=start_iso, done=saved, total=len(groups),
             detail=f"{saved}/{len(groups)} koleksiyon kaydedildi ({len(raw_items)} ham kayıt)",
-            reason="" if saved >= len(groups) else "Bazı koleksiyonlar zaman aşımı/hata nedeniyle kaydedilemedi; bir sonraki taramada tekrar denenecek.",
+            reason=" · ".join(reason_bits),
         )
         return {"status": "ok", **meta}
 
@@ -1750,6 +1803,7 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
     ).to_list(length=50)
 
     cors_rows = await asyncio.to_thread(image_store.cors_status) if hasattr(image_store, "cors_status") else []
+    yield_meta = (await db.meta.find_one({"_id": "fashion_scrape_yield"}, {"_id": 0}) or {}).get("sites", {})
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1815,6 +1869,16 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
         "users": users,
         "system": {
             "db_name": os.environ["DB_NAME"],
+            "sources": {
+                "active": ["fashion-press.net", "firstview.com"],
+                "disabled": [
+                    {"name": "nowfashion.com",
+                     "reason": "Bot koruması (HTTP 403 / JS challenge). Aşmak ScraperAPI render=true (~10x kredi) gerektirdiği için kapalı."},
+                ],
+                # Rolling per-site item-count baseline the broken-scraper
+                # alarm compares against (see _check_scrape_yield).
+                "yield_baseline": yield_meta,
+            },
             "r2": {
                 "enabled": image_store.ENABLED,
                 "buckets": len(getattr(image_store, "_ACCOUNTS", [])),
@@ -3045,6 +3109,20 @@ async def _merge_one_doc_group_inner(key: str, group: list) -> tuple:
         await asyncio.to_thread(lambda: [image_store.delete_image(u) for u in dropped])
     deduped_thumb = [thumb_by_url.get(u, u) for u in deduped]
 
+    # image_tags is a positional prefix of images (image_tags[i] describes
+    # images[i]). The merge can reorder / drop photos, so keep only the
+    # leading tags whose URL still lines up at the same index; the nightly
+    # tagging sweep regenerates the rest. In the common case (canonical doc
+    # unchanged, dups just appended) this carries every tag over losslessly.
+    _old_tags = canonical.get("image_tags") or []
+    _old_imgs = canonical.get("images") or []
+    kept_tags: list = []
+    for _i, _u in enumerate(deduped):
+        if _i < len(_old_tags) and _i < len(_old_imgs) and _old_imgs[_i] == _u:
+            kept_tags.append(_old_tags[_i])
+        else:
+            break
+
     season = _season_merge_code(canonical.get("season") or "")
     merged_doc = {
         **canonical,
@@ -3053,6 +3131,7 @@ async def _merge_one_doc_group_inner(key: str, group: list) -> tuple:
         "image": deduped[0] if deduped else None,
         "images_thumb": deduped_thumb,
         "image_thumb": deduped_thumb[0] if deduped_thumb else None,
+        "image_tags": kept_tags,
         "sources": sources,
         "brand_tr": brand_tr,
         "title_tr": title_tr,
@@ -3204,9 +3283,13 @@ async def root():
 
 app.include_router(api)
 
+# Auth is a Bearer JWT in the Authorization header, never a cookie, so
+# allow_credentials must stay False — pairing it with allow_origins=["*"]
+# is the invalid combo browsers reject anyway. "*" is fine here: this is a
+# token-gated read API with no ambient (cookie) credentials to protect.
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    allow_credentials=False,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -3226,7 +3309,17 @@ async def _scheduled_fashion_tag_photos():
 
 
 async def _scheduled_fashion_prune():
-    await _run_tracked("fashion_prune_old", run_fashion_prune_old())
+    # run_fashion_prune_old() is deliberately lock-free (run_fashion_scrape
+    # calls it while already holding _fashion_lock, and asyncio.Lock isn't
+    # reentrant). The API route guards it with a .locked() check; this 03:30
+    # job needs the same guard, or it can delete db.fashion docs + R2 photos
+    # concurrently with a manual backfill / tag / merge that's holding the
+    # lock. Skipping is safe: every scrape runs its own prune at the end.
+    if _fashion_lock.locked():
+        logger.info("Scheduled prune skipped — another fashion job holds the lock.")
+        return
+    async with _fashion_lock:
+        await _run_tracked("fashion_prune_old", run_fashion_prune_old())
 
 
 @app.on_event("startup")

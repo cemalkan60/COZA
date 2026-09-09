@@ -48,6 +48,11 @@ export default function Fashion() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // A failed request must not look like "no content" — track it separately
+  // so the empty state can tell the user it's a connection problem and offer
+  // a retry, instead of the misleading "content updates daily at 07:00".
+  const [error, setError] = useState(false);
+  const [moreError, setMoreError] = useState(false);
   const [openModal, setOpenModal] = useState<"city" | "season" | "source" | "sort" | null>(null);
 
   const PAGE_SIZE = 40;
@@ -69,8 +74,11 @@ export default function Fashion() {
         setItems(feed.items || []);
         setTotal(feed.total ?? (feed.items || []).length);
         setAnalytics(stats);
+        setError(false);
       } catch {
-        /* sessizce geç */
+        // Keep whatever's already on screen; just flag the failure so the
+        // empty state can show "connection problem / retry" not "no content".
+        setError(true);
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -82,6 +90,7 @@ export default function Fashion() {
   const loadMore = useCallback(async () => {
     if (loadingMore || items.length >= total) return;
     setLoadingMore(true);
+    setMoreError(false);
     try {
       const feed = await api.fashionCollections({
         season,
@@ -96,7 +105,7 @@ export default function Fashion() {
       setItems((cur) => [...cur, ...(feed.items || [])]);
       setTotal(feed.total ?? total);
     } catch {
-      /* sessizce geç */
+      setMoreError(true);
     } finally {
       setLoadingMore(false);
     }
@@ -253,8 +262,27 @@ export default function Fashion() {
           </ScrollView>
 
           {items.length === 0 ? (
-            <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
-              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>Henüz içerik yok. İçerik her gün 07:00'de otomatik güncellenir.</Text>
+            <View style={{ paddingHorizontal: spacing.xl, marginTop: 40, alignItems: "center", gap: 14 }}>
+              {error ? (
+                <>
+                  <Feather name="wifi-off" size={26} color={colors.brandSecondary} />
+                  <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
+                    İçerik yüklenemedi. Bağlantını kontrol edip tekrar dene.
+                  </Text>
+                  <Pressable
+                    testID="fashion-retry"
+                    onPress={() => {
+                      setLoading(true);
+                      load();
+                    }}
+                    style={[styles.loadMoreBtn, { borderColor: colors.border, paddingHorizontal: 28, alignSelf: "center" }]}
+                  >
+                    <Text style={{ color: colors.onSurface, fontWeight: "700" }}>Tekrar Dene</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>Henüz içerik yok. İçerik her gün 07:00'de otomatik güncellenir.</Text>
+              )}
             </View>
           ) : (
             <View style={[styles.grid, { paddingHorizontal: spacing.xl - 4 }]}>
@@ -273,6 +301,8 @@ export default function Fashion() {
             >
               {loadingMore ? (
                 <ActivityIndicator color={colors.onSurface} size="small" />
+              ) : moreError ? (
+                <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>Yüklenemedi — tekrar dene</Text>
               ) : (
                 <Text style={{ color: colors.onSurface, fontWeight: "700" }}>Daha Fazla Yükle ({items.length}/{total})</Text>
               )}
@@ -283,7 +313,7 @@ export default function Fashion() {
             <View style={[styles.note, { backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}>
               <Feather name="info" size={14} color={colors.brandSecondary} />
               <Text style={[styles.noteText, { color: colors.brandSecondary }]}>
-                İçerik fashion-press.net, NOWFASHION ve FirstView'dan derlenir. Her gün 07:00'de otomatik güncellenir. Son güncelleme: {formatDate(analytics.last_scrape)}
+                İçerik fashion-press.net ve FirstView'dan derlenir. Her gün 07:00'de otomatik güncellenir. Son güncelleme: {formatDate(analytics.last_scrape)}
               </Text>
             </View>
           )}

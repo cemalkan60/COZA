@@ -391,6 +391,14 @@ export default function AdminPanel() {
             {/* Sistem */}
             <Section title="Sistem">
               <Row k="Veritabanı" v={d.system.db_name} />
+              {!!d.system.sources && (
+                <>
+                  <Row k="Aktif kaynaklar" v={d.system.sources.active.join(", ")} />
+                  {d.system.sources.disabled.map((s) => (
+                    <Row key={s.name} k={`Kapalı · ${s.name}`} v={s.reason} danger />
+                  ))}
+                </>
+              )}
               <Row
                 k="R2 kova (fotoğraf deposu)"
                 v={d.system.r2 ? (d.system.r2.enabled ? `${d.system.r2.buckets} aktif` : "kapalı") : "?"}
