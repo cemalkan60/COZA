@@ -386,30 +386,29 @@ export default function BrandGallery() {
                   setViewerIndex(idx);
                 }}
                 renderItem={({ item, index }) => (
-                  <View style={{ width, height }}>
-                    {/* Tap the dark margin around the photo = the X button.
-                        If the photo is zoomed, the first tap just resets it. */}
-                    <Pressable
-                      style={StyleSheet.absoluteFill}
-                      onPress={() => {
-                        if (viewerZoomed) zoomRefs.current.get(viewerIndexRef.current ?? -1)?.resetZoom();
-                        else setViewerIndex(null);
+                  // Tapping anywhere that isn't the zoomed photo — the dark
+                  // margin, or the photo itself while not zoomed — closes the
+                  // viewer (same as the X). Double-tap / pinch still zoom.
+                  <Pressable
+                    style={{ width, height, alignItems: "center", justifyContent: "center" }}
+                    onPress={() => {
+                      if (viewerZoomed) zoomRefs.current.get(viewerIndexRef.current ?? -1)?.resetZoom();
+                      else setViewerIndex(null);
+                    }}
+                  >
+                    <ZoomableImage
+                      ref={(handle) => {
+                        if (handle) zoomRefs.current.set(index, handle);
+                        else zoomRefs.current.delete(index);
                       }}
+                      uri={fashionImageUri(item)}
+                      width={width * 0.92}
+                      height={height * 0.8}
+                      contentFit="contain"
+                      onZoomChange={setViewerZoomed}
+                      onTap={() => setViewerIndex(null)}
                     />
-                    <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }} pointerEvents="box-none">
-                      <ZoomableImage
-                        ref={(handle) => {
-                          if (handle) zoomRefs.current.set(index, handle);
-                          else zoomRefs.current.delete(index);
-                        }}
-                        uri={fashionImageUri(item)}
-                        width={width * 0.92}
-                        height={height * 0.8}
-                        contentFit="contain"
-                        onZoomChange={setViewerZoomed}
-                      />
-                    </View>
-                  </View>
+                  </Pressable>
                 )}
               />
 

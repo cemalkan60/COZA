@@ -311,9 +311,15 @@ export default function Boards() {
             </Pressable>
           )}
           {viewer && (
-            <View pointerEvents="box-none" style={{ alignItems: "center" }}>
-              <ZoomableImage uri={fashionImageUri(viewer.image)} width={width * 0.92} height={height * 0.72} contentFit="contain" />
-            </View>
+            <Pressable style={{ alignItems: "center" }} onPress={() => setViewer(null)}>
+              <ZoomableImage
+                uri={fashionImageUri(viewer.image)}
+                width={width * 0.92}
+                height={height * 0.72}
+                contentFit="contain"
+                onTap={() => setViewer(null)}
+              />
+            </Pressable>
           )}
         </View>
       </Modal>

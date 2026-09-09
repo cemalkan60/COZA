@@ -417,19 +417,20 @@ export default function FashionSearch() {
             </Pressable>
           )}
           {viewerItem && (
-            <View style={styles.viewerImageWrap} pointerEvents="box-none">
+            <Pressable style={styles.viewerImageWrap} onPress={() => setViewerItem(null)}>
               <ZoomableImage
                 uri={fashionImageUri(viewerItem.image)}
                 width={width * 0.92}
                 height={height * 0.7}
                 contentFit="contain"
+                onTap={() => setViewerItem(null)}
               />
               {(viewerItem.brand_tr || viewerItem.season_text_tr) && (
                 <Text style={styles.viewerCaption}>
                   {[viewerItem.brand_tr, viewerItem.season_text_tr].filter(Boolean).join(" · ")}
                 </Text>
               )}
-            </View>
+            </Pressable>
           )}
         </View>
       </Modal>

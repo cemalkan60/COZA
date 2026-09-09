@@ -55,8 +55,11 @@ export const ZoomableImage = forwardRef<
     height: number;
     contentFit?: ImageContentFit;
     onZoomChange?: (zoomed: boolean) => void;
+    // A single tap on the photo while it's NOT zoomed (used by the viewer
+    // to close on tap). Ignored while zoomed — there a single tap resets.
+    onTap?: () => void;
   }
->(function ZoomableImage({ uri, width, height, contentFit = "contain", onZoomChange }, ref) {
+>(function ZoomableImage({ uri, width, height, contentFit = "contain", onZoomChange, onTap }, ref) {
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
   const translateX = useSharedValue(0);
@@ -152,18 +155,27 @@ export const ZoomableImage = forwardRef<
     notifyZoom(true);
   };
 
-  const containerRef = useRef<View>(null);
+  const containerRef = useRef<any>(null);
   useEffect(() => {
     if (Platform.OS !== "web") return;
-    const el = containerRef.current as unknown as HTMLElement | null;
-    if (!el || typeof el.addEventListener !== "function") return;
+    // RNW may hand back the component instance rather than the node.
+    const raw: any = containerRef.current;
+    const el: HTMLElement | null =
+      raw && typeof raw.addEventListener === "function"
+        ? raw
+        : (raw && (raw._nativeNode || raw.node)) || null;
+    if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const rect = el.getBoundingClientRect();
-      const focalX = e.clientX - rect.left - rect.width / 2;
-      const focalY = e.clientY - rect.top - rect.height / 2;
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      zoomToward(savedScale.value * factor, focalX, focalY);
+      try {
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        const focalX = e.clientX - rect.left - rect.width / 2;
+        const focalY = e.clientY - rect.top - rect.height / 2;
+        const factor = e.deltaY < 0 ? 1.18 : 1 / 1.18;
+        zoomToward(savedScale.value * factor, focalX, focalY);
+      } catch {
+        /* ignore */
+      }
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -225,7 +237,19 @@ export const ZoomableImage = forwardRef<
       }
     });
 
-  const composed = Gesture.Simultaneous(Gesture.Race(doubleTap, pan), pinch);
+  const handleTap = () => {
+    if (savedScale.value > 1) zoomTo(MIN_SCALE);
+    else onTap?.();
+  };
+  // Fires only if it's NOT the first half of a double-tap (see Exclusive).
+  const singleTap = Gesture.Tap()
+    .numberOfTaps(1)
+    .onEnd(() => runOnJS(handleTap)());
+
+  const composed = Gesture.Simultaneous(
+    Gesture.Race(Gesture.Exclusive(doubleTap, singleTap), pan),
+    pinch,
+  );
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
