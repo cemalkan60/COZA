@@ -139,6 +139,21 @@ export default function Settings() {
     }
   };
 
+  const triggerDropDeadImages = async () => {
+    setScraping(true);
+    setScrapeMsg("");
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await api.fashionDropDeadImages();
+      setScrapeMsg("Ölü fotoğraf adresleri temizleniyor — 3 kovanın hiçbirinde olmayan fotoğraflar koleksiyonlardan çıkarılıyor. Depodan bir şey silinmez; gerçekten kayıp fotoğraflar ancak 'Tümünü Tara' ile geri gelir.");
+      startPolling();
+    } catch (e: any) {
+      setScrapeMsg(e?.message || "Başlatılamadı, tekrar deneyin.");
+    } finally {
+      setScraping(false);
+    }
+  };
+
   const runGeminiCheck = async () => {
     setGeminiChecking(true);
     setGeminiCheck(null);
@@ -245,9 +260,13 @@ export default function Settings() {
                           ? "Kapaklar düzeltiliyor"
                           : meta?.phase === "tagging_photos" || meta?.phase === "tagging_firstview"
                             ? "Fotoğraflar yapay zekayla etiketleniyor"
-                            : meta?.phase === "finalizing"
-                              ? "Kaydediliyor"
-                              : "Kaynaklar taranıyor"}
+                            : meta?.phase === "repairing_urls"
+                              ? "Fotoğraf adresleri onarılıyor"
+                              : meta?.phase === "dropping_dead_images"
+                                ? "Ölü fotoğraf adresleri temizleniyor"
+                                : meta?.phase === "finalizing"
+                                  ? "Kaydediliyor"
+                                  : "Kaynaklar taranıyor"}
                   </Text>
                   <Text style={{ color: colors.onSurface, fontWeight: "700" }}>
                     {meta?.phase === "generating_thumbnails"
@@ -258,9 +277,11 @@ export default function Settings() {
                           ? `${meta?.covers_done ?? 0} / ${meta?.covers_total ?? "?"}`
                           : meta?.phase === "tagging_photos" || meta?.phase === "tagging_firstview"
                             ? `${meta?.tags_done ?? 0} / ${meta?.tags_total ?? "?"}`
-                            : meta?.phase === "finalizing"
-                              ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
-                              : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
+                            : meta?.phase === "repairing_urls" || meta?.phase === "dropping_dead_images"
+                              ? `${meta?.repair_done ?? 0} / ${meta?.repair_total ?? "?"}`
+                              : meta?.phase === "finalizing"
+                                ? `${meta?.groups_done ?? 0} / ${meta?.groups_total ?? "?"}`
+                                : `${meta?.sources_done ?? 0} / ${meta?.sources_total ?? "?"} kaynak`}
                   </Text>
                 </View>
               )}
@@ -339,6 +360,17 @@ export default function Settings() {
               <Feather name="tag" size={16} color={colors.onSurface} />
               <Text style={{ color: colors.onSurface, fontWeight: "700", marginLeft: 8 }}>
                 {scraping ? "Başlatılıyor…" : "Fotoğraf Etiketlemeyi Başlat"}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="fashion-drop-dead-images"
+              onPress={triggerDropDeadImages}
+              disabled={scraping}
+              style={[styles.refreshBtn, { borderColor: colors.border, opacity: scraping ? 0.6 : 1 }]}
+            >
+              <Feather name="trash-2" size={16} color={colors.error} />
+              <Text style={{ color: colors.error, fontWeight: "700", marginLeft: 8 }}>
+                {scraping ? "Başlatılıyor…" : "Ölü Fotoğrafları Temizle"}
               </Text>
             </Pressable>
             <Pressable

@@ -204,6 +204,13 @@ def _key_from_url(url: str) -> "Optional[str]":
     return url[len(a["public_base_url"]) + 1:].split("?")[0]
 
 
+def is_our_url(url: str) -> bool:
+    """True if `url` points at one of our R2 buckets (as opposed to a live
+    source-site URL that was never cached). Lets callers tell 'this photo is
+    genuinely gone from storage' apart from 'this was never on storage'."""
+    return _key_from_url(url or "") is not None
+
+
 def find_object_url(url: str) -> "Optional[str]":
     """Where a cached photo actually lives NOW. Given one of our R2 URLs,
     return the URL on whichever bucket currently holds that object — the

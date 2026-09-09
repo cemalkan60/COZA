@@ -173,6 +173,11 @@ export const api = {
   // Rewrite cached photo URLs to the bucket that actually holds them now
   // (fixes 404s after the R2 bucket count changed). No re-download.
   fashionRepairUrls: () => request("/admin/fashion-repair-urls", { method: "POST" }, true),
+  // Drop photo entries that 404 on every R2 bucket from every collection
+  // (ghosts left after the buckets were emptied by hand). Keeps images /
+  // images_thumb / image_tags aligned; never deletes from R2 or touches
+  // source-site URLs. See run_fashion_drop_dead_images in server.py.
+  fashionDropDeadImages: () => request("/admin/fashion-drop-dead-images", { method: "POST" }, true),
   // Diagnostic: probes every (key, model) slot the tagging rotation uses.
   geminiCheck: (): Promise<{
     enabled: boolean;

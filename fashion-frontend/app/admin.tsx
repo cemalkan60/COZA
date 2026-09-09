@@ -53,6 +53,7 @@ const PHASE_LABELS: Record<string, string> = {
   merging_duplicates: "Yinelenenler birleştiriliyor",
   cleaning_cruft: "Bozuk kayıtlar temizleniyor",
   repairing_urls: "Fotoğraf adresleri onarılıyor",
+  dropping_dead_images: "Ölü fotoğraf adresleri temizleniyor",
   tagging_photos: "Fotoğraflar yapay zekayla etiketleniyor",
   tagging_firstview: "Fotoğraflar yapay zekayla etiketleniyor",
 };
@@ -76,7 +77,7 @@ function scrapeProgress(d: AdminDashboard): { pct: number | null; label: string;
     return { pct: Math.round(100 * frac(p.thumbs_done, p.thumbs_total)), label, detail: `${p.thumbs_done}/${p.thumbs_total}` };
   if (phase === "merging_duplicates")
     return { pct: Math.round(100 * frac(p.merge_done, p.merge_total)), label, detail: `${p.merge_done}/${p.merge_total}` };
-  if (phase === "repairing_urls")
+  if (phase === "repairing_urls" || phase === "dropping_dead_images")
     return { pct: Math.round(100 * frac(p.repair_done ?? 0, p.repair_total ?? 0)), label, detail: `${p.repair_done ?? 0}/${p.repair_total ?? 0}` };
   if (phase === "tagging_photos" || phase === "tagging_firstview")
     return { pct: Math.round(100 * frac(d.tagging.run_done, d.tagging.run_total)), label, detail: `${d.tagging.run_done}/${d.tagging.run_total}` };
@@ -337,6 +338,13 @@ export default function AdminPanel() {
                   style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Foto adreslerini onar</Text>
+                </Pressable>
+                <Pressable
+                  disabled={!!busy}
+                  onPress={() => runAction("deaddrop", api.fashionDropDeadImages, "Ölü fotoğraf adresleri temizleniyor — 3 kovanın hiçbirinde olmayan fotoğraflar koleksiyonlardan çıkarılıyor. R2'den bir şey silinmez.")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.error }]}>Ölü fotoları temizle</Text>
                 </Pressable>
               </View>
             </Section>

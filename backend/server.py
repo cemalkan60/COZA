@@ -62,6 +62,7 @@ _JOB_LABELS = {
     "fashion_backfill": "Fashion taraması (2026'dan beri)",
     "fashion_tag_photos": "Fotoğraf etiketleme",
     "fashion_repair_urls": "Fotoğraf adreslerini onarma",
+    "fashion_drop_dead_images": "Ölü fotoğraf adreslerini temizleme",
     "fashion_cover_fix": "Kapak düzeltme",
     "fashion_thumbnails": "Küçük resimler",
     "fashion_merge_duplicates": "Yinelenen birleştirme",
@@ -2683,6 +2684,126 @@ async def admin_fashion_repair_urls(admin: Annotated[dict, Depends(require_admin
     return {"status": "started"}
 
 
+async def run_fashion_drop_dead_images() -> dict:
+    """Drop photo entries whose object exists on NONE of the R2 buckets from
+    every collection's `images` list, keeping `images_thumb` and `image_tags`
+    index-aligned.
+
+    After the buckets were emptied by hand and re-sharded, some docs still
+    list URLs that 404 everywhere — the app renders them as missing tiles
+    and the tagging sweep retries them on every run forever. "Repair URLs"
+    can't help (the object is on no bucket); this removes the ghost entries
+    so photo counts and tagging are honest again. It does NOT delete
+    anything from R2 (there's nothing there) and does NOT touch live
+    source-site URLs (a later scrape re-caches those). A genuinely-lost
+    photo only comes back with a full "Tümünü Tara"; a collection left with
+    zero photos is reported, not deleted.
+    """
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
+        docs = await db.fashion.find(
+            {}, {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1,
+                 "image": 1, "image_thumb": 1, "image_tags": 1},
+        ).to_list(length=None)
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"scraping": True, "phase": "dropping_dead_images",
+                      "repair_total": len(docs), "repair_done": 0}},
+            upsert=True,
+        )
+        sem = asyncio.Semaphore(_IMG_WORK_CONCURRENCY)
+        docs_changed = 0
+        photos_dropped = 0
+        docs_emptied = 0
+
+        def _scan(imgs: list, thumbs: list, tags: list) -> tuple:
+            keep: list = []  # (original_index, live_full_url)
+            for i, u in enumerate(imgs):
+                if not u:
+                    continue
+                if not image_store.is_our_url(u):
+                    keep.append((i, u))  # source-site URL — leave it be
+                    continue
+                live = image_store.find_object_url(u)
+                if live is not None:
+                    keep.append((i, live))
+                # else: one of ours, on no bucket -> a ghost, drop it
+            new_imgs: list = []
+            new_thumbs: list = []
+            for (i, live_full) in keep:
+                new_imgs.append(live_full)
+                raw_t = thumbs[i] if i < len(thumbs) else None
+                if raw_t and image_store.is_our_url(raw_t):
+                    raw_t = image_store.find_object_url(raw_t) or None
+                new_thumbs.append(raw_t or live_full)
+            # image_tags is a prefix of images; keeping tags[i] for surviving
+            # indices < len(tags) preserves that (shorter, still contiguous).
+            new_tags = [tags[i] for (i, _l) in keep if i < len(tags)]
+            return new_imgs, new_thumbs, new_tags
+
+        async def _one(d: dict) -> None:
+            nonlocal docs_changed, photos_dropped, docs_emptied
+            async with sem:
+                imgs = d.get("images") or []
+                if imgs:
+                    thumbs = d.get("images_thumb") or []
+                    tags = d.get("image_tags") or []
+                    new_imgs, new_thumbs, new_tags = await asyncio.to_thread(_scan, imgs, thumbs, tags)
+                    dropped = len(imgs) - len(new_imgs)
+                    if dropped > 0:
+                        await db.fashion.update_one(
+                            {"source_id": d["source_id"]},
+                            {"$set": {
+                                "images": new_imgs,
+                                "images_thumb": new_thumbs,
+                                "image_tags": new_tags,
+                                "image": new_imgs[0] if new_imgs else None,
+                                "image_thumb": new_thumbs[0] if new_thumbs else None,
+                            }},
+                        )
+                        docs_changed += 1
+                        photos_dropped += dropped
+                        if not new_imgs:
+                            docs_emptied += 1
+            await db.meta.update_one({"_id": "fashion"}, {"$inc": {"repair_done": 1}})
+
+        await asyncio.gather(*(_one(d) for d in docs))
+        await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        logger.info(
+            "Fashion dead-image drop: removed %d photo(s) from %d/%d collection(s); %d left with none.",
+            photos_dropped, docs_changed, len(docs), docs_emptied,
+        )
+        status = "partial" if docs_emptied else "ok"
+        reason = ""
+        if docs_emptied:
+            reason = (
+                f"{docs_emptied} koleksiyonun bütün fotoğrafları depoda yok — bunlar ancak bir kez "
+                f"tam 'Tümünü Tara' çalıştırılınca geri gelir."
+            )
+        await _record_job_run(
+            "fashion_drop_dead_images", status=status, started_at=started_at,
+            done=docs_changed, total=len(docs), reason=reason,
+            detail=f"{docs_changed} koleksiyondan {photos_dropped} ölü fotoğraf adresi çıkarıldı",
+        )
+        return {
+            "status": "ok",
+            "docs_changed": docs_changed,
+            "photos_dropped": photos_dropped,
+            "docs_emptied": docs_emptied,
+            "docs_total": len(docs),
+        }
+
+
+@api.post("/admin/fashion-drop-dead-images")
+async def admin_fashion_drop_dead_images(admin: Annotated[dict, Depends(require_admin)]):
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(_run_tracked("fashion_drop_dead_images", run_fashion_drop_dead_images()))
+    return {"status": "started"}
+
+
 async def run_fashion_tag_photos() -> dict:
     """Sweep: tag every still-untagged runway photo across the WHOLE feed
     (all sources) via Gemini vision, so the look feed can be filtered by
@@ -3388,6 +3509,7 @@ async def on_startup():
         job = {"tagging_photos": "fashion_tag_photos", "tagging_firstview": "fashion_tag_photos",
                "fixing_covers": "fashion_cover_fix", "generating_thumbnails": "fashion_thumbnails",
                "merging_duplicates": "fashion_merge_duplicates", "repairing_urls": "fashion_repair_urls",
+               "dropping_dead_images": "fashion_drop_dead_images",
                "cleaning_cruft": "fashion_clean_cruft"}.get(stale.get("phase"), "fashion_scrape")
         await _record_job_run(
             job, status="error",
