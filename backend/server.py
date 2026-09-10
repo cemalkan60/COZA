@@ -2311,7 +2311,7 @@ async def fashion_looks(
         match["image_tags"] = {"$elemMatch": tconds}
 
     proj = {
-        "_id": 0, "sid": "$source_id", "brand_tr": 1, "season_label": 1,
+        "_id": 0, "sid": "$source_id", "brand_tr": 1, "season": 1, "season_label": 1,
         "url": 1, "images": 1, "images_thumb": 1, "image_tags": 1,
         "season_rank": 1, "updated_at": 1, "feed_seq": 1,
     }
@@ -2345,6 +2345,7 @@ async def fashion_looks(
             "source_id": {"$concat": ["$sid", "#", {"$toString": "$i"}]},
             "url": {"$ifNull": ["$url", ""]},
             "brand_tr": {"$ifNull": ["$brand_tr", ""]},
+            "season": {"$ifNull": ["$season", ""]},
             "season_text_tr": {"$ifNull": ["$season_label", ""]},
             "image": {"$ifNull": [
                 {"$arrayElemAt": ["$images_thumb", "$i"]},

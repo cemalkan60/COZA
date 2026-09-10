@@ -64,6 +64,7 @@ export type FashionLookItem = {
   url: string;
   image: string | null;
   brand_tr: string;
+  season?: string;
   season_text_tr: string;
 };
 

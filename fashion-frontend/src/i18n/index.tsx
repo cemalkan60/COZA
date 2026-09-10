@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
 import { storage } from "@/src/utils/storage";
-import { DICTS, Lang, LANGS, tr as TR } from "./locales";
+import { DICTS, filterOptionLabel, Lang, LANGS, tr as TR } from "./locales";
 
 const LANG_KEY = "coza.lang";
 
@@ -44,6 +44,9 @@ type I18nValue = {
   /** "2026-27AW" -> "Sonbahar/Kış 2026-27" (localized). `fallback` (the
    *  backend's season_label) is used for anything that doesn't parse. */
   formatSeason: (code?: string | null, fallback?: string | null) => string;
+  /** Localize a COZA Lens filter option (item/color/material/pattern/
+   *  itemGroup) by its stable `value`; falls back to the backend's TR label. */
+  optLabel: (facet: string, value: string, fallback: string) => string;
   ready: boolean;
 };
 
@@ -77,7 +80,9 @@ export function LanguageProvider({ children }: React.PropsWithChildren) {
       if (!m) return fallback || code || "";
       return `${t(`season.${m[2]}`)} ${m[1]}`;
     };
-    return { lang, setLang, langs: LANGS, t, formatSeason, ready };
+    const optLabel = (facet: string, value: string, fallback: string) =>
+      filterOptionLabel(lang, facet, value, fallback);
+    return { lang, setLang, langs: LANGS, t, formatSeason, optLabel, ready };
   }, [lang, setLang, ready]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;

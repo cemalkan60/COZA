@@ -359,3 +359,107 @@ export const es: Dict = {
 };
 
 export const DICTS: Record<Lang, Dict> = { tr, en, es };
+
+// COZA Lens filter option labels. The backend serves these as Turkish
+// strings (fashion_scraper.LOOKS_*); this maps each option `value` to EN/ES.
+// Anything missing here falls back to the backend's Turkish label.
+type FacetMap = Record<string, Record<string, string>>;
+
+export const FILTER_OPTIONS: Record<"en" | "es", FacetMap> = {
+  en: {
+    itemGroup: {
+      "Ceket": "Jackets",
+      "Üstler": "Tops",
+      "Alt Kısımlar": "Bottoms",
+      "Elbise / Tulum": "Dresses & jumpsuits",
+      "Kaban": "Coats",
+    },
+    item: {
+      "biker jacket": "Biker jacket", "bomber jacket": "Bomber jacket", "collarless jacket": "Collarless jacket",
+      "double jacket": "Double-breasted jacket", "field jacket": "Field jacket", "puffer jacket": "Puffer jacket",
+      "shirt jacket": "Shirt jacket", "stadium jumper": "Varsity jacket", "tailored jacket": "Blazer",
+      "track jacket": "Track jacket", "work jacket": "Work jacket",
+      "bustier": "Bustier", "camisole": "Camisole", "cardigan": "Cardigan", "hoodie": "Hoodie",
+      "polo": "Polo shirt", "shirt": "Shirt", "sweater": "Sweater / knit", "sweatshirt": "Sweatshirt",
+      "t shirt": "T-shirt", "tank top": "Tank top", "tube top": "Tube top", "tunic": "Tunic", "vest": "Vest",
+      "cargo pants": "Cargo pants", "chino pants": "Chinos", "cropped pants": "Cropped pants",
+      "denim pants": "Jeans", "jogger pants": "Joggers", "mini skirt": "Mini skirt", "shorts": "Shorts",
+      "skirt": "Skirt", "slacks": "Tailored trousers",
+      "formal dress": "Dress", "jumpsuit": "Jumpsuit", "kimono": "Kimono", "one piece": "One-piece dress",
+      "cape coat": "Cape", "chesterfield coat": "Chesterfield coat", "duffle coat": "Duffle coat",
+      "fur coat": "Fur coat", "military coat": "Military coat", "mods coat": "Mod jacket",
+      "mountain parka": "Mountain parka", "pea coat": "Pea coat", "poncho coat": "Poncho",
+      "rain coat": "Raincoat", "soutien collar coat": "Shawl-collar coat", "stand collar coat": "Stand-collar coat",
+      "trench coat": "Trench coat", "wrap coat": "Wrap coat",
+    },
+    color: {
+      white: "White", silver: "Silver", grey: "Grey", black: "Black", red: "Red", burgundy: "Burgundy",
+      pink: "Pink", purple: "Purple", navy: "Navy", blue: "Blue", light_blue: "Light blue", green: "Green",
+      olive: "Olive", khaki: "Khaki", yellow: "Yellow", mustard: "Mustard", gold: "Gold", orange: "Orange",
+      beige: "Beige", ivory: "Ivory", brown: "Brown",
+    },
+    material: {
+      denim: "Denim", leather_suede: "Leather / suede", fleece: "Fur / fleece", velvet: "Velvet",
+      sheer: "Sheer / tulle", rubber: "Rubber / PVC", knit: "Knit", wool: "Wool", cotton: "Cotton / linen",
+      nylon: "Nylon / polyester", corduroy: "Corduroy", silk: "Silk / satin", feather: "Feather",
+    },
+    pattern: {
+      animal: "Animal print", floral: "Floral", dot: "Polka dot", stripes: "Striped (vertical)",
+      border: "Striped (horizontal)", check: "Check / plaid", camouflage: "Camouflage", geometric: "Geometric",
+      color_block: "Colour block", gradient: "Gradient / tie-dye", paisley: "Paisley", nordic: "Nordic / fair isle",
+      monogram: "Monogram", logo: "Logo / lettering", graphic: "Graphic print", heart: "Heart print",
+      cross: "Cross print", print: "Printed", abstract: "Abstract", solid: "Solid", one_spot: "Placement print",
+    },
+  },
+  es: {
+    itemGroup: {
+      "Ceket": "Chaquetas",
+      "Üstler": "Partes de arriba",
+      "Alt Kısımlar": "Partes de abajo",
+      "Elbise / Tulum": "Vestidos y monos",
+      "Kaban": "Abrigos",
+    },
+    item: {
+      "biker jacket": "Chaqueta biker", "bomber jacket": "Bomber", "collarless jacket": "Chaqueta sin cuello",
+      "double jacket": "Chaqueta cruzada", "field jacket": "Chaqueta militar", "puffer jacket": "Chaqueta acolchada",
+      "shirt jacket": "Sobrecamisa", "stadium jumper": "Chaqueta universitaria", "tailored jacket": "Blazer",
+      "track jacket": "Chaqueta deportiva", "work jacket": "Chaqueta de trabajo",
+      "bustier": "Bustier", "camisole": "Camisola", "cardigan": "Cárdigan", "hoodie": "Sudadera con capucha",
+      "polo": "Polo", "shirt": "Camisa", "sweater": "Jersey / punto", "sweatshirt": "Sudadera",
+      "t shirt": "Camiseta", "tank top": "Camiseta de tirantes", "tube top": "Top palabra de honor",
+      "tunic": "Túnica", "vest": "Chaleco",
+      "cargo pants": "Pantalón cargo", "chino pants": "Chinos", "cropped pants": "Pantalón tobillero",
+      "denim pants": "Vaqueros", "jogger pants": "Joggers", "mini skirt": "Minifalda", "shorts": "Shorts",
+      "skirt": "Falda", "slacks": "Pantalón de vestir",
+      "formal dress": "Vestido", "jumpsuit": "Mono", "kimono": "Kimono", "one piece": "Vestido de una pieza",
+      "cape coat": "Capa", "chesterfield coat": "Abrigo Chesterfield", "duffle coat": "Trenca",
+      "fur coat": "Abrigo de piel", "military coat": "Abrigo militar", "mods coat": "Chaqueta mod",
+      "mountain parka": "Parka de montaña", "pea coat": "Chaquetón", "poncho coat": "Poncho",
+      "rain coat": "Impermeable", "soutien collar coat": "Abrigo de cuello chal", "stand collar coat": "Abrigo de cuello alto",
+      "trench coat": "Gabardina", "wrap coat": "Abrigo cruzado",
+    },
+    color: {
+      white: "Blanco", silver: "Plata", grey: "Gris", black: "Negro", red: "Rojo", burgundy: "Burdeos",
+      pink: "Rosa", purple: "Morado", navy: "Azul marino", blue: "Azul", light_blue: "Azul claro", green: "Verde",
+      olive: "Verde oliva", khaki: "Caqui", yellow: "Amarillo", mustard: "Mostaza", gold: "Dorado", orange: "Naranja",
+      beige: "Beige", ivory: "Marfil", brown: "Marrón",
+    },
+    material: {
+      denim: "Vaquero", leather_suede: "Cuero / ante", fleece: "Pelo / borrego", velvet: "Terciopelo",
+      sheer: "Transparente / tul", rubber: "Caucho / PVC", knit: "Punto", wool: "Lana", cotton: "Algodón / lino",
+      nylon: "Nailon / poliéster", corduroy: "Pana", silk: "Seda / satén", feather: "Plumas",
+    },
+    pattern: {
+      animal: "Estampado animal", floral: "Floral", dot: "Lunares", stripes: "Rayas (verticales)",
+      border: "Rayas (horizontales)", check: "Cuadros", camouflage: "Camuflaje", geometric: "Geométrico",
+      color_block: "Color block", gradient: "Degradado / tie-dye", paisley: "Cachemir", nordic: "Nórdico",
+      monogram: "Monograma", logo: "Logo / letras", graphic: "Estampado gráfico", heart: "Corazones",
+      cross: "Cruces", print: "Estampado", abstract: "Abstracto", solid: "Liso", one_spot: "Estampado localizado",
+    },
+  },
+};
+
+export function filterOptionLabel(lang: Lang, facet: string, value: string, fallback: string): string {
+  if (lang === "tr") return fallback;
+  return FILTER_OPTIONS[lang]?.[facet]?.[value] || fallback;
+}

@@ -40,7 +40,7 @@ const FILTER_KEYS: FilterKey[] = ["season", "item", "color", "material", "patter
 
 export default function FashionSearch() {
   const { colors, spacing } = useTheme();
-  const { t, formatSeason } = useT();
+  const { t, formatSeason, optLabel } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
@@ -155,11 +155,11 @@ export default function FashionSearch() {
   const filterLabel = (key: FilterKey): string =>
     key === "season" ? t("feed.seasonFilter") : t(`lens.${key}`);
 
-  const genderTabs: FashionLookOption[] = filters?.genders || [
-    { value: "", label: t("common.all") },
-    { value: "female", label: t("category.women") },
-    { value: "male", label: t("category.men") },
-  ];
+  const genderLabel = (v: string) =>
+    v === "female" ? t("category.women") : v === "male" ? t("category.men") : t("common.all");
+  const genderTabs: FashionLookOption[] = (filters?.genders || [{ value: "" }, { value: "female" }, { value: "male" }]).map(
+    (g) => ({ ...g, label: genderLabel(g.value) }),
+  );
 
   const flatOptionsFor = (key: FilterKey): FashionLookOption[] | undefined => {
     if (!filters) return undefined;
@@ -177,11 +177,11 @@ export default function FashionSearch() {
     if (key === "item") {
       for (const g of filters?.items || []) {
         const opt = g.options.find((o) => o.value === val);
-        if (opt) return opt.label;
+        if (opt) return optLabel("item", val, opt.label);
       }
       return val;
     }
-    return flatOptionsFor(key)?.find((o) => o.value === val)?.label || val;
+    return optLabel(key, val, flatOptionsFor(key)?.find((o) => o.value === val)?.label || val);
   };
 
   const columns = width >= 1200 ? 5 : width >= 900 ? 4 : width >= 600 ? 3 : 2;
@@ -385,8 +385,23 @@ export default function FashionSearch() {
         bottomInset={insets.bottom}
         selected={openModal ? selected[openModal] : ""}
         onSelect={(v) => openModal && setFilter(openModal, v)}
-        flatOptions={openModal && openModal !== "item" ? flatOptionsFor(openModal) : undefined}
-        groupedOptions={openModal === "item" ? filters?.items : undefined}
+        flatOptions={
+          openModal && openModal !== "item"
+            ? flatOptionsFor(openModal)?.map((o) =>
+                openModal === "season"
+                  ? { ...o, label: formatSeason(o.value, o.label) }
+                  : { ...o, label: optLabel(openModal, o.value, o.label) },
+              )
+            : undefined
+        }
+        groupedOptions={
+          openModal === "item"
+            ? (filters?.items || []).map((g) => ({
+                group: optLabel("itemGroup", g.group, g.group),
+                options: g.options.map((o) => ({ ...o, label: optLabel("item", o.value, o.label) })),
+              }))
+            : undefined
+        }
       />
 
       <Modal visible={!!viewerItem} animationType="fade" transparent onRequestClose={() => setViewerItem(null)}>
@@ -427,7 +442,7 @@ export default function FashionSearch() {
               />
               {(viewerItem.brand_tr || viewerItem.season_text_tr) && (
                 <Text style={styles.viewerCaption}>
-                  {[viewerItem.brand_tr, viewerItem.season_text_tr].filter(Boolean).join(" · ")}
+                  {[viewerItem.brand_tr, formatSeason(viewerItem.season, viewerItem.season_text_tr)].filter(Boolean).join(" · ")}
                 </Text>
               )}
             </Pressable>
@@ -471,6 +486,7 @@ function LookCard({
   onSave: () => void;
   saved: boolean;
 }) {
+  const { formatSeason } = useT();
   return (
     <Pressable
       testID={`look-card-${item.source_id}`}
@@ -492,9 +508,9 @@ function LookCard({
       <Text numberOfLines={1} style={[styles.cardBrand, { color: colors.onSurface }]}>
         {item.brand_tr || "—"}
       </Text>
-      {!!item.season_text_tr && (
+      {!!(item.season || item.season_text_tr) && (
         <Text numberOfLines={1} style={[styles.cardSeason, { color: colors.brandSecondary }]}>
-          {item.season_text_tr}
+          {formatSeason(item.season, item.season_text_tr)}
         </Text>
       )}
     </Pressable>
