@@ -65,6 +65,7 @@ export const tr = {
     loadMoreError: "Yüklenemedi — tekrar dene",
     note: "İçerik fashion-press.net ve FirstView'dan derlenir. Her gün 07:00'de otomatik güncellenir. Son güncelleme: {date}",
     resume: "Kaldığın yerden devam",
+    recentlyViewed: "Son görüntülenenler",
     trendSummary: "{season} sinyalleri: öne çıkan parça {item}, popüler renk {color}, tercih edilen kumaş {material} — {count} koleksiyondan derlendi.",
   },
   lens: {
@@ -233,6 +234,7 @@ export const en: Dict = {
     loadMoreError: "Couldn't load — try again",
     note: "Content is compiled from fashion-press.net and FirstView. Updated daily at 07:00. Last update: {date}",
     resume: "Continue where you left off",
+    recentlyViewed: "Recently viewed",
     trendSummary: "{season} signals: leading piece {item}, top color {color}, go-to fabric {material} — compiled from {count} collections.",
   },
   lens: {
@@ -401,6 +403,7 @@ export const es: Dict = {
     loadMoreError: "No se pudo cargar — reintentar",
     note: "El contenido se recopila de fashion-press.net y FirstView. Se actualiza a diario a las 07:00. Última actualización: {date}",
     resume: "Continuar donde lo dejaste",
+    recentlyViewed: "Vistos recientemente",
     trendSummary: "Señales de {season}: prenda destacada {item}, color más popular {color}, tejido preferido {material} — de {count} colecciones.",
   },
   lens: {

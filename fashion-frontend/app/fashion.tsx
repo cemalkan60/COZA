@@ -26,7 +26,7 @@ import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 import RetryImage from "@/src/components/RetryImage";
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import { useGridColumns } from "@/src/hooks/useGridColumns";
-import { getLastCollection, LastCollection } from "@/src/utils/lastCollection";
+import { getLastCollection, getRecentCollections, LastCollection } from "@/src/utils/lastCollection";
 
 const { width } = Dimensions.get("window");
 
@@ -39,9 +39,11 @@ export default function Fashion() {
   const router = useRouter();
   const { cols, cycle: cycleCols, widthPct } = useGridColumns();
   const [lastCollection, setLastCollection] = useState<LastCollection | null>(null);
+  const [recentCollections, setRecentCollections] = useState<LastCollection[]>([]); // D6
   useFocusEffect(
     useCallback(() => {
       getLastCollection().then(setLastCollection);
+      getRecentCollections().then(setRecentCollections);
     }, []),
   );
 
@@ -284,6 +286,37 @@ export default function Fashion() {
           </View>
           <Feather name="chevron-right" size={18} color={colors.brandSecondary} />
         </Pressable>
+      )}
+
+      {recentCollections.length > 1 && (
+        <View style={{ marginTop: 10 }}>
+          <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700", marginHorizontal: spacing.xl, marginBottom: 8 }}>
+            {t("feed.recentlyViewed")}
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 10 }}>
+            {recentCollections.slice(1).map((c) => (
+              <Pressable
+                key={c.source_id}
+                testID={`fashion-recent-${c.source_id}`}
+                onPress={() =>
+                  router.push(
+                    `/fashion/brand/${encodeURIComponent(c.source_id)}?title=${encodeURIComponent(c.title)}&season=${encodeURIComponent(c.season)}`,
+                  )
+                }
+                style={{ width: 72 }}
+              >
+                <View style={{ width: 72, height: 96, borderRadius: 4, overflow: "hidden", backgroundColor: colors.surfaceTertiary }}>
+                  {c.image ? (
+                    <RetryImage uri={fashionImageUri(c.image)} style={styles.image} contentFit="cover" />
+                  ) : null}
+                </View>
+                <Text numberOfLines={1} style={{ color: colors.onSurface, fontSize: 10, fontWeight: "600", marginTop: 4 }}>
+                  {c.title}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
       )}
 
       {loading ? (

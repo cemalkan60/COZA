@@ -23,7 +23,7 @@ import { goBack } from "@/src/utils/nav";
 import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/ZoomableImage";
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import RetryImage from "@/src/components/RetryImage";
-import { saveLastCollection } from "@/src/utils/lastCollection";
+import { saveLastCollection, pushRecentCollection } from "@/src/utils/lastCollection";
 import { useAuth } from "@/src/context/AuthContext";
 import { sharePhoto } from "@/src/utils/sharePhoto";
 import { useWatermarkPref } from "@/src/hooks/useWatermarkPref";
@@ -307,12 +307,9 @@ export default function BrandGallery() {
           // A6: "Kaldığın yerden devam" — remember this as the most
           // recently opened collection for the Fashion tab's resume card.
           if (id && mergedImgs.length) {
-            saveLastCollection({
-              source_id: id,
-              title,
-              season: seasonRaw,
-              image: mergedThumbs[0] || mergedImgs[0],
-            });
+            const entry = { source_id: id, title, season: seasonRaw, image: mergedThumbs[0] || mergedImgs[0] };
+            saveLastCollection(entry);
+            pushRecentCollection(entry); // D6
           }
         }
       } finally {
