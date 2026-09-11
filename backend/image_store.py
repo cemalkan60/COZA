@@ -468,6 +468,34 @@ def cache_image_with_thumb(source_url: str) -> tuple:
     return full_url, thumb_url
 
 
+def cache_bytes_with_thumb(content: bytes, content_type: str, key_hint: str) -> tuple:
+    """A5: like cache_image_with_thumb, but for bytes already in hand (a
+    user's own upload) instead of a source URL to fetch — there's nothing
+    to download, so this skips straight to deriving variants and
+    uploading. `key_hint` should be unique per upload (a uuid); unlike the
+    scraped-photo path this isn't content-addressed, so re-uploading the
+    same file twice makes two objects — acceptable for the rare, manual
+    "add a photo" flow. Returns (full_url, thumb_url), or (None, None) on
+    any failure."""
+    if not ENABLED or not content:
+        return None, None
+    full_key = f"user/{key_hint}.jpg"
+    thumb_key = f"user/{key_hint}_thumb.jpg"
+    acc = _shard_for_key(full_key)
+    client = _client_for(acc)
+    full_url = f"{acc['public_base_url']}/{full_key}"
+    thumb_url = f"{acc['public_base_url']}/{thumb_key}"
+    try:
+        full_body, full_ctype, thumb_body = _derive_variants(content, content_type or "image/jpeg")
+        client.put_object(Bucket=acc["bucket"], Key=full_key, Body=full_body, ContentType=full_ctype or "image/jpeg")
+        client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg")
+        _wait_until_publicly_readable(full_url)
+        return full_url, thumb_url
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("image_store: failed to cache an uploaded photo: %s", exc)
+        return None, None
+
+
 def backfill_thumb(full_url: str) -> Optional[str]:
     """Generate a thumbnail for a photo already cached at full resolution,
     re-reading it from our own bucket (no load on the source site). Returns

@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 import jwt
 import bcrypt
 import requests
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Query, File, UploadFile
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
@@ -190,6 +190,10 @@ class FashionReportBody(BaseModel):
     """G2: "bu kapak/marka yanlış" — a user flag, routed to an admin queue."""
     reason: str = Field(min_length=1, max_length=30)  # "wrong_cover" | "wrong_brand" | "other"
     note: str = Field(default="", max_length=300)
+
+
+class AddUserPhotoBody(BaseModel):
+    image_url: str = Field(min_length=1, max_length=2000)
 
 
 # ----------------------------- Auth helpers -----------------------------
@@ -2240,6 +2244,81 @@ async def fashion_brands_index(user: Annotated[dict, Depends(get_current_user)])
         {"name": r["_id"], "count": r["n"], "cover": r.get("cover") or r.get("cover_full")}
         for r in rows
     ]}
+
+
+async def _finish_user_photo(user: dict, full_url: str, thumb_url: str) -> dict:
+    """A5: cache one externally-added photo as its own tiny synthetic
+    collection and auto-tag it, so it's searchable in Lens exactly like a
+    scraped photo. season_rank is pinned absurdly high (always "newest")
+    and fp_source_id gets a non-null placeholder specifically so
+    run_fashion_prune_old's age window and run_fashion_clean_cruft's
+    thin-fp-collection rule never sweep it up; category is deliberately
+    NOT one of women/men/haute-couture so it stays out of the main
+    Fashion tab feed (Lens has no such filter, so it's still findable
+    there with no gender selected)."""
+    tag = None
+    if gemini_client.ENABLED:
+        tag = await asyncio.to_thread(gemini_client.tag_image, full_url)
+        if tag:
+            await _bump_usage_counter("gemini_calls")
+    now = datetime.now(timezone.utc).isoformat()
+    source_id = f"user-{uuid.uuid4().hex[:12]}"
+    doc = {
+        "source_id": source_id,
+        "url": full_url,
+        "image": full_url,
+        "image_thumb": thumb_url or full_url,
+        "images": [full_url],
+        "images_thumb": [thumb_url or full_url],
+        "image_tags": [tag] if tag else [],
+        "brand_tr": user.get("name") or "Kişisel",
+        "title_tr": "Kişisel ekleme",
+        "season": "",
+        "season_label": "",
+        "season_rank": 999999,
+        "category": "user_upload",
+        "sources": ["user"],
+        "fp_source_id": "user_upload",
+        "added_by": user["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.fashion.insert_one(doc)
+    return {"source_id": source_id, "tagged": tag is not None}
+
+
+@api.post("/fashion/user-photos")
+async def add_user_photo_by_url(body: AddUserPhotoBody, user: Annotated[dict, Depends(get_current_user)]):
+    """A5 (link path)."""
+    if not image_store.ENABLED:
+        raise HTTPException(503, "Fotoğraf deposu şu anda kullanılamıyor.")
+    url = body.image_url.strip()
+    full_url, thumb_url = await asyncio.to_thread(image_store.cache_image_with_thumb, url)
+    if full_url == url:
+        # cache_image_with_thumb degrades to (source, source) on failure.
+        raise HTTPException(400, "Fotoğraf indirilemedi. Bağlantıyı kontrol et.")
+    return await _finish_user_photo(user, full_url, thumb_url)
+
+
+@api.post("/fashion/user-photos/upload")
+async def add_user_photo_by_upload(
+    user: Annotated[dict, Depends(get_current_user)], file: UploadFile = File(...),
+):
+    """A5 (device upload — web only on the frontend today, see the client
+    note in fashion-frontend/src/api/client.ts)."""
+    if not image_store.ENABLED:
+        raise HTTPException(503, "Fotoğraf deposu şu anda kullanılamıyor.")
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Boş dosya.")
+    if len(content) > 12 * 1024 * 1024:
+        raise HTTPException(400, "Dosya çok büyük (12MB üzeri).")
+    full_url, thumb_url = await asyncio.to_thread(
+        image_store.cache_bytes_with_thumb, content, file.content_type or "image/jpeg", uuid.uuid4().hex,
+    )
+    if not full_url:
+        raise HTTPException(400, "Yüklenemedi, tekrar dene.")
+    return await _finish_user_photo(user, full_url, thumb_url)
 
 
 # A gallery with this many photos or fewer is treated as suspiciously thin

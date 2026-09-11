@@ -45,6 +45,10 @@ boto3>=1.34
 # COZA Fashion — cover-photo blur placeholder (D5, image_store.blurhash_for_url)
 blurhash==1.1.4
 
+# FastAPI's UploadFile/File() need this to parse multipart/form-data
+# (A5's device-upload endpoint) — FastAPI doesn't bundle it itself.
+python-multipart==0.0.20
+
 # Testing
 pytest==9.1.1
 httpx==0.28.1

@@ -289,6 +289,25 @@ export const api = {
       { method: "POST", body: JSON.stringify({ reason, note }) },
       true,
     ),
+  // A5: "dışarıdan görsel ekle" — link path works everywhere; web also gets
+  // an actual file picker (addUserPhotoUpload), native doesn't have one
+  // installed (no expo-image-picker in this project — see COZA-YOL-
+  // HARITASI.md notes) so it's link-only there.
+  addUserPhotoByUrl: (url: string): Promise<{ source_id: string; tagged: boolean }> =>
+    request("/fashion/user-photos", { method: "POST", body: JSON.stringify({ image_url: url }) }, true),
+  addUserPhotoUpload: async (file: File): Promise<{ source_id: string; tagged: boolean }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const token = await storage.secureGet<string>(TOKEN_KEY, "");
+    const res = await fetch(`${BASE}/fashion/user-photos/upload`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form, // NOT JSON.stringify — browser sets the multipart Content-Type (with boundary) itself
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.detail || `Bir hata oluştu (${res.status})`);
+    return data;
+  },
   fashionScrape: () => request("/admin/fashion-scrape", { method: "POST" }, true),
   // One-off full historical pull (everything since Jan 2026, not just each
   // source's latest page) — much slower than fashionScrape, see its comment

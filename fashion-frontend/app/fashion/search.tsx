@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -70,12 +71,19 @@ export default function FashionSearch() {
   const [boardPrompt, setBoardPrompt] = useState(false);
   const [boardName, setBoardName] = useState("");
   const [creatingBoard, setCreatingBoard] = useState(false);
+  // A8: "akıllı pano" — save the CURRENT filter on the board so it can be
+  // refreshed later (boards.tsx calls smart-refresh on open) instead of
+  // just being a one-time dump of today's results.
+  const [smartBoard, setSmartBoard] = useState(false);
   const createBoardFromResults = async () => {
     const name = boardName.trim();
     if (!name || !items.length || creatingBoard) return;
     setCreatingBoard(true);
     try {
-      const board = await api.boardCreate(name, null);
+      const filter = smartBoard
+        ? { gender, ...selected, ...(qActive ? { q: qActive } : {}) }
+        : null;
+      const board = await api.boardCreate(name, null, filter);
       await Promise.all(
         items.map((it) =>
           api
@@ -92,6 +100,7 @@ export default function FashionSearch() {
       );
       setBoardPrompt(false);
       setBoardName("");
+      setSmartBoard(false);
       router.push(`/fashion/boards?board=${encodeURIComponent(board.id)}` as any);
     } catch {
       // ignore — user can retry
@@ -99,6 +108,50 @@ export default function FashionSearch() {
       setCreatingBoard(false);
     }
   };
+  // A5: "dışarıdan görsel ekle" — link works everywhere; a real file picker
+  // only exists on web (a plain <input type="file">, no native module
+  // needed) since no image-picker package is installed for native.
+  const [addPhotoOpen, setAddPhotoOpen] = useState(false);
+  const [addPhotoUrl, setAddPhotoUrl] = useState("");
+  const [addingPhoto, setAddingPhoto] = useState(false);
+  const [addPhotoDone, setAddPhotoDone] = useState<boolean | null>(null); // null=idle, true=ok, false=error
+  const pickFileWeb = () => {
+    if (typeof document === "undefined") return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.onchange = () => onFilePicked(input.files?.[0]);
+    input.click();
+  };
+  const submitAddPhotoUrl = async () => {
+    const url = addPhotoUrl.trim();
+    if (!url || addingPhoto) return;
+    setAddingPhoto(true);
+    setAddPhotoDone(null);
+    try {
+      await api.addUserPhotoByUrl(url);
+      setAddPhotoDone(true);
+      setAddPhotoUrl("");
+    } catch {
+      setAddPhotoDone(false);
+    } finally {
+      setAddingPhoto(false);
+    }
+  };
+  const onFilePicked = async (file: File | null | undefined) => {
+    if (!file || addingPhoto) return;
+    setAddingPhoto(true);
+    setAddPhotoDone(null);
+    try {
+      await api.addUserPhotoUpload(file);
+      setAddPhotoDone(true);
+    } catch {
+      setAddPhotoDone(false);
+    } finally {
+      setAddingPhoto(false);
+    }
+  };
+
   // C4: "more from this show" strip — other photos from the same
   // collection as the photo currently open in the viewer.
   const [moreFromShow, setMoreFromShow] = useState<string[]>([]);
@@ -292,6 +345,9 @@ export default function FashionSearch() {
           <Text style={[styles.title, { color: colors.onSurface, letterSpacing: 3, fontWeight: "800" }]}>COZA</Text>
           <Text style={[styles.title, { color: colors.brandSecondary, letterSpacing: 3, fontWeight: "300", marginLeft: 6 }]}>LENS</Text>
         </View>
+        <Pressable testID="lens-add-photo" onPress={() => setAddPhotoOpen(true)} hitSlop={10} style={{ marginRight: items.length > 0 ? 16 : 0 }}>
+          <Feather name="upload" size={20} color={colors.onSurface} />
+        </Pressable>
         {items.length > 0 && (
           <Pressable testID="lens-create-board" onPress={() => setBoardPrompt(true)} hitSlop={10}>
             <Feather name="folder-plus" size={22} color={colors.onSurface} />
@@ -596,6 +652,14 @@ export default function FashionSearch() {
               editable={!creatingBoard}
               style={{ color: colors.onSurface, fontSize: 15, borderBottomWidth: 1, borderBottomColor: colors.border, paddingVertical: 8 }}
             />
+            <Pressable
+              testID="lens-smart-board-toggle"
+              onPress={() => setSmartBoard((v) => !v)}
+              style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 }}
+            >
+              <Feather name={smartBoard ? "check-square" : "square"} size={17} color={smartBoard ? colors.brand : colors.brandSecondary} />
+              <Text style={{ color: colors.onSurface, fontSize: 13, flex: 1 }}>{t("lens.makeSmartBoard")}</Text>
+            </Pressable>
             <View style={{ flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 18, marginTop: 16 }}>
               {creatingBoard ? (
                 <ActivityIndicator color={colors.brand} size="small" />
@@ -611,6 +675,67 @@ export default function FashionSearch() {
                   </Pressable>
                 </>
               )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* A5: "dışarıdan görsel ekle" */}
+      <Modal
+        visible={addPhotoOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => (addingPhoto ? null : setAddPhotoOpen(false))}
+      >
+        <View style={styles.renameOverlay}>
+          <View style={[styles.renameBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={{ color: colors.onSurface, fontWeight: "800", fontSize: 16, marginBottom: 4 }}>
+              {t("lens.addPhotoTitle")}
+            </Text>
+            <Text style={{ color: colors.brandSecondary, fontSize: 12, marginBottom: 14, lineHeight: 17 }}>
+              {t("lens.addPhotoHint")}
+            </Text>
+            <TextInput
+              value={addPhotoUrl}
+              onChangeText={setAddPhotoUrl}
+              onSubmitEditing={submitAddPhotoUrl}
+              placeholder="https://…"
+              placeholderTextColor={colors.brandSecondary}
+              editable={!addingPhoto}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={{ color: colors.onSurface, fontSize: 14, borderBottomWidth: 1, borderBottomColor: colors.border, paddingVertical: 8 }}
+            />
+            {addPhotoDone === true && (
+              <Text style={{ color: colors.success, fontSize: 12, marginTop: 10 }}>{t("lens.addPhotoOk")}</Text>
+            )}
+            {addPhotoDone === false && (
+              <Text style={{ color: colors.error, fontSize: 12, marginTop: 10 }}>{t("lens.addPhotoError")}</Text>
+            )}
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
+              {Platform.OS === "web" ? (
+                <Pressable testID="lens-pick-file" onPress={pickFileWeb} disabled={addingPhoto}>
+                  <Text style={{ color: colors.brand, fontWeight: "700", fontSize: 13 }}>{t("lens.addPhotoUpload")}</Text>
+                </Pressable>
+              ) : (
+                <View />
+              )}
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 18 }}>
+                {addingPhoto ? (
+                  <ActivityIndicator color={colors.brand} size="small" />
+                ) : (
+                  <>
+                    <Pressable onPress={() => setAddPhotoOpen(false)}>
+                      <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>{t("common.close")}</Text>
+                    </Pressable>
+                    <Pressable onPress={submitAddPhotoUrl} disabled={!addPhotoUrl.trim()}>
+                      <Text style={{ color: addPhotoUrl.trim() ? colors.brand : colors.brandSecondary, fontWeight: "700" }}>
+                        {t("common.save")}
+                      </Text>
+                    </Pressable>
+                  </>
+                )}
+              </View>
             </View>
           </View>
         </View>
