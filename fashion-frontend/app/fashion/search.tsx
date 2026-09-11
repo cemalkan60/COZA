@@ -62,6 +62,43 @@ export default function FashionSearch() {
   const [openModal, setOpenModal] = useState<FilterKey | null>(null);
   const [viewerItem, setViewerItem] = useState<FashionLookItem | null>(null);
   const [saveItem, setSaveItem] = useState<FashionLookItem | null>(null);
+
+  // A4: "Aramadan board oluştur" — dump the currently loaded results into a
+  // brand-new board in one go. Deliberately only the results already
+  // loaded on screen (not every page the filter could ever match) — keeps
+  // this predictable and avoids silently paging through hundreds of saves.
+  const [boardPrompt, setBoardPrompt] = useState(false);
+  const [boardName, setBoardName] = useState("");
+  const [creatingBoard, setCreatingBoard] = useState(false);
+  const createBoardFromResults = async () => {
+    const name = boardName.trim();
+    if (!name || !items.length || creatingBoard) return;
+    setCreatingBoard(true);
+    try {
+      const board = await api.boardCreate(name, null);
+      await Promise.all(
+        items.map((it) =>
+          api
+            .savePhoto(board.id, {
+              ...splitLookId(it.source_id),
+              image: it.image || "",
+              image_thumb: it.image || "",
+              brand_tr: it.brand_tr || "",
+              season: it.season || "",
+              season_label: it.season_text_tr || "",
+            })
+            .catch(() => {}),
+        ),
+      );
+      setBoardPrompt(false);
+      setBoardName("");
+      router.push(`/fashion/boards?board=${encodeURIComponent(board.id)}` as any);
+    } catch {
+      // ignore — user can retry
+    } finally {
+      setCreatingBoard(false);
+    }
+  };
   // C4: "more from this show" strip — other photos from the same
   // collection as the photo currently open in the viewer.
   const [moreFromShow, setMoreFromShow] = useState<string[]>([]);
@@ -227,6 +264,11 @@ export default function FashionSearch() {
           <Text style={[styles.title, { color: colors.onSurface, letterSpacing: 3, fontWeight: "800" }]}>COZA</Text>
           <Text style={[styles.title, { color: colors.brandSecondary, letterSpacing: 3, fontWeight: "300", marginLeft: 6 }]}>LENS</Text>
         </View>
+        {items.length > 0 && (
+          <Pressable testID="lens-create-board" onPress={() => setBoardPrompt(true)} hitSlop={10}>
+            <Feather name="folder-plus" size={22} color={colors.onSurface} />
+          </Pressable>
+        )}
       </View>
 
       <View style={{ paddingHorizontal: spacing.xl, paddingTop: 10, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: colors.divider }}>
@@ -494,6 +536,46 @@ export default function FashionSearch() {
         </View>
       </Modal>
 
+      {/* A4: name-the-new-board prompt for "create board from results" */}
+      <Modal visible={boardPrompt} transparent animationType="fade" onRequestClose={() => (creatingBoard ? null : setBoardPrompt(false))}>
+        <View style={styles.renameOverlay}>
+          <View style={[styles.renameBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Text style={{ color: colors.onSurface, fontWeight: "800", fontSize: 16, marginBottom: 4 }}>
+              {t("lens.newBoardFromResults")}
+            </Text>
+            <Text style={{ color: colors.brandSecondary, fontSize: 12, marginBottom: 14 }}>
+              {t("lens.newBoardFromResultsHint", { count: items.length })}
+            </Text>
+            <TextInput
+              autoFocus
+              value={boardName}
+              onChangeText={setBoardName}
+              onSubmitEditing={createBoardFromResults}
+              placeholder={t("boards.boardName")}
+              placeholderTextColor={colors.brandSecondary}
+              editable={!creatingBoard}
+              style={{ color: colors.onSurface, fontSize: 15, borderBottomWidth: 1, borderBottomColor: colors.border, paddingVertical: 8 }}
+            />
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", alignItems: "center", gap: 18, marginTop: 16 }}>
+              {creatingBoard ? (
+                <ActivityIndicator color={colors.brand} size="small" />
+              ) : (
+                <>
+                  <Pressable onPress={() => setBoardPrompt(false)}>
+                    <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>{t("common.cancel")}</Text>
+                  </Pressable>
+                  <Pressable onPress={createBoardFromResults} disabled={!boardName.trim()}>
+                    <Text style={{ color: boardName.trim() ? colors.brand : colors.brandSecondary, fontWeight: "700" }}>
+                      {t("common.save")}
+                    </Text>
+                  </Pressable>
+                </>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <SaveToBoardSheet
         visible={!!saveItem}
         onClose={() => setSaveItem(null)}
@@ -711,6 +793,8 @@ const styles = StyleSheet.create({
   },
   cardBrand: { fontSize: 12, fontWeight: "700", letterSpacing: -0.1 },
   cardSeason: { fontSize: 11, marginTop: 2 },
+  renameOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center" },
+  renameBox: { borderRadius: 12, borderWidth: 1, padding: 18, width: "80%", maxWidth: 360 },
   // Single-image viewer
   viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" },
   viewerImageWrap: { alignItems: "center", justifyContent: "center", width: "100%" },

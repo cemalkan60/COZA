@@ -79,6 +79,8 @@ export const tr = {
     recent: "Son aramalar",
     clearRecent: "Temizle",
     moreFromShow: "Bu defileden daha fazlası",
+    newBoardFromResults: "Sonuçlardan pano oluştur",
+    newBoardFromResultsHint: "{count} sonucun tümü yeni panoya kaydedilecek.",
   },
   detail: {
     photos: "{count} fotoğraf",
@@ -107,6 +109,9 @@ export const tr = {
     share: "Paylaş",
     remove: "Panodan çıkar",
     pickBoard: "Bir pano seç",
+    selectedCount: "{count} seçili",
+    zenMode: "Zen modu",
+    noOtherBoards: "Taşınacak başka pano yok.",
   },
   settings: {
     title: "Ayarlar",
@@ -203,6 +208,8 @@ export const en: Dict = {
     recent: "Recent searches",
     clearRecent: "Clear",
     moreFromShow: "More from this show",
+    newBoardFromResults: "Create board from results",
+    newBoardFromResultsHint: "All {count} results will be saved to the new board.",
   },
   detail: {
     photos: "{count} photos",
@@ -231,6 +238,9 @@ export const en: Dict = {
     share: "Share",
     remove: "Remove from board",
     pickBoard: "Pick a board",
+    selectedCount: "{count} selected",
+    zenMode: "Zen mode",
+    noOtherBoards: "No other board to move to.",
   },
   settings: {
     title: "Settings",
@@ -327,6 +337,8 @@ export const es: Dict = {
     recent: "Búsquedas recientes",
     clearRecent: "Borrar",
     moreFromShow: "Más de este desfile",
+    newBoardFromResults: "Crear tablero desde los resultados",
+    newBoardFromResultsHint: "Los {count} resultados se guardarán en el nuevo tablero.",
   },
   detail: {
     photos: "{count} fotos",
@@ -355,6 +367,9 @@ export const es: Dict = {
     share: "Compartir",
     remove: "Quitar del tablero",
     pickBoard: "Elige un tablero",
+    selectedCount: "{count} seleccionadas",
+    zenMode: "Modo zen",
+    noOtherBoards: "No hay otro tablero al que mover.",
   },
   settings: {
     title: "Ajustes",
