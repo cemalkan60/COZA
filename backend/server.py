@@ -2,6 +2,8 @@ import os
 import io
 import re
 import time
+import uuid
+import secrets
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
@@ -155,6 +157,10 @@ class ProxyKeyBody(BaseModel):
 class BoardCreateBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     parent_id: Optional[str] = Field(default=None, max_length=64)
+    # A8: "akıllı board" — the Lens filter this board tracks (gender/season/
+    # item/color/material/pattern/q), so it can be refreshed with newly
+    # matching photos later. None for a normal, manually-curated board.
+    smart_filter: Optional[dict] = Field(default=None)
 
 
 class BoardUpdateBody(BaseModel):
@@ -2323,6 +2329,48 @@ async def fashion_similar(source_id: str, user: Annotated[dict, Depends(get_curr
     return {"items": out}
 
 
+@api.get("/fashion/collections/{source_id}/adjacent")
+async def fashion_adjacent_collection(
+    source_id: str, user: Annotated[dict, Depends(get_current_user)], direction: str = "next",
+):
+    """C5: "galeride koleksiyonlar arası kaydırma" — the next/previous
+    collection in the same order as the main feed's "newest" sort, so
+    swiping past a collection's last photo can hop straight into the next
+    one's. Keyset (not skip/limit): cheap regardless of how deep the feed
+    goes, and stable even if the feed changes between requests."""
+    cur = await db.fashion.find_one(
+        {"source_id": source_id}, {"_id": 0, "season_rank": 1, "feed_seq": 1, "updated_at": 1},
+    )
+    if not cur:
+        raise HTTPException(404, "Koleksiyon bulunamadı.")
+    sr = cur.get("season_rank") if cur.get("season_rank") is not None else -1
+    fs = cur.get("feed_seq") if cur.get("feed_seq") is not None else 1000000
+    ua = cur.get("updated_at") or ""
+
+    if direction == "prev":
+        # reverse of the "newest" order below
+        match = {"$or": [
+            {"season_rank": {"$gt": sr}},
+            {"season_rank": sr, "feed_seq": {"$lt": fs}},
+            {"season_rank": sr, "feed_seq": fs, "updated_at": {"$gt": ua}},
+            {"season_rank": sr, "feed_seq": fs, "updated_at": ua, "source_id": {"$lt": source_id}},
+        ]}
+        sort = [("season_rank", 1), ("feed_seq", -1), ("updated_at", 1), ("source_id", -1)]
+    else:
+        match = {"$or": [
+            {"season_rank": {"$lt": sr}},
+            {"season_rank": sr, "feed_seq": {"$gt": fs}},
+            {"season_rank": sr, "feed_seq": fs, "updated_at": {"$lt": ua}},
+            {"season_rank": sr, "feed_seq": fs, "updated_at": ua, "source_id": {"$gt": source_id}},
+        ]}
+        sort = [("season_rank", -1), ("feed_seq", 1), ("updated_at", -1), ("source_id", 1)]
+
+    nxt = await db.fashion.find_one(match, {"_id": 0, "source_id": 1, "brand_tr": 1, "season": 1}, sort=sort)
+    if not nxt:
+        return {"item": None}
+    return {"item": {"source_id": nxt["source_id"], "brand_tr": nxt.get("brand_tr") or "", "season": nxt.get("season") or ""}}
+
+
 @api.get("/fashion/collections/{source_id}")
 async def fashion_collection_detail(source_id: str):
     """Full runway gallery (all photos) for one collection, fetched on demand and cached.
@@ -2526,6 +2574,22 @@ async def fashion_looks(
     Gemini actually writes. Only photos that have been tagged so far appear;
     coverage fills in as the nightly tag sweep runs.
     """
+    pipeline = _looks_pipeline(gender, season, item, color, material, pattern, q, skip, _LOOKS_LIMIT)
+    rows = await db.fashion.aggregate(pipeline).to_list(length=_LOOKS_LIMIT)
+    for r in rows:
+        r.pop("season_rank", None)
+        r.pop("feed_seq", None)
+        r.pop("updated_at", None)
+    return {"items": rows}
+
+
+def _looks_pipeline(
+    gender: Optional[str], season: Optional[str], item: Optional[str], color: Optional[str],
+    material: Optional[str], pattern: Optional[str], q: Optional[str], skip: int, limit: int,
+) -> list:
+    """The aggregation pipeline behind /fashion/looks — factored out so A8's
+    smart-board refresh can run the exact same match a saved filter
+    represents, instead of drifting out of sync with a second copy."""
     match: dict = {}
     if season:
         match["season"] = season.upper()
@@ -2600,15 +2664,9 @@ async def fashion_looks(
         # (0 = newest), then re-scrape time, then stable.
         {"$sort": {"season_rank": -1, "feed_seq": 1, "updated_at": -1, "source_id": 1}},
         {"$skip": max(0, skip)},
-        {"$limit": _LOOKS_LIMIT},
+        {"$limit": limit},
     ]
-
-    rows = await db.fashion.aggregate(pipeline).to_list(length=_LOOKS_LIMIT)
-    for r in rows:
-        r.pop("season_rank", None)
-        r.pop("feed_seq", None)
-        r.pop("updated_at", None)
-    return {"items": rows}
+    return pipeline
 
 
 # ---------------- COZA Lens boards (saved photos, nested folders) -------------
@@ -2699,6 +2757,8 @@ async def create_board(body: BoardCreateBody, user: Annotated[dict, Depends(get_
     now = datetime.now(timezone.utc).isoformat()
     doc = {"id": str(uuid.uuid4()), "user_id": user["id"], "name": body.name.strip(),
            "parent_id": parent_id, "created_at": now, "updated_at": now}
+    if body.smart_filter:
+        doc["smart_filter"] = body.smart_filter
     await db.boards.insert_one(dict(doc))
     doc.pop("_id", None)
     doc["photo_count"] = 0
@@ -2824,6 +2884,93 @@ async def archive_board(board_id: str, user: Annotated[dict, Depends(get_current
         {"$set": {"archived": archived, "updated_at": datetime.now(timezone.utc).isoformat()}},
     )
     return {"status": "ok"}
+
+
+@api.post("/fashion/boards/{board_id}/share")
+async def share_board(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    """F5: turn on a public, view-only link for this board. The token is a
+    separate random value (not the board's own id) so it can be revoked
+    (POST unshare) and re-issued without ever reusing an old, possibly-
+    leaked link — see public_board below for what a visitor actually sees."""
+    board = await _board_or_404(user["id"], board_id)
+    token = board.get("share_token") or secrets.token_urlsafe(16)
+    await db.boards.update_one(
+        {"id": board_id, "user_id": user["id"]},
+        {"$set": {"public": True, "share_token": token}},
+    )
+    return {"status": "ok", "token": token}
+
+
+@api.post("/fashion/boards/{board_id}/unshare")
+async def unshare_board(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    await _board_or_404(user["id"], board_id)
+    await db.boards.update_one({"id": board_id, "user_id": user["id"]}, {"$set": {"public": False}})
+    return {"status": "ok"}
+
+
+@api.get("/public/boards/{token}")
+async def public_board(token: str):
+    """F5: read-only, no auth. Deliberately returns ONLY what a visitor
+    should see — board name + its own photos (not sub-folders, not the
+    owner's identity, not any other field on the board doc)."""
+    board = await db.boards.find_one({"share_token": token, "public": True}, {"_id": 0, "id": 1, "name": 1})
+    if not board:
+        raise HTTPException(404, "Bu bağlantı artık geçerli değil.")
+    photos = await db.saved_photos.find(
+        {"board_id": board["id"]},
+        {"_id": 0, "user_id": 0, "board_id": 0, "note": 0, "custom_tags": 0},
+    ).sort("added_at", -1).limit(_BOARD_PHOTO_PAGE).to_list(length=_BOARD_PHOTO_PAGE)
+    return {"name": board["name"], "photos": photos}
+
+
+_SMART_BOARD_MAX_ADD = 40
+
+
+@api.post("/fashion/boards/{board_id}/smart-refresh")
+async def smart_refresh_board(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    """A8: re-run this board's saved Lens filter and save any photo that
+    matches now but wasn't already in the board — capped per refresh so
+    opening a very broad smart board doesn't dump hundreds of photos in
+    at once."""
+    board = await _board_or_404(user["id"], board_id)
+    sf = board.get("smart_filter")
+    if not sf:
+        raise HTTPException(400, "Bu bir akıllı pano değil.")
+    pipeline = _looks_pipeline(
+        sf.get("gender"), sf.get("season"), sf.get("item"), sf.get("color"),
+        sf.get("material"), sf.get("pattern"), sf.get("q"), 0, 200,
+    )
+    rows = await db.fashion.aggregate(pipeline).to_list(length=200)
+    existing = await db.saved_photos.find(
+        {"user_id": user["id"], "board_id": board_id}, {"_id": 0, "source_id": 1, "photo_index": 1},
+    ).to_list(length=5000)
+    existing_keys = {f"{r['source_id']}#{r['photo_index']}" for r in existing}
+    now = datetime.now(timezone.utc).isoformat()
+    added = 0
+    for r in rows:
+        if added >= _SMART_BOARD_MAX_ADD:
+            break
+        if r["source_id"] in existing_keys:
+            continue
+        sid, _, idx_s = r["source_id"].rpartition("#")
+        try:
+            idx = int(idx_s)
+        except ValueError:
+            continue
+        await db.saved_photos.update_one(
+            {"user_id": user["id"], "board_id": board_id, "source_id": sid, "photo_index": idx},
+            {
+                "$set": {
+                    "image": r["image"], "image_thumb": r["image"], "brand_tr": r["brand_tr"],
+                    "season": r["season"], "season_label": r["season_text_tr"], "url": r["url"],
+                },
+                "$setOnInsert": {"added_at": now},
+            },
+            upsert=True,
+        )
+        existing_keys.add(r["source_id"])
+        added += 1
+    return {"status": "ok", "added": added}
 
 
 @api.post("/fashion/boards/{board_id}/summarize")

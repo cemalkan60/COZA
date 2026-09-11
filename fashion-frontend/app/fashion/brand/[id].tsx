@@ -133,22 +133,51 @@ export default function BrandGallery() {
     if (viewerIndexRef.current !== null) zoomRefs.current.get(viewerIndexRef.current)?.zoomOut();
   }, []);
 
+  // C5: at either end of this collection's photos, "next/prev" hops to the
+  // adjacent collection (main-feed order) instead of doing nothing — a
+  // swipe gesture itself can't do this (nothing to scroll into past the
+  // last item), so this only fires from the chevrons / keyboard arrows.
+  const [switchingCollection, setSwitchingCollection] = useState(false);
+  const goAdjacentCollection = useCallback(
+    async (direction: "next" | "prev") => {
+      if (switchingCollection) return;
+      setSwitchingCollection(true);
+      try {
+        const res = await api.fashionAdjacentCollection(id, direction);
+        if (res.item) {
+          router.replace(
+            `/fashion/brand/${encodeURIComponent(res.item.source_id)}?title=${encodeURIComponent(res.item.brand_tr)}&season=${encodeURIComponent(res.item.season)}&open=0` as any,
+          );
+        }
+      } catch {
+      } finally {
+        setSwitchingCollection(false);
+      }
+    },
+    [id, switchingCollection],
+  );
   const goPrev = useCallback(() => {
-    setViewerIndex((i) => {
-      if (i === null) return i;
-      const next = Math.max(0, i - 1);
-      viewerListRef.current?.scrollToIndex({ index: next, animated: true });
-      return next;
-    });
-  }, []);
+    const i = viewerIndexRef.current;
+    if (i === null) return;
+    if (i === 0) {
+      goAdjacentCollection("prev");
+      return;
+    }
+    const next = i - 1;
+    viewerListRef.current?.scrollToIndex({ index: next, animated: true });
+    setViewerIndex(next);
+  }, [goAdjacentCollection]);
   const goNext = useCallback(() => {
-    setViewerIndex((i) => {
-      if (i === null) return i;
-      const next = Math.min(imagesLengthRef.current - 1, i + 1);
-      viewerListRef.current?.scrollToIndex({ index: next, animated: true });
-      return next;
-    });
-  }, []);
+    const i = viewerIndexRef.current;
+    if (i === null) return;
+    if (i >= imagesLengthRef.current - 1) {
+      goAdjacentCollection("next");
+      return;
+    }
+    const next = i + 1;
+    viewerListRef.current?.scrollToIndex({ index: next, animated: true });
+    setViewerIndex(next);
+  }, [goAdjacentCollection]);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -298,6 +327,13 @@ export default function BrandGallery() {
   }, [id]);
 
   const autoOpenedRef = useRef(false);
+  // C5: expo-router reuses this screen instance across a router.replace to
+  // a different `id` on the same route pattern (goAdjacentCollection) — it
+  // does NOT remount, so this ref must reset itself on id change, or the
+  // 2nd+ collection in a swipe chain would never auto-open its viewer.
+  useEffect(() => {
+    autoOpenedRef.current = false;
+  }, [id]);
   useEffect(() => {
     if (autoOpenedRef.current || !images.length || isNaN(openIndex)) return;
     autoOpenedRef.current = true;
@@ -541,26 +577,32 @@ export default function BrandGallery() {
                 )}
               />
 
-              {viewerIndex > 0 && (
-                <Pressable
-                  testID="brand-viewer-prev"
-                  onPress={goPrev}
-                  style={[styles.viewerNav, { left: 16 }]}
-                  hitSlop={12}
-                >
+              <Pressable
+                testID="brand-viewer-prev"
+                onPress={goPrev}
+                disabled={switchingCollection}
+                style={[styles.viewerNav, { left: 16 }]}
+                hitSlop={12}
+              >
+                {switchingCollection && viewerIndex === 0 ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
                   <Feather name="chevron-left" size={30} color="#fff" />
-                </Pressable>
-              )}
-              {viewerIndex < images.length - 1 && (
-                <Pressable
-                  testID="brand-viewer-next"
-                  onPress={goNext}
-                  style={[styles.viewerNav, { right: 16 }]}
-                  hitSlop={12}
-                >
+                )}
+              </Pressable>
+              <Pressable
+                testID="brand-viewer-next"
+                onPress={goNext}
+                disabled={switchingCollection}
+                style={[styles.viewerNav, { right: 16 }]}
+                hitSlop={12}
+              >
+                {switchingCollection && viewerIndex === images.length - 1 ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
                   <Feather name="chevron-right" size={30} color="#fff" />
-                </Pressable>
-              )}
+                )}
+              </Pressable>
 
               {description ? (
                 <Text style={[styles.viewerCounter, styles.viewerDescription, { bottom: insets.bottom + 60 }]}>

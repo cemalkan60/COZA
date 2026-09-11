@@ -106,6 +106,9 @@ export type Board = {
   archived?: boolean; // A3
   summary?: string; // A7, cached
   summary_lang?: string;
+  public?: boolean; // F5
+  share_token?: string; // F5
+  smart_filter?: Record<string, string> | null; // A8
 };
 
 export type SavedPhoto = {
@@ -186,6 +189,13 @@ export const api = {
     sourceId: string,
   ): Promise<{ items: { source_id: string; brand_tr: string; season: string; season_label: string; image: string | null }[] }> =>
     request(`/fashion/collections/${encodeURIComponent(sourceId)}/similar`, {}, true),
+  // C5: the next/previous collection in main-feed order, for swiping past
+  // a collection's last (or before its first) photo into the next one.
+  fashionAdjacentCollection: (
+    sourceId: string,
+    direction: "next" | "prev",
+  ): Promise<{ item: { source_id: string; brand_tr: string; season: string } | null }> =>
+    request(`/fashion/collections/${encodeURIComponent(sourceId)}/adjacent${toQuery({ direction })}`, {}, true),
   // Not auth-gated on the backend (same public data brand/[id].tsx already
   // fetches directly) — used for the "more from this show" strip (C4).
   fashionCollectionDetail: (
@@ -224,10 +234,13 @@ export const api = {
 
   // ---- COZA Lens boards (saved photos in nested folders) ----
   boardsList: (): Promise<{ boards: Board[] }> => request("/fashion/boards", {}, true),
-  boardCreate: (name: string, parent_id?: string | null): Promise<Board> =>
-    request("/fashion/boards", { method: "POST", body: JSON.stringify({ name, parent_id: parent_id ?? null }) }, true),
+  boardCreate: (name: string, parent_id?: string | null, smart_filter?: Record<string, string> | null): Promise<Board> =>
+    request("/fashion/boards", { method: "POST", body: JSON.stringify({ name, parent_id: parent_id ?? null, smart_filter: smart_filter ?? null }) }, true),
   boardUpdate: (id: string, patch: { name?: string; parent_id?: string | null }) =>
     request(`/fashion/boards/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }, true),
+  // A8: re-run the board's saved filter, save any newly-matching photo.
+  boardSmartRefresh: (id: string): Promise<{ status: string; added: number }> =>
+    request(`/fashion/boards/${encodeURIComponent(id)}/smart-refresh`, { method: "POST" }, true),
   boardDelete: (id: string) =>
     request(`/fashion/boards/${encodeURIComponent(id)}`, { method: "DELETE" }, true),
   boardPhotos: (id: string, skip = 0): Promise<{ items: SavedPhoto[] }> =>
@@ -253,6 +266,13 @@ export const api = {
     request(`/fashion/boards/${encodeURIComponent(boardId)}/duplicate`, { method: "POST" }, true),
   boardArchive: (boardId: string, archived: boolean) =>
     request(`/fashion/boards/${encodeURIComponent(boardId)}/archive${toQuery({ archived })}`, { method: "POST" }, true),
+  // F5: public, view-only link. Not auth-gated on the read side by design.
+  boardShare: (boardId: string): Promise<{ status: string; token: string }> =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/share`, { method: "POST" }, true),
+  boardUnshare: (boardId: string) =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/unshare`, { method: "POST" }, true),
+  publicBoard: (token: string): Promise<{ name: string; photos: SavedPhoto[] }> =>
+    request(`/public/boards/${encodeURIComponent(token)}`),
   // A7: AI moodboard-direction paragraph, cached on the board.
   boardSummarize: (boardId: string, lang: string, force = false): Promise<{ summary: string; cached: boolean }> =>
     request(`/fashion/boards/${encodeURIComponent(boardId)}/summarize${toQuery({ lang, force })}`, { method: "POST" }, true),
