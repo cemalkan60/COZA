@@ -12,6 +12,7 @@ import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
 import { useAuth } from "@/src/context/AuthContext";
 import { formatDate } from "@/src/utils/format";
+import { usePwaInstall } from "@/src/hooks/usePwaInstall";
 
 export default function Settings() {
   const { colors, spacing, mode, toggle } = useTheme();
@@ -28,6 +29,9 @@ export default function Settings() {
   const [geminiChecking, setGeminiChecking] = useState(false);
   const [models, setModels] = useState<any>(null);
   const [modelsChecking, setModelsChecking] = useState(false);
+
+  const pwaInstall = usePwaInstall();
+  const [showIosInstallSteps, setShowIosInstallSteps] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -276,6 +280,65 @@ export default function Settings() {
             ))}
           </View>
         </View>
+
+        {(pwaInstall.status === "available" || pwaInstall.status === "ios") && (
+          <View style={{ marginTop: 12 }}>
+            <Pressable
+              testID="install-app"
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                if (pwaInstall.status === "available") pwaInstall.promptInstall();
+                else setShowIosInstallSteps((v) => !v);
+              }}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                minHeight: 52,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 8,
+                borderBottomLeftRadius: showIosInstallSteps ? 0 : 8,
+                borderBottomRightRadius: showIosInstallSteps ? 0 : 8,
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+              }}
+            >
+              <Feather name="download" size={18} color={colors.onSurfaceSecondary} />
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={{ color: colors.onSurface, fontWeight: "600" }}>{t("settings.installApp")}</Text>
+                <Text style={{ color: colors.brandSecondary, fontSize: 12, marginTop: 2 }}>
+                  {t("settings.installAppHint")}
+                </Text>
+              </View>
+              {pwaInstall.status === "ios" && (
+                <Feather
+                  name={showIosInstallSteps ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color={colors.onSurfaceSecondary}
+                />
+              )}
+            </Pressable>
+            {pwaInstall.status === "ios" && showIosInstallSteps && (
+              <View
+                style={{
+                  backgroundColor: colors.surfaceSecondary,
+                  borderColor: colors.border,
+                  borderWidth: 1,
+                  borderTopWidth: 0,
+                  borderBottomLeftRadius: 10,
+                  borderBottomRightRadius: 10,
+                  marginTop: -1,
+                  paddingHorizontal: 14,
+                  paddingVertical: 12,
+                }}
+              >
+                <Text style={{ color: colors.onSurface, fontSize: 13, lineHeight: 19 }}>
+                  {t("settings.installAppIosSteps")}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
 
         {isAdmin && (
           <>
