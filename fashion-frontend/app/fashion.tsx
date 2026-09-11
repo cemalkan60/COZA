@@ -1,7 +1,8 @@
 // frontend/app/fashion.tsx
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Modal,
   Pressable,
   RefreshControl,
@@ -15,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 
 import { api, FashionItem, FashionAnalytics, SavePhotoInput } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
@@ -23,6 +25,7 @@ import { formatDate } from "@/src/utils/format";
 import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 import RetryImage from "@/src/components/RetryImage";
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
+import { useGridColumns } from "@/src/hooks/useGridColumns";
 
 const { width } = Dimensions.get("window");
 
@@ -33,6 +36,7 @@ export default function Fashion() {
   const { t, formatSeason } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { cols, cycle: cycleCols, widthPct } = useGridColumns();
 
   const [items, setItems] = useState<FashionItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -272,6 +276,17 @@ export default function Fashion() {
                 colors={colors}
               />
             )}
+            <Pressable
+              testID="fashion-grid-cols"
+              onPress={() => {
+                Haptics.selectionAsync();
+                cycleCols();
+              }}
+              style={[styles.filterBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
+            >
+              <Feather name="grid" size={13} color={colors.brandSecondary} />
+              <Text style={{ color: colors.onSurface, fontSize: 12, fontWeight: "700" }}>{cols}</Text>
+            </Pressable>
           </ScrollView>
 
           {items.length === 0 ? (
@@ -304,6 +319,7 @@ export default function Fashion() {
                   key={idx}
                   item={it}
                   colors={colors}
+                  widthPct={widthPct}
                   saved={!!it && (savedKeys[`${it.source_id}#0`]?.length ?? 0) > 0}
                   onSave={() =>
                     it &&
@@ -401,14 +417,40 @@ function FashionCard({
   colors,
   saved,
   onSave,
+  widthPct,
 }: {
   item: FashionItem | null;
   colors: any;
   saved?: boolean;
   onSave?: () => void;
+  widthPct?: string;
 }) {
   const router = useRouter();
   const { formatSeason } = useT();
+  const saveScale = useRef(new Animated.Value(1)).current;
+  const lastTapRef = useRef(0);
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const pulseSave = () => {
+    saveScale.setValue(1);
+    Animated.sequence([
+      Animated.timing(saveScale, { toValue: 1.4, duration: 110, useNativeDriver: true }),
+      Animated.spring(saveScale, { toValue: 1, useNativeDriver: true, friction: 4, tension: 60 }),
+    ]).start();
+  };
+
+  const triggerSave = () => {
+    if (!onSave) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    pulseSave();
+    onSave();
+  };
+
+  useEffect(() => {
+    return () => {
+      if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+    };
+  }, []);
   // The grid only ever shows this card at a small fixed size, so it loads
   // the small resized copy (image_thumb) instead of the full-resolution
   // runway photo -- confirmed live as the main cause of slow/blank-looking
@@ -444,14 +486,40 @@ function FashionCard({
 
   if (!item) {
     return (
-      <View style={[styles.card, styles.cardEmpty]}>
+      <View style={[styles.card, widthPct ? { width: widthPct } : null, styles.cardEmpty]}>
         <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>—</Text>
       </View>
     );
   }
 
+  // Single tap opens the collection; a 2nd tap inside ~260ms saves instead
+  // (D3: "grid tile double-tap = save"). The short hold-off before opening
+  // is the usual double-tap-detection cost — not delaying it would make the
+  // double tap indistinguishable from two single taps.
+  const handlePress = () => {
+    const now = Date.now();
+    const isDoubleTap = now - lastTapRef.current < 260;
+    lastTapRef.current = now;
+    if (isDoubleTap) {
+      if (tapTimerRef.current) {
+        clearTimeout(tapTimerRef.current);
+        tapTimerRef.current = null;
+      }
+      triggerSave();
+      return;
+    }
+    tapTimerRef.current = setTimeout(() => {
+      tapTimerRef.current = null;
+      openInternal(item);
+    }, 260);
+  };
+
   return (
-    <Pressable testID={`fashion-card-${item.source_id}`} onPress={() => openInternal(item)} style={({ pressed }) => [styles.card, { opacity: pressed ? 0.9 : 1 }]}>
+    <Pressable
+      testID={`fashion-card-${item.source_id}`}
+      onPress={handlePress}
+      style={({ pressed }) => [styles.card, widthPct ? { width: widthPct } : null, { opacity: pressed ? 0.9 : 1 }]}
+    >
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {displayImg ? (
           <RetryImage uri={fashionImageUri(displayImg)} style={styles.image} contentFit="cover" transition={220} />
@@ -461,8 +529,10 @@ function FashionCard({
           </View>
         )}
         {onSave && (
-          <Pressable testID={`fashion-card-save-${item.source_id}`} onPress={onSave} hitSlop={8} style={styles.cardSave}>
-            <Feather name="bookmark" size={14} color="#fff" style={{ opacity: saved ? 1 : 0.7 }} />
+          <Pressable testID={`fashion-card-save-${item.source_id}`} onPress={triggerSave} hitSlop={8} style={styles.cardSave}>
+            <Animated.View style={{ transform: [{ scale: saveScale }] }}>
+              <Feather name="bookmark" size={14} color="#fff" style={{ opacity: saved ? 1 : 0.7 }} />
+            </Animated.View>
           </Pressable>
         )}
       </View>
