@@ -603,7 +603,13 @@ function FashionCard({
     >
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {displayImg ? (
-          <RetryImage uri={fashionImageUri(displayImg)} style={styles.image} contentFit="cover" transition={220} />
+          <RetryImage
+            uri={fashionImageUri(displayImg)}
+            style={styles.image}
+            contentFit="cover"
+            transition={220}
+            placeholder={item.image_blurhash ? { blurhash: item.image_blurhash } : undefined}
+          />
         ) : (
           <View style={styles.imagePlaceholder}>
             <Feather name="image" size={22} color={colors.brandSecondary} />

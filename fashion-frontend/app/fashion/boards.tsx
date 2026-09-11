@@ -26,7 +26,7 @@ import { ZoomableImage } from "@/src/components/ZoomableImage";
 
 export default function Boards() {
   const { colors, spacing } = useTheme();
-  const { t, formatSeason } = useT();
+  const { t, formatSeason, lang } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -43,6 +43,31 @@ export default function Boards() {
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState("");
   const [viewer, setViewer] = useState<SavedPhoto | null>(null);
+
+  // A1: personal note on a saved photo (the user's own, not the AI's tags).
+  const [noteEditing, setNoteEditing] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const openViewer = (p: SavedPhoto) => {
+    setViewer(p);
+    setNoteDraft(p.note || "");
+    setNoteEditing(false);
+  };
+  const saveNote = async () => {
+    if (!viewer) return;
+    setNoteSaving(true);
+    try {
+      await api.updateSavedPhotoNote(viewer.board_id, viewer.source_id, viewer.photo_index, { note: noteDraft.trim() });
+      const withNote = { ...viewer, note: noteDraft.trim() };
+      setViewer(withNote);
+      setPhotos((cur) => cur.map((p) => (photoKey(p) === photoKey(viewer) ? withNote : p)));
+      setNoteEditing(false);
+    } catch {
+      // ignore — user can retry
+    } finally {
+      setNoteSaving(false);
+    }
+  };
 
   // A2: multi-select (bulk move/delete) — long-press a photo to enter it.
   const [selectMode, setSelectMode] = useState(false);
@@ -114,10 +139,18 @@ export default function Boards() {
   }, [zenOn, photos.length]);
 
   const current = useMemo(() => boards.find((b) => b.id === boardId) || null, [boards, boardId]);
-  const subFolders = useMemo(
+  // A3: archived boards are hidden by default (not deleted — just tucked
+  // away), with a toggle to bring them back into view.
+  const [showArchived, setShowArchived] = useState(false);
+  const subFoldersAll = useMemo(
     () => boards.filter((b) => (b.parent_id ?? null) === (boardId || null)),
     [boards, boardId],
   );
+  const subFolders = useMemo(
+    () => subFoldersAll.filter((b) => showArchived || !b.archived),
+    [subFoldersAll, showArchived],
+  );
+  const archivedCount = useMemo(() => subFoldersAll.filter((b) => b.archived).length, [subFoldersAll]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -168,6 +201,41 @@ export default function Boards() {
       await api.boardDelete(current.id);
       router.replace(current.parent_id ? `/fashion/boards?board=${encodeURIComponent(current.parent_id)}` : "/fashion/boards");
     } catch {}
+  };
+
+  // A3: copy / archive.
+  const [duplicating, setDuplicating] = useState(false);
+  const doDuplicate = async () => {
+    if (!current || duplicating) return;
+    setDuplicating(true);
+    try {
+      const res = await api.boardDuplicate(current.id);
+      router.push(`/fashion/boards?board=${encodeURIComponent(res.id)}`);
+    } catch {
+    } finally {
+      setDuplicating(false);
+    }
+  };
+  const doArchiveToggle = async () => {
+    if (!current) return;
+    try {
+      await api.boardArchive(current.id, !current.archived);
+      router.replace(current.parent_id ? `/fashion/boards?board=${encodeURIComponent(current.parent_id)}` : "/fashion/boards");
+    } catch {}
+  };
+
+  // A7: "Board'u özetle" — cached on the board (see `current.summary`).
+  const [summarizing, setSummarizing] = useState(false);
+  const doSummarize = async () => {
+    if (!current || summarizing) return;
+    setSummarizing(true);
+    try {
+      const res = await api.boardSummarize(current.id, lang, !!current.summary);
+      setBoards((cur) => cur.map((b) => (b.id === current.id ? { ...b, summary: res.summary, summary_lang: lang } : b)));
+    } catch {
+    } finally {
+      setSummarizing(false);
+    }
   };
 
   const removePhoto = async (p: SavedPhoto) => {
@@ -242,14 +310,28 @@ export default function Boards() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40, paddingHorizontal: pad, paddingTop: 14 }}>
+          {!!current?.summary && (
+            <View style={{ flexDirection: "row", gap: 8, backgroundColor: colors.surfaceSecondary, borderColor: colors.border, borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+              <Feather name="cpu" size={14} color={colors.brand} style={{ marginTop: 1 }} />
+              <Text style={{ flex: 1, color: colors.onSurface, fontSize: 13, lineHeight: 19 }}>{current.summary}</Text>
+            </View>
+          )}
+
           {/* Sub-folders */}
+          {archivedCount > 0 && (
+            <Pressable testID="boards-toggle-archived" onPress={() => setShowArchived((v) => !v)} style={{ marginBottom: 10 }}>
+              <Text style={{ color: colors.brandSecondary, fontSize: 12, fontWeight: "700" }}>
+                {showArchived ? `▾ ${t("boards.archived")} (${archivedCount})` : `▸ ${t("boards.archived")} (${archivedCount})`}
+              </Text>
+            </Pressable>
+          )}
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap }}>
             {subFolders.map((b) => (
               <Pressable
                 key={b.id}
                 testID={`board-folder-${b.id}`}
                 onPress={() => router.push(`/fashion/boards?board=${encodeURIComponent(b.id)}`)}
-                style={{ width: cardW }}
+                style={{ width: cardW, opacity: b.archived ? 0.5 : 1 }}
               >
                 <View style={[styles.folderCover, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
                   {b.cover ? (
@@ -262,7 +344,7 @@ export default function Boards() {
                   {b.name}
                 </Text>
                 <Text style={{ color: colors.brandSecondary, fontSize: 11 }}>
-                  {t("boards.itemCount", { count: b.photo_count ?? 0 })}
+                  {b.archived ? t("boards.archived") : t("boards.itemCount", { count: b.photo_count ?? 0 })}
                 </Text>
               </Pressable>
             ))}
@@ -305,7 +387,7 @@ export default function Boards() {
                   <Pressable
                     key={photoKey(p)}
                     testID={`board-photo-${photoKey(p)}`}
-                    onPress={() => (selectMode ? toggleSelected(p) : setViewer(p))}
+                    onPress={() => (selectMode ? toggleSelected(p) : openViewer(p))}
                     onLongPress={() => {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                       setSelectMode(true);
@@ -383,6 +465,47 @@ export default function Boards() {
                 <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.share")}</Text>
               </Pressable>
             )}
+            {photos.length > 0 && (
+              <Pressable
+                testID="boards-summarize"
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  doSummarize();
+                }}
+                disabled={summarizing}
+              >
+                <Feather name="cpu" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>
+                  {summarizing ? t("boards.summarizing") : t("boards.summarize")}
+                </Text>
+              </Pressable>
+            )}
+            <Pressable
+              testID="boards-duplicate"
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                doDuplicate();
+              }}
+              disabled={duplicating}
+            >
+              <Feather name="copy" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.duplicate")}</Text>
+            </Pressable>
+            <Pressable
+              testID="boards-archive"
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                doArchiveToggle();
+              }}
+            >
+              <Feather name="archive" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>
+                {current?.archived ? t("boards.unarchive") : t("boards.archive")}
+              </Text>
+            </Pressable>
             <Pressable
               style={styles.menuItem}
               onPress={() => {
@@ -439,15 +562,57 @@ export default function Boards() {
             </Pressable>
           )}
           {viewer && (
-            <Pressable style={{ alignItems: "center" }} onPress={() => setViewer(null)}>
+            <Pressable
+              testID="board-viewer-note"
+              style={[styles.viewerBtn, { top: insets.top + 12, left: 64 }]}
+              onPress={() => setNoteEditing((v) => !v)}
+              hitSlop={12}
+            >
+              <Feather name="edit-3" size={20} color={viewer.note ? colors.brand : "#fff"} />
+            </Pressable>
+          )}
+          {viewer && (
+            <Pressable style={{ alignItems: "center" }} onPress={() => (noteEditing ? null : setViewer(null))}>
               <ZoomableImage
                 uri={fashionImageUri(viewer.image)}
                 width={width * 0.92}
-                height={height * 0.72}
+                height={height * 0.62}
                 contentFit="contain"
                 onTap={() => setViewer(null)}
               />
+              {!noteEditing && !!viewer.note && (
+                <Pressable onPress={() => setNoteEditing(true)} style={{ maxWidth: width * 0.85, marginTop: 12 }}>
+                  <Text style={{ color: "#fff", fontSize: 13, textAlign: "center", lineHeight: 18 }}>{viewer.note}</Text>
+                </Pressable>
+              )}
             </Pressable>
+          )}
+          {viewer && noteEditing && (
+            <View style={[styles.noteEditor, { bottom: insets.bottom + 16, backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <TextInput
+                autoFocus
+                multiline
+                value={noteDraft}
+                onChangeText={setNoteDraft}
+                placeholder={t("boards.notePlaceholder")}
+                placeholderTextColor={colors.brandSecondary}
+                style={{ color: colors.onSurface, fontSize: 14, minHeight: 60, maxHeight: 120 }}
+              />
+              <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 18, marginTop: 10 }}>
+                {noteSaving ? (
+                  <ActivityIndicator color={colors.brand} size="small" />
+                ) : (
+                  <>
+                    <Pressable onPress={() => setNoteEditing(false)}>
+                      <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>{t("common.cancel")}</Text>
+                    </Pressable>
+                    <Pressable onPress={saveNote}>
+                      <Text style={{ color: colors.brand, fontWeight: "700" }}>{t("common.save")}</Text>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            </View>
           )}
         </View>
       </Modal>
@@ -545,5 +710,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  noteEditor: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
   },
 });

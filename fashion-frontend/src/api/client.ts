@@ -35,6 +35,10 @@ export type FashionItem = {
   // be shorter than `images` or absent entirely on a doc that hasn't been
   // reached yet.
   image_tags?: { item: string; color: string; pattern: string; material: string }[];
+  // D5: blur placeholder for the cover thumbnail only (not every photo —
+  // see image_store.blurhash_for_url). Absent until the backfill sweep
+  // reaches this collection.
+  image_blurhash?: string | null;
   title_ja?: string;
   title_tr: string;
   brand_tr: string;
@@ -99,6 +103,9 @@ export type Board = {
   cover?: string | null;
   created_at?: string;
   updated_at?: string;
+  archived?: boolean; // A3
+  summary?: string; // A7, cached
+  summary_lang?: string;
 };
 
 export type SavedPhoto = {
@@ -112,6 +119,8 @@ export type SavedPhoto = {
   season_label: string;
   url: string;
   added_at: string;
+  note?: string; // A1
+  custom_tags?: string[]; // A1
 };
 
 export type SavePhotoInput = {
@@ -232,6 +241,34 @@ export const api = {
       true,
     ),
   savedKeys: (): Promise<{ saved: Record<string, string[]> }> => request("/fashion/saved-keys", {}, true),
+  // A1: personal note + custom tags on a saved photo (the user's own, not the AI's).
+  updateSavedPhotoNote: (boardId: string, sourceId: string, photoIndex: number, patch: { note?: string; tags?: string[] }) =>
+    request(
+      `/fashion/boards/${encodeURIComponent(boardId)}/photos/${encodeURIComponent(sourceId)}/${photoIndex}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+      true,
+    ),
+  // A3: copy / archive a board.
+  boardDuplicate: (boardId: string): Promise<{ id: string; status: string; photos_copied: number }> =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/duplicate`, { method: "POST" }, true),
+  boardArchive: (boardId: string, archived: boolean) =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/archive${toQuery({ archived })}`, { method: "POST" }, true),
+  // A7: AI moodboard-direction paragraph, cached on the board.
+  boardSummarize: (boardId: string, lang: string, force = false): Promise<{ summary: string; cached: boolean }> =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/summarize${toQuery({ lang, force })}`, { method: "POST" }, true),
+  // B3: free sentence -> Lens filter values (Gemini), applied by the caller.
+  fashionParseQuery: (text: string): Promise<{ filters: Record<string, string> }> =>
+    request("/fashion/looks/parse-query", { method: "POST", body: JSON.stringify({ text }) }, true),
+  // C1: A-Z brand index.
+  fashionBrands: (): Promise<{ items: { name: string; count: number; cover: string | null }[] }> =>
+    request("/fashion/brands", {}, true),
+  // G2: "bu kapak/marka yanlış" -> admin queue.
+  fashionReportCollection: (sourceId: string, reason: string, note = "") =>
+    request(
+      `/fashion/collections/${encodeURIComponent(sourceId)}/report`,
+      { method: "POST", body: JSON.stringify({ reason, note }) },
+      true,
+    ),
   fashionScrape: () => request("/admin/fashion-scrape", { method: "POST" }, true),
   // One-off full historical pull (everything since Jan 2026, not just each
   // source's latest page) — much slower than fashionScrape, see its comment
@@ -293,6 +330,46 @@ export const api = {
   }> => request("/admin/gemini-models", {}, true),
   // Everything the admin dashboard renders, in one call. Admin-only (403 for viewers).
   adminDashboard: (): Promise<AdminDashboard> => request("/admin/dashboard", {}, true),
+  // D5: cover-photo blur-placeholder backfill sweep.
+  fashionFixBlurhash: () => request("/admin/fashion-fix-blurhash", { method: "POST" }, true),
+  // G2: the report queue.
+  adminFashionReports: (status = "open"): Promise<{ items: FashionReport[] }> =>
+    request(`/admin/fashion-reports${toQuery({ status })}`, {}, true),
+  adminResolveFashionReport: (id: string) =>
+    request(`/admin/fashion-reports/${encodeURIComponent(id)}/resolve`, { method: "POST" }, true),
+  // G3: fashion-press.net-only on-demand re-fetch.
+  adminRefetchCollection: (sourceId: string): Promise<{ status: string; photo_count?: number; detail?: string }> =>
+    request(`/admin/fashion-collections/${encodeURIComponent(sourceId)}/refetch`, { method: "POST" }, true),
+  // G5/G6: brand merge tools.
+  adminFashionBrands: (q?: string): Promise<{ items: { name: string; count: number }[] }> =>
+    request(`/admin/fashion-brands${toQuery({ q })}`, {}, true),
+  adminMergeBrands: (fromNames: string[], toName: string): Promise<{ status: string; renamed: number }> =>
+    request("/admin/fashion-brands/merge", { method: "POST", body: JSON.stringify({ from_names: fromNames, to_name: toName }) }, true),
+  adminSuggestBrandMerges: (): Promise<{ suggestions: { canonical: string; variants: string[] }[] }> =>
+    request("/admin/fashion-brands/suggest-merges", { method: "POST" }, true),
+  // H1/H2: usage counters (NOT real billing) + per-user last-active.
+  adminUsage: (): Promise<AdminUsage> => request("/admin/usage", {}, true),
+};
+
+export type FashionReport = {
+  id: string;
+  source_id: string;
+  brand_tr: string;
+  season_label: string;
+  user_name: string;
+  reason: string;
+  note: string;
+  status: "open" | "resolved";
+  created_at: string;
+};
+
+export type AdminUsage = {
+  month: string;
+  gemini_calls_this_month: number;
+  gemini_photos_tagged_this_month: number;
+  r2_photos_cached: number;
+  collections: number;
+  users: { name: string; email: string; role: string; last_active: string | null }[];
 };
 
 type LabelCount = { label: string; count: number };
