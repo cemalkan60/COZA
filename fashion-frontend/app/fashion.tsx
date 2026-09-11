@@ -218,6 +218,14 @@ export default function Fashion() {
           <Feather name="search" size={18} color={colors.onSurface} />
         </Pressable>
         <Pressable
+          testID="fashion-open-brands"
+          onPress={() => router.push("/fashion/brands" as any)}
+          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+          hitSlop={8}
+        >
+          <Feather name="list" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Pressable
           testID="fashion-open-settings"
           onPress={() => router.push("/settings" as any)}
           style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}

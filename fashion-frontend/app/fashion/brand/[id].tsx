@@ -61,6 +61,26 @@ export default function BrandGallery() {
   const [viewerZoomed, setViewerZoomed] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Record<string, string[]>>({});
   const [saveSheetIndex, setSaveSheetIndex] = useState<number | null>(null);
+
+  // G2: "Bu kapak/marka yanlış" — flag to an admin queue, no automatic action.
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportSending, setReportSending] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
+  const sendReport = async (reason: string) => {
+    if (reportSending) return;
+    setReportSending(true);
+    try {
+      await api.fashionReportCollection(id, reason);
+      setReportSent(true);
+      setTimeout(() => {
+        setReportOpen(false);
+        setReportSent(false);
+      }, 1200);
+    } catch {
+    } finally {
+      setReportSending(false);
+    }
+  };
   const refreshSaved = useCallback(() => {
     api.savedKeys().then((r) => setSavedKeys(r.saved || {})).catch(() => {});
   }, []);
@@ -284,7 +304,9 @@ export default function BrandGallery() {
           {headerLabel || t("detail.gallery")}
         </Text>
       </Pressable>
-      <View style={{ width: 26 }} />
+      <Pressable testID="brand-report" onPress={() => setReportOpen(true)} hitSlop={10}>
+        <Feather name="flag" size={20} color={colors.onSurfaceSecondary} />
+      </Pressable>
     </View>
   );
 
@@ -552,11 +574,44 @@ export default function BrandGallery() {
         savedBoardIds={saveSheetIndex !== null ? savedKeys[`${id}#${saveSheetIndex}`] || [] : []}
         onChange={refreshSaved}
       />
+
+      {/* G2: "Bu kapak/marka yanlış" */}
+      <Modal visible={reportOpen} transparent animationType="fade" onRequestClose={() => setReportOpen(false)}>
+        <Pressable style={styles.reportOverlay} onPress={() => (reportSending ? null : setReportOpen(false))}>
+          <View style={[styles.reportBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            {reportSent ? (
+              <Text style={{ color: colors.onSurface, fontWeight: "700", textAlign: "center", paddingVertical: 8 }}>
+                {t("detail.reportSent")}
+              </Text>
+            ) : (
+              <>
+                <Text style={{ color: colors.onSurface, fontWeight: "800", fontSize: 15, marginBottom: 12 }}>
+                  {t("detail.reportTitle")}
+                </Text>
+                {(["wrong_cover", "wrong_brand", "other"] as const).map((reason) => (
+                  <Pressable
+                    key={reason}
+                    testID={`report-${reason}`}
+                    disabled={reportSending}
+                    onPress={() => sendReport(reason)}
+                    style={{ paddingVertical: 11 }}
+                  >
+                    <Text style={{ color: colors.onSurface, fontSize: 14 }}>{t(`detail.reportReason.${reason}`)}</Text>
+                  </Pressable>
+                ))}
+                {reportSending && <ActivityIndicator color={colors.brand} style={{ marginTop: 8 }} />}
+              </>
+            )}
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  reportOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)", alignItems: "center", justifyContent: "center" },
+  reportBox: { borderRadius: 12, borderWidth: 1, padding: 18, width: "80%", maxWidth: 340 },
   thumbSave: {
     position: "absolute",
     top: 6,

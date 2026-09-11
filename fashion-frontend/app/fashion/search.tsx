@@ -128,6 +128,34 @@ export default function FashionSearch() {
   useEffect(() => { refreshSaved(); }, [refreshSaved]);
   const [q, setQ] = useState("");
   const [qActive, setQActive] = useState("");
+
+  // B3: "Kelimeyle ara" — a free sentence, understood by Gemini and turned
+  // into the actual filter dropdowns (season/item/color/material/pattern/
+  // gender), instead of the plain keyword-table match `q` already does.
+  const [aiParsing, setAiParsing] = useState(false);
+  const searchWithAI = async () => {
+    const text = q.trim();
+    if (!text || aiParsing) return;
+    setAiParsing(true);
+    try {
+      const res = await api.fashionParseQuery(text);
+      const f = res.filters || {};
+      if (typeof f.gender === "string") setGender(f.gender);
+      setSelected((s) => {
+        const next = { ...s };
+        (["season", "item", "color", "material", "pattern"] as FilterKey[]).forEach((k) => {
+          if (typeof f[k] === "string") next[k] = f[k];
+        });
+        return next;
+      });
+      setQ("");
+      setQActive("");
+    } catch {
+      // ignore — user can retry
+    } finally {
+      setAiParsing(false);
+    }
+  };
   const [recent, setRecent] = useState<string[]>([]);
   const recentReady = useRef(false);
 
@@ -290,7 +318,19 @@ export default function FashionSearch() {
               <Feather name="x" size={16} color={colors.brandSecondary} />
             </Pressable>
           )}
+          {!!q.trim() && (
+            <Pressable testID="lens-search-ai" onPress={searchWithAI} disabled={aiParsing} hitSlop={8} style={{ marginLeft: 10 }}>
+              {aiParsing ? (
+                <ActivityIndicator size="small" color={colors.brand} />
+              ) : (
+                <Feather name="cpu" size={16} color={colors.brand} />
+              )}
+            </Pressable>
+          )}
         </View>
+        {!!q.trim() && (
+          <Text style={{ color: colors.brandSecondary, fontSize: 11, marginTop: 6 }}>{t("lens.aiSearchHint")}</Text>
+        )}
 
         {!q.trim() && recent.length > 0 && (
           <View style={{ marginTop: 10 }}>

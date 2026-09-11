@@ -79,6 +79,7 @@ export const tr = {
     recent: "Son aramalar",
     clearRecent: "Temizle",
     moreFromShow: "Bu defileden daha fazlası",
+    aiSearchHint: "Bir cümle yaz, yapay zeka ikonuna bas — filtreleri senin için ayarlasın",
     newBoardFromResults: "Sonuçlardan pano oluştur",
     newBoardFromResultsHint: "{count} sonucun tümü yeni panoya kaydedilecek.",
   },
@@ -93,6 +94,13 @@ export const tr = {
     lookCounter: "Görünüm {n}/{total}",
     tagCoverage: "{tagged}/{taggable} foto etiketlendi",
     describeError: "Açıklama oluşturulamadı, tekrar dene.",
+    reportTitle: "Bu koleksiyonda ne yanlış?",
+    reportReason: {
+      wrong_cover: "Kapak fotoğrafı yanlış",
+      wrong_brand: "Marka adı yanlış",
+      other: "Diğer",
+    },
+    reportSent: "Bildirim gönderildi, teşekkürler.",
   },
   boards: {
     title: "Kaydettiklerim",
@@ -119,6 +127,11 @@ export const tr = {
     archived: "Arşivlenmiş",
     summarize: "AI ile özetle",
     summarizing: "Özetleniyor…",
+  },
+  brands: {
+    title: "Markalar",
+    searchPlaceholder: "Marka ara…",
+    empty: "Marka bulunamadı.",
   },
   settings: {
     title: "Ayarlar",
@@ -215,6 +228,7 @@ export const en: Dict = {
     recent: "Recent searches",
     clearRecent: "Clear",
     moreFromShow: "More from this show",
+    aiSearchHint: "Write a sentence, tap the AI icon — it'll set the filters for you",
     newBoardFromResults: "Create board from results",
     newBoardFromResultsHint: "All {count} results will be saved to the new board.",
   },
@@ -229,6 +243,13 @@ export const en: Dict = {
     lookCounter: "Look {n}/{total}",
     tagCoverage: "{tagged}/{taggable} photos tagged",
     describeError: "Couldn't generate a description, try again.",
+    reportTitle: "What's wrong with this collection?",
+    reportReason: {
+      wrong_cover: "Wrong cover photo",
+      wrong_brand: "Wrong brand name",
+      other: "Other",
+    },
+    reportSent: "Report sent, thanks.",
   },
   boards: {
     title: "Saved",
@@ -255,6 +276,11 @@ export const en: Dict = {
     archived: "Archived",
     summarize: "Summarize with AI",
     summarizing: "Summarizing…",
+  },
+  brands: {
+    title: "Brands",
+    searchPlaceholder: "Search brands…",
+    empty: "No brands found.",
   },
   settings: {
     title: "Settings",
@@ -351,6 +377,7 @@ export const es: Dict = {
     recent: "Búsquedas recientes",
     clearRecent: "Borrar",
     moreFromShow: "Más de este desfile",
+    aiSearchHint: "Escribe una frase y toca el icono de IA — ajustará los filtros por ti",
     newBoardFromResults: "Crear tablero desde los resultados",
     newBoardFromResultsHint: "Los {count} resultados se guardarán en el nuevo tablero.",
   },
@@ -365,6 +392,13 @@ export const es: Dict = {
     lookCounter: "Look {n}/{total}",
     tagCoverage: "{tagged}/{taggable} fotos etiquetadas",
     describeError: "No se pudo generar la descripción, inténtalo de nuevo.",
+    reportTitle: "¿Qué está mal en esta colección?",
+    reportReason: {
+      wrong_cover: "Foto de portada incorrecta",
+      wrong_brand: "Nombre de marca incorrecto",
+      other: "Otro",
+    },
+    reportSent: "Informe enviado, gracias.",
   },
   boards: {
     title: "Guardados",
@@ -391,6 +425,11 @@ export const es: Dict = {
     archived: "Archivado",
     summarize: "Resumir con IA",
     summarizing: "Resumiendo…",
+  },
+  brands: {
+    title: "Marcas",
+    searchPlaceholder: "Buscar marcas…",
+    empty: "No se encontraron marcas.",
   },
   settings: {
     title: "Ajustes",
