@@ -202,71 +202,77 @@ export default function Fashion() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      {/* Header */}
+      {/* Header — title on its own row, icons on a second row below.
+          6 icons at 40px + gaps used to sit BESIDE the flex:1 title on one
+          row; that only ever fit on a wide (desktop-web) viewport — on a
+          real phone it squeezed the title down to near-zero width, which
+          made "COZA FASHION" wrap letter-by-letter into two tall columns
+          (seen live in the APK). Two rows means the title always has the
+          full width to itself. */}
       <View
         style={[
           styles.header,
           { paddingTop: insets.top + 8, paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
         ]}
       >
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.brandLine, { color: colors.onSurface }]}>
-            COZA <Text style={{ color: colors.brandSecondary }}>{t("feed.title")}</Text>
-          </Text>
+        <Text numberOfLines={1} style={[styles.brandLine, { color: colors.onSurface }]}>
+          COZA <Text style={{ color: colors.brandSecondary }}>{t("feed.title")}</Text>
+        </Text>
+        <View style={{ flexDirection: "row", marginTop: 10 }}>
+          <Pressable
+            testID="fashion-open-boards"
+            onPress={() => router.push("/fashion/boards" as any)}
+            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
+            hitSlop={8}
+          >
+            <Feather name="bookmark" size={18} color={colors.onSurface} />
+          </Pressable>
+          <Pressable
+            testID="fashion-open-search"
+            onPress={() => router.push("/fashion/search" as any)}
+            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+            hitSlop={8}
+          >
+            <Feather name="search" size={18} color={colors.onSurface} />
+          </Pressable>
+          <Pressable
+            testID="fashion-open-brands"
+            onPress={() => router.push("/fashion/brands" as any)}
+            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+            hitSlop={8}
+          >
+            <Feather name="list" size={18} color={colors.onSurface} />
+          </Pressable>
+          <Pressable
+            testID="fashion-open-weeks"
+            onPress={() => router.push("/fashion/weeks" as any)}
+            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+            hitSlop={8}
+          >
+            <Feather name="calendar" size={18} color={colors.onSurface} />
+          </Pressable>
+          <Pressable
+            testID="fashion-open-inbox"
+            onPress={() => router.push("/fashion/inbox" as any)}
+            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+            hitSlop={8}
+          >
+            <Feather name="bell" size={18} color={colors.onSurface} />
+            {unread > 0 && (
+              <View style={styles.unreadDot}>
+                <Text style={{ color: "#fff", fontSize: 9, fontWeight: "800" }}>{unread > 9 ? "9+" : unread}</Text>
+              </View>
+            )}
+          </Pressable>
+          <Pressable
+            testID="fashion-open-settings"
+            onPress={() => router.push("/settings" as any)}
+            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+            hitSlop={8}
+          >
+            <Feather name="settings" size={18} color={colors.onSurface} />
+          </Pressable>
         </View>
-        <Pressable
-          testID="fashion-open-boards"
-          onPress={() => router.push("/fashion/boards" as any)}
-          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
-          hitSlop={8}
-        >
-          <Feather name="bookmark" size={18} color={colors.onSurface} />
-        </Pressable>
-        <Pressable
-          testID="fashion-open-search"
-          onPress={() => router.push("/fashion/search" as any)}
-          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-          hitSlop={8}
-        >
-          <Feather name="search" size={18} color={colors.onSurface} />
-        </Pressable>
-        <Pressable
-          testID="fashion-open-brands"
-          onPress={() => router.push("/fashion/brands" as any)}
-          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-          hitSlop={8}
-        >
-          <Feather name="list" size={18} color={colors.onSurface} />
-        </Pressable>
-        <Pressable
-          testID="fashion-open-weeks"
-          onPress={() => router.push("/fashion/weeks" as any)}
-          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-          hitSlop={8}
-        >
-          <Feather name="calendar" size={18} color={colors.onSurface} />
-        </Pressable>
-        <Pressable
-          testID="fashion-open-inbox"
-          onPress={() => router.push("/fashion/inbox" as any)}
-          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-          hitSlop={8}
-        >
-          <Feather name="bell" size={18} color={colors.onSurface} />
-          {unread > 0 && (
-            <View style={styles.unreadDot}>
-              <Text style={{ color: "#fff", fontSize: 9, fontWeight: "800" }}>{unread > 9 ? "9+" : unread}</Text>
-            </View>
-          )}
-        </Pressable>
-        <Pressable
-          testID="fashion-open-settings"
-          onPress={() => router.push("/settings" as any)}
-          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-          hitSlop={8}
-        >
-          <Feather name="settings" size={18} color={colors.onSurface} />
-        </Pressable>
       </View>
 
       {/* Serbest metin arama */}
@@ -848,9 +854,6 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   header: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
     paddingBottom: 12,
     borderBottomWidth: 1,
   },
