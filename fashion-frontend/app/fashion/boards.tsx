@@ -272,15 +272,25 @@ export default function Boards() {
     }, [load]),
   );
 
+  // Bug found in QA: pressing Enter fires onSubmitEditing, and on some
+  // browsers Enter also blurs the input before React has applied the
+  // setNewName("") from the first call — the onBlur handler below then saw
+  // the still-non-empty value and created a SECOND board. A ref (not
+  // state) closes that race since it updates synchronously, unlike state.
+  const creatingFolderRef = useRef(false);
   const createFolder = async () => {
     const name = newName.trim();
-    if (!name) return;
+    if (!name || creatingFolderRef.current) return;
+    creatingFolderRef.current = true;
     try {
       await api.boardCreate(name, boardId || null);
       setNewName("");
       setCreating(false);
       load();
-    } catch {}
+    } catch {
+    } finally {
+      creatingFolderRef.current = false;
+    }
   };
 
   const doRename = async () => {

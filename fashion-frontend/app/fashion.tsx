@@ -37,7 +37,16 @@ export default function Fashion() {
   const { t, formatSeason, optLabel, lang } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { cols, cycle: cycleCols, widthPct } = useGridColumns();
+  const { cols, cycle: cycleCols } = useGridColumns();
+  // Bug found in QA: at low column counts (2/3), the old percentage width
+  // ("${100/cols}%") plus styles.grid's own `gap` overflowed the row by
+  // one gap's worth, so the last card on a row wrapped early and left a
+  // big empty gap. Pixel math (same pattern every other grid in the app
+  // already uses — boards.tsx, brand/[id].tsx, search.tsx) accounts for
+  // the gaps up front instead of layering a flex gap on top of percentages.
+  const gridGap = 12;
+  const gridPad = spacing.xl - 4;
+  const cardW = (width - gridPad * 2 - gridGap * (cols - 1)) / cols;
   const [lastCollection, setLastCollection] = useState<LastCollection | null>(null);
   const [recentCollections, setRecentCollections] = useState<LastCollection[]>([]); // D6
   const [unread, setUnread] = useState(0); // E5
@@ -458,13 +467,13 @@ export default function Fashion() {
               )}
             </View>
           ) : (
-            <View style={[styles.grid, { paddingHorizontal: spacing.xl - 4 }]}>
+            <View style={[styles.grid, { paddingHorizontal: spacing.xl - 4, gap: gridGap }]}>
               {slots.map((it, idx) => (
                 <FashionCard
                   key={idx}
                   item={it}
                   colors={colors}
-                  widthPct={widthPct}
+                  cardW={cardW}
                   saved={!!it && (savedKeys[`${it.source_id}#0`]?.length ?? 0) > 0}
                   onSave={() =>
                     it &&
@@ -562,13 +571,13 @@ function FashionCard({
   colors,
   saved,
   onSave,
-  widthPct,
+  cardW,
 }: {
   item: FashionItem | null;
   colors: any;
   saved?: boolean;
   onSave?: () => void;
-  widthPct?: string;
+  cardW?: number;
 }) {
   const router = useRouter();
   const { formatSeason } = useT();
@@ -635,7 +644,7 @@ function FashionCard({
 
   if (!item) {
     return (
-      <View style={[styles.card, widthPct ? { width: widthPct } : null, styles.cardEmpty]}>
+      <View style={[styles.card, cardW ? { width: cardW } : null, styles.cardEmpty]}>
         <Text style={{ color: colors.brandSecondary, fontWeight: "700" }}>—</Text>
       </View>
     );
@@ -673,7 +682,7 @@ function FashionCard({
       }}
       onPressOut={() => setPeeking(false)}
       delayLongPress={280}
-      style={({ pressed }) => [styles.card, widthPct ? { width: widthPct } : null, { opacity: pressed ? 0.9 : 1 }]}
+      style={({ pressed }) => [styles.card, cardW ? { width: cardW } : null, { opacity: pressed ? 0.9 : 1 }]}
     >
       <Modal visible={peeking} transparent animationType="fade" onRequestClose={() => setPeeking(false)}>
         <View style={styles.peekOverlay} pointerEvents="none">
@@ -902,7 +911,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 6,
   },
-  grid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
+  // No justifyContent:"space-between" — combined with an explicit `gap`
+  // it overflowed each row by one gap's worth at low column counts (see
+  // the cardW comment above), wrapping the last card early and leaving a
+  // stray empty gap. Pixel-width cards + `gap` alone is enough.
+  grid: { flexDirection: "row", flexWrap: "wrap" },
   // 6 columns layout
   card: { width: "16.6%", marginBottom: 18 },
   cardEmpty: { alignItems: "center", justifyContent: "center", height: 220, backgroundColor: "transparent", borderRadius: 4 },

@@ -25,14 +25,22 @@ export default function FashionWeeks() {
 
   const [items, setItems] = useState<Week[]>([]);
   const [loading, setLoading] = useState(true);
+  // QA flagged "Henüz moda haftası verisi yok." indistinguishable from a
+  // failed request — track which one it actually was.
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     api
       .fashionWeeks()
-      .then((r) => setItems(r.items || []))
-      .catch(() => setItems([]))
+      .then((r) => {
+        setItems(r.items || []);
+        setError(false);
+      })
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(load, []);
 
   const cols = width >= 900 ? 3 : 2;
   const cardW = (width - spacing.xl * 2 - 12 * (cols - 1)) / cols;
@@ -85,7 +93,16 @@ export default function FashionWeeks() {
             ))}
           </View>
           {items.length === 0 && (
-            <Text style={{ color: colors.brandSecondary, textAlign: "center", marginTop: 40 }}>{t("weeks.empty")}</Text>
+            <View style={{ alignItems: "center", marginTop: 40, gap: 10 }}>
+              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
+                {error ? t("feed.loadError") : t("weeks.empty")}
+              </Text>
+              {error && (
+                <Pressable onPress={load} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 18 }}>
+                  <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{t("common.retry")}</Text>
+                </Pressable>
+              )}
+            </View>
           )}
         </ScrollView>
       )}

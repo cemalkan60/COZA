@@ -23,14 +23,23 @@ export default function Brands() {
   const [items, setItems] = useState<BrandRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
+  // QA flagged "Marka bulunamadı." showing up indistinguishably from a
+  // failed request (e.g. an expired session) — this tracks which one it
+  // actually was so the empty state can say so instead of guessing.
+  const [error, setError] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     api
       .fashionBrands()
-      .then((r) => setItems(r.items || []))
-      .catch(() => setItems([]))
+      .then((r) => {
+        setItems(r.items || []);
+        setError(false);
+      })
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, []);
+  };
+  useEffect(load, []);
 
   const sections = useMemo(() => {
     const query = q.trim().toLowerCase();
@@ -106,7 +115,16 @@ export default function Brands() {
             </Pressable>
           )}
           ListEmptyComponent={
-            <Text style={{ color: colors.brandSecondary, textAlign: "center", marginTop: 40 }}>{t("brands.empty")}</Text>
+            <View style={{ alignItems: "center", marginTop: 40, gap: 10 }}>
+              <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
+                {error ? t("feed.loadError") : t("brands.empty")}
+              </Text>
+              {error && (
+                <Pressable onPress={load} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 18 }}>
+                  <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{t("common.retry")}</Text>
+                </Pressable>
+              )}
+            </View>
           }
         />
       )}
