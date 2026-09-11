@@ -109,6 +109,23 @@ export type Board = {
   public?: boolean; // F5
   share_token?: string; // F5
   smart_filter?: Record<string, string> | null; // A8
+  shared?: boolean; // E1 — true if this board was shared WITH me (not mine)
+  is_owner?: boolean; // E1
+  shared_with?: string[]; // E1, owner view only
+};
+
+export type BoardComment = {
+  id: string;
+  board_id: string;
+  board_name?: string; // only present on /notifications rows
+  source_id: string | null;
+  photo_index: number | null;
+  user_id: string;
+  user_name: string;
+  text: string;
+  mentions: string[];
+  mentioned_you?: boolean; // only present on /notifications rows
+  created_at: string;
 };
 
 export type SavedPhoto = {
@@ -277,6 +294,35 @@ export const api = {
     request(`/fashion/boards/${encodeURIComponent(boardId)}/unshare`, { method: "POST" }, true),
   publicBoard: (token: string): Promise<{ name: string; photos: SavedPhoto[] }> =>
     request(`/public/boards/${encodeURIComponent(token)}`),
+  // E1: the other 4 team members (invite picker, @mention autocomplete).
+  fashionTeam: (): Promise<{ items: { id: string; name: string }[] }> => request("/fashion/team", {}, true),
+  boardInvite: (boardId: string, userId: string) =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/invite`, { method: "POST", body: JSON.stringify({ user_id: userId }) }, true),
+  boardUninvite: (boardId: string, userId: string) =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/uninvite`, { method: "POST", body: JSON.stringify({ user_id: userId }) }, true),
+  // E2/E3: board (or per-photo) comments, @mentions parsed server-side.
+  boardComments: (boardId: string): Promise<{ items: BoardComment[] }> =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/comments`, {}, true),
+  addComment: (boardId: string, text: string, sourceId?: string, photoIndex?: number): Promise<BoardComment> =>
+    request(
+      `/fashion/boards/${encodeURIComponent(boardId)}/comments`,
+      { method: "POST", body: JSON.stringify({ text, source_id: sourceId ?? null, photo_index: photoIndex ?? null }) },
+      true,
+    ),
+  deleteComment: (boardId: string, commentId: string) =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" }, true),
+  // E4: one emoji per (user, photo) — posting the same one again clears it.
+  toggleReaction: (boardId: string, sourceId: string, photoIndex: number, emoji: string): Promise<{ emoji: string | null }> =>
+    request(
+      `/fashion/boards/${encodeURIComponent(boardId)}/react`,
+      { method: "POST", body: JSON.stringify({ source_id: sourceId, photo_index: photoIndex, emoji }) },
+      true,
+    ),
+  boardReactions: (boardId: string): Promise<{ items: { source_id: string; photo_index: number; user_id: string; emoji: string }[] }> =>
+    request(`/fashion/boards/${encodeURIComponent(boardId)}/reactions`, {}, true),
+  // E5: "Bana gönderilenler".
+  notifications: (): Promise<{ items: BoardComment[]; unread: number }> => request("/notifications", {}, true),
+  markNotificationsSeen: () => request("/notifications/seen", { method: "POST" }, true),
   // A7: AI moodboard-direction paragraph, cached on the board.
   boardSummarize: (boardId: string, lang: string, force = false): Promise<{ summary: string; cached: boolean }> =>
     request(`/fashion/boards/${encodeURIComponent(boardId)}/summarize${toQuery({ lang, force })}`, { method: "POST" }, true),

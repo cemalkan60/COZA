@@ -142,6 +142,13 @@ export const tr = {
     stopSharingLink: "Bağlantıyı kapat",
     smartBoardLabel: "Akıllı pano — yeni eşleşenler otomatik eklenir",
     smartAdded: "{count} yeni fotoğraf eklendi",
+    comments: "Yorumlar",
+    noComments: "Henüz yorum yok.",
+    commentPlaceholder: "Bir yorum yaz… (@isim ile bahset)",
+    invite: "Takım üyesi davet et",
+    inviteTitle: "Kiminle paylaşayım?",
+    noTeammates: "Takım üyesi bulunamadı.",
+    sharedWithYou: "SENİNLE PAYLAŞILDI",
   },
   lookbook: {
     title: "Lookbook",
@@ -158,6 +165,10 @@ export const tr = {
     title: "Moda Haftaları",
     hint: "Geçmiş moda haftaları, şehir ve sezona göre. Henüz gerçekleşmemiş defileler için bir takvim/geri sayım yok — bunu ancak kaynak siteler yayınladıktan sonra öğreniyoruz.",
     empty: "Henüz moda haftası verisi yok.",
+  },
+  inbox: {
+    title: "Bana Gönderilenler",
+    empty: "Henüz bir şey yok.",
   },
   settings: {
     title: "Ayarlar",
@@ -318,6 +329,13 @@ export const en: Dict = {
     stopSharingLink: "Stop sharing link",
     smartBoardLabel: "Smart board — new matches added automatically",
     smartAdded: "{count} new photos added",
+    comments: "Comments",
+    noComments: "No comments yet.",
+    commentPlaceholder: "Write a comment… (@name to mention)",
+    invite: "Invite a teammate",
+    inviteTitle: "Share with whom?",
+    noTeammates: "No teammates found.",
+    sharedWithYou: "SHARED WITH YOU",
   },
   lookbook: {
     title: "Lookbook",
@@ -334,6 +352,10 @@ export const en: Dict = {
     title: "Fashion Weeks",
     hint: "Past fashion weeks, by city and season. There's no calendar/countdown for shows that haven't happened yet — we only learn about one once a source site has already published it.",
     empty: "No fashion week data yet.",
+  },
+  inbox: {
+    title: "Sent to You",
+    empty: "Nothing here yet.",
   },
   settings: {
     title: "Settings",
@@ -494,6 +516,13 @@ export const es: Dict = {
     stopSharingLink: "Dejar de compartir",
     smartBoardLabel: "Tablero inteligente — nuevas coincidencias se añaden automáticamente",
     smartAdded: "{count} fotos nuevas añadidas",
+    comments: "Comentarios",
+    noComments: "Aún no hay comentarios.",
+    commentPlaceholder: "Escribe un comentario… (@nombre para mencionar)",
+    invite: "Invitar a un compañero",
+    inviteTitle: "¿Con quién compartir?",
+    noTeammates: "No se encontraron compañeros.",
+    sharedWithYou: "COMPARTIDO CONTIGO",
   },
   lookbook: {
     title: "Lookbook",
@@ -510,6 +539,10 @@ export const es: Dict = {
     title: "Semanas de la Moda",
     hint: "Semanas de la moda pasadas, por ciudad y temporada. No hay calendario/cuenta atrás para desfiles que aún no han ocurrido — solo nos enteramos una vez que un sitio fuente ya lo publicó.",
     empty: "Aún no hay datos de semanas de la moda.",
+  },
+  inbox: {
+    title: "Enviado a Ti",
+    empty: "Aún no hay nada aquí.",
   },
   settings: {
     title: "Ajustes",

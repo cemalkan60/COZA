@@ -40,10 +40,12 @@ export default function Fashion() {
   const { cols, cycle: cycleCols, widthPct } = useGridColumns();
   const [lastCollection, setLastCollection] = useState<LastCollection | null>(null);
   const [recentCollections, setRecentCollections] = useState<LastCollection[]>([]); // D6
+  const [unread, setUnread] = useState(0); // E5
   useFocusEffect(
     useCallback(() => {
       getLastCollection().then(setLastCollection);
       getRecentCollections().then(setRecentCollections);
+      api.notifications().then((r) => setUnread(r.unread || 0)).catch(() => {});
     }, []),
   );
 
@@ -234,6 +236,19 @@ export default function Fashion() {
           hitSlop={8}
         >
           <Feather name="calendar" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Pressable
+          testID="fashion-open-inbox"
+          onPress={() => router.push("/fashion/inbox" as any)}
+          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+          hitSlop={8}
+        >
+          <Feather name="bell" size={18} color={colors.onSurface} />
+          {unread > 0 && (
+            <View style={styles.unreadDot}>
+              <Text style={{ color: "#fff", fontSize: 9, fontWeight: "800" }}>{unread > 9 ? "9+" : unread}</Text>
+            </View>
+          )}
         </Pressable>
         <Pressable
           testID="fashion-open-settings"
@@ -847,6 +862,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  unreadDot: {
+    position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 999,
+    backgroundColor: "#D32F2F", alignItems: "center", justifyContent: "center", paddingHorizontal: 3,
   },
   chip: {
     borderWidth: 1,

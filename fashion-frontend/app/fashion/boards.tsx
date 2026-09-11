@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -16,7 +18,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
-import { api, Board, SavedPhoto } from "@/src/api/client";
+import { api, Board, BoardComment, SavedPhoto } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
 import { fashionImageUri } from "@/src/utils/fashionImage";
@@ -25,10 +27,12 @@ import { shareBoard } from "@/src/utils/shareBoard";
 import { sharePhoto } from "@/src/utils/sharePhoto";
 import { useWatermarkPref } from "@/src/hooks/useWatermarkPref";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
+import { useAuth } from "@/src/context/AuthContext";
 
 export default function Boards() {
   const { colors, spacing } = useTheme();
   const { t, formatSeason, lang } = useT();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -155,6 +159,96 @@ export default function Boards() {
   );
   const archivedCount = useMemo(() => subFoldersAll.filter((b) => b.archived).length, [subFoldersAll]);
 
+  // A8: "akıllı pano" — refresh once per visit to a smart board, not on
+  // every focus tick (a board's own smart_filter never changes on its own).
+  const [smartAddedMsg, setSmartAddedMsg] = useState("");
+  const smartRefreshedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!current?.smart_filter || smartRefreshedRef.current === current.id) return;
+    smartRefreshedRef.current = current.id;
+    api
+      .boardSmartRefresh(current.id)
+      .then((r) => {
+        if (r.added > 0) {
+          setSmartAddedMsg(t("boards.smartAdded", { count: r.added }));
+          api.boardPhotos(current.id).then((ph) => setPhotos(ph.items || []));
+          setTimeout(() => setSmartAddedMsg(""), 4000);
+        }
+      })
+      .catch(() => {});
+  }, [current]);
+
+  // E1: team invite picker. Owner-only — a shared board hides this
+  // (current?.is_owner === false), matching the backend (_board_or_404
+  // still gates invite/uninvite to the owner).
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [team, setTeam] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    api.fashionTeam().then((r) => setTeam(r.items || [])).catch(() => {});
+  }, []);
+  const toggleInvite = async (userId: string) => {
+    if (!current) return;
+    const invited = (current.shared_with || []).includes(userId);
+    try {
+      if (invited) await api.boardUninvite(current.id, userId);
+      else await api.boardInvite(current.id, userId);
+      setBoards((cur) =>
+        cur.map((b) =>
+          b.id === current.id
+            ? { ...b, shared_with: invited ? (b.shared_with || []).filter((id) => id !== userId) : [...(b.shared_with || []), userId] }
+            : b,
+        ),
+      );
+    } catch {}
+  };
+
+  // E2/E3: board-level comments (+ @mentions, parsed server-side).
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [comments, setComments] = useState<BoardComment[]>([]);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const openComments = async () => {
+    if (!current) return;
+    setCommentsOpen(true);
+    try {
+      const res = await api.boardComments(current.id);
+      setComments(res.items || []);
+    } catch {
+      setComments([]);
+    }
+  };
+  const postComment = async () => {
+    const text = commentDraft.trim();
+    if (!current || !text || postingComment) return;
+    setPostingComment(true);
+    try {
+      const c = await api.addComment(current.id, text);
+      setComments((cur) => [...cur, c]);
+      setCommentDraft("");
+    } catch {
+    } finally {
+      setPostingComment(false);
+    }
+  };
+
+  // E4: reactions on the photo currently open in the viewer.
+  const [reactions, setReactions] = useState<{ source_id: string; photo_index: number; user_id: string; emoji: string }[]>([]);
+  useEffect(() => {
+    if (!current) return;
+    api.boardReactions(current.id).then((r) => setReactions(r.items || [])).catch(() => {});
+  }, [current?.id]);
+  const reactionsFor = (p: SavedPhoto) => reactions.filter((r) => r.source_id === p.source_id && r.photo_index === p.photo_index);
+  const myReaction = (p: SavedPhoto) => reactionsFor(p).find((r) => r.user_id === user?.id)?.emoji || null;
+  const react = async (p: SavedPhoto, emoji: string) => {
+    if (!current) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    try {
+      await api.toggleReaction(current.id, p.source_id, p.photo_index, emoji);
+      const fresh = await api.boardReactions(current.id);
+      setReactions(fresh.items || []);
+    } catch {}
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -241,6 +335,43 @@ export default function Boards() {
     }
   };
 
+  // F5: public, view-only link. Native has no Web Share API, so it opens
+  // the OS share sheet instead of copying to clipboard (no clipboard
+  // package installed) — sending the link straight to a chat app is the
+  // more useful action there anyway.
+  const [sharingLink, setSharingLink] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const publicBoardUrl = (token: string) => {
+    const origin = Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : "https://coza-j6zg.vercel.app";
+    return `${origin}/fashion/public/${token}`;
+  };
+  const doShareLink = async () => {
+    if (!current || sharingLink) return;
+    setSharingLink(true);
+    try {
+      const token = current.share_token && current.public ? current.share_token : (await api.boardShare(current.id)).token;
+      setBoards((cur) => cur.map((b) => (b.id === current.id ? { ...b, public: true, share_token: token } : b)));
+      const url = publicBoardUrl(token);
+      if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      } else {
+        await Share.share({ message: url });
+      }
+    } catch {
+    } finally {
+      setSharingLink(false);
+    }
+  };
+  const doUnshareLink = async () => {
+    if (!current) return;
+    try {
+      await api.boardUnshare(current.id);
+      setBoards((cur) => cur.map((b) => (b.id === current.id ? { ...b, public: false } : b)));
+    } catch {}
+  };
+
   const removePhoto = async (p: SavedPhoto) => {
     try {
       await api.unsavePhoto(p.board_id, p.source_id, p.photo_index);
@@ -293,9 +424,14 @@ export default function Boards() {
             >
               <Feather name="chevron-left" size={26} color={colors.onSurface} />
             </Pressable>
-            <Text numberOfLines={1} style={[styles.title, { color: colors.onSurface }]}>
-              {current ? current.name : t("boards.title")}
-            </Text>
+            <View style={{ flex: 1, alignItems: "center" }}>
+              <Text numberOfLines={1} style={[styles.title, { color: colors.onSurface, flex: undefined }]}>
+                {current ? current.name : t("boards.title")}
+              </Text>
+              {!!current?.shared && (
+                <Text style={{ color: colors.brandSecondary, fontSize: 10, fontWeight: "700" }}>{t("boards.sharedWithYou")}</Text>
+              )}
+            </View>
             {current ? (
               <Pressable onPress={() => setMenuOpen(true)} hitSlop={10}>
                 <Feather name="more-horizontal" size={22} color={colors.onSurface} />
@@ -320,6 +456,15 @@ export default function Boards() {
             </View>
           )}
 
+          {!!current?.smart_filter && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 12 }}>
+              <Feather name="zap" size={12} color={colors.brand} />
+              <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700" }}>
+                {smartAddedMsg || t("boards.smartBoardLabel")}
+              </Text>
+            </View>
+          )}
+
           {/* Sub-folders */}
           {archivedCount > 0 && (
             <Pressable testID="boards-toggle-archived" onPress={() => setShowArchived((v) => !v)} style={{ marginBottom: 10 }}>
@@ -341,6 +486,11 @@ export default function Boards() {
                     <Image source={{ uri: fashionImageUri(b.cover) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
                   ) : (
                     <Feather name="folder" size={26} color={colors.brandSecondary} />
+                  )}
+                  {b.shared && (
+                    <View style={styles.sharedDot}>
+                      <Feather name="users" size={11} color="#fff" />
+                    </View>
                   )}
                 </View>
                 <Text numberOfLines={1} style={{ color: colors.onSurface, fontWeight: "700", fontSize: 13, marginTop: 6 }}>
@@ -391,11 +541,15 @@ export default function Boards() {
                     key={photoKey(p)}
                     testID={`board-photo-${photoKey(p)}`}
                     onPress={() => (selectMode ? toggleSelected(p) : openViewer(p))}
-                    onLongPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                      setSelectMode(true);
-                      toggleSelected(p);
-                    }}
+                    onLongPress={
+                      current?.is_owner === false
+                        ? undefined // A2 multi-select edits the photo list — view-only for a shared board
+                        : () => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            setSelectMode(true);
+                            toggleSelected(p);
+                          }
+                    }
                     style={{ width: cardW }}
                   >
                     <View
@@ -481,7 +635,45 @@ export default function Boards() {
                 <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.lookbook")}</Text>
               </Pressable>
             )}
-            {photos.length > 0 && (
+            <Pressable
+              testID="boards-comments"
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuOpen(false);
+                openComments();
+              }}
+            >
+              <Feather name="message-circle" size={16} color={colors.onSurface} />
+              <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.comments")}</Text>
+            </Pressable>
+            {current?.is_owner !== false && (
+              <Pressable
+                testID="boards-invite"
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  setInviteOpen(true);
+                }}
+              >
+                <Feather name="user-plus" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.invite")}</Text>
+              </Pressable>
+            )}
+            {current?.is_owner !== false && photos.length > 0 && (
+              <Pressable testID="boards-share-link" style={styles.menuItem} onPress={() => { setMenuOpen(false); doShareLink(); }} disabled={sharingLink}>
+                <Feather name="link" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>
+                  {linkCopied ? t("boards.linkCopied") : t("boards.shareLink")}
+                </Text>
+              </Pressable>
+            )}
+            {current?.is_owner !== false && current?.public && (
+              <Pressable testID="boards-unshare-link" style={styles.menuItem} onPress={() => { setMenuOpen(false); doUnshareLink(); }}>
+                <Feather name="link-2" size={16} color={colors.error} />
+                <Text style={{ color: colors.error, fontWeight: "600", marginLeft: 10 }}>{t("boards.stopSharingLink")}</Text>
+              </Pressable>
+            )}
+            {current?.is_owner !== false && photos.length > 0 && (
               <Pressable
                 testID="boards-summarize"
                 style={styles.menuItem}
@@ -497,46 +689,54 @@ export default function Boards() {
                 </Text>
               </Pressable>
             )}
-            <Pressable
-              testID="boards-duplicate"
-              style={styles.menuItem}
-              onPress={() => {
-                setMenuOpen(false);
-                doDuplicate();
-              }}
-              disabled={duplicating}
-            >
-              <Feather name="copy" size={16} color={colors.onSurface} />
-              <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.duplicate")}</Text>
-            </Pressable>
-            <Pressable
-              testID="boards-archive"
-              style={styles.menuItem}
-              onPress={() => {
-                setMenuOpen(false);
-                doArchiveToggle();
-              }}
-            >
-              <Feather name="archive" size={16} color={colors.onSurface} />
-              <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>
-                {current?.archived ? t("boards.unarchive") : t("boards.archive")}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                setMenuOpen(false);
-                setRenameVal(current?.name || "");
-                setRenaming(true);
-              }}
-            >
-              <Feather name="edit-2" size={16} color={colors.onSurface} />
-              <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.rename")}</Text>
-            </Pressable>
-            <Pressable style={styles.menuItem} onPress={() => { setMenuOpen(false); doDelete(); }}>
-              <Feather name="trash-2" size={16} color={colors.error} />
-              <Text style={{ color: colors.error, fontWeight: "600", marginLeft: 10 }}>{t("boards.delete")}</Text>
-            </Pressable>
+            {current?.is_owner !== false && (
+              <Pressable
+                testID="boards-duplicate"
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  doDuplicate();
+                }}
+                disabled={duplicating}
+              >
+                <Feather name="copy" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.duplicate")}</Text>
+              </Pressable>
+            )}
+            {current?.is_owner !== false && (
+              <Pressable
+                testID="boards-archive"
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  doArchiveToggle();
+                }}
+              >
+                <Feather name="archive" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>
+                  {current?.archived ? t("boards.unarchive") : t("boards.archive")}
+                </Text>
+              </Pressable>
+            )}
+            {current?.is_owner !== false && (
+              <Pressable
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  setRenameVal(current?.name || "");
+                  setRenaming(true);
+                }}
+              >
+                <Feather name="edit-2" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.rename")}</Text>
+              </Pressable>
+            )}
+            {current?.is_owner !== false && (
+              <Pressable style={styles.menuItem} onPress={() => { setMenuOpen(false); doDelete(); }}>
+                <Feather name="trash-2" size={16} color={colors.error} />
+                <Text style={{ color: colors.error, fontWeight: "600", marginLeft: 10 }}>{t("boards.delete")}</Text>
+              </Pressable>
+            )}
           </View>
         </Pressable>
       </Modal>
@@ -572,7 +772,7 @@ export default function Boards() {
           <Pressable style={[styles.viewerBtn, { top: insets.top + 12, right: 16 }]} onPress={() => setViewer(null)} hitSlop={12}>
             <Feather name="x" size={24} color="#fff" />
           </Pressable>
-          {viewer && (
+          {viewer && current?.is_owner !== false && (
             <Pressable style={[styles.viewerBtn, { top: insets.top + 12, left: 16 }]} onPress={() => removePhoto(viewer)} hitSlop={12}>
               <Feather name="trash-2" size={22} color="#fff" />
             </Pressable>
@@ -587,7 +787,7 @@ export default function Boards() {
               <Feather name="share" size={19} color="#fff" />
             </Pressable>
           )}
-          {viewer && (
+          {viewer && current?.is_owner !== false && (
             <Pressable
               testID="board-viewer-note"
               style={[styles.viewerBtn, { top: insets.top + 12, left: 64 }]}
@@ -612,6 +812,25 @@ export default function Boards() {
                 </Pressable>
               )}
             </Pressable>
+          )}
+          {viewer && !noteEditing && (
+            <View style={[styles.reactionRow, { bottom: insets.bottom + 16 }]}>
+              {(["❤️", "🔥"] as const).map((emoji) => {
+                const count = reactionsFor(viewer).filter((r) => r.emoji === emoji).length;
+                const active = myReaction(viewer) === emoji;
+                return (
+                  <Pressable
+                    key={emoji}
+                    testID={`board-react-${emoji}`}
+                    onPress={() => react(viewer, emoji)}
+                    style={[styles.reactionBtn, { backgroundColor: active ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.1)" }]}
+                  >
+                    <Text style={{ fontSize: 16 }}>{emoji}</Text>
+                    {count > 0 && <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700", marginLeft: 4 }}>{count}</Text>}
+                  </Pressable>
+                );
+              })}
+            </View>
           )}
           {viewer && noteEditing && (
             <View style={[styles.noteEditor, { bottom: insets.bottom + 16, backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -689,6 +908,93 @@ export default function Boards() {
           )}
         </Pressable>
       </Modal>
+
+      {/* E1: team invite picker */}
+      <Modal visible={inviteOpen} transparent animationType="fade" onRequestClose={() => setInviteOpen(false)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setInviteOpen(false)}>
+          <View style={[styles.menu, { backgroundColor: colors.surface, borderColor: colors.border, maxHeight: 420 }]}>
+            <Text style={{ color: colors.brandSecondary, fontSize: 12, fontWeight: "700", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
+              {t("boards.inviteTitle")}
+            </Text>
+            <ScrollView>
+              {team.map((member) => {
+                const invited = (current?.shared_with || []).includes(member.id);
+                return (
+                  <Pressable key={member.id} style={styles.menuItem} onPress={() => toggleInvite(member.id)}>
+                    <Feather name={invited ? "check-square" : "square"} size={16} color={invited ? colors.brand : colors.onSurface} />
+                    <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{member.name}</Text>
+                  </Pressable>
+                );
+              })}
+              {team.length === 0 && (
+                <Text style={{ color: colors.brandSecondary, paddingHorizontal: 16, paddingVertical: 14, fontSize: 13 }}>
+                  {t("boards.noTeammates")}
+                </Text>
+              )}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* E2/E3: board comments */}
+      <Modal visible={commentsOpen} transparent animationType="fade" onRequestClose={() => setCommentsOpen(false)}>
+        <View style={styles.menuOverlay}>
+          <View style={[styles.commentsBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <Text style={{ color: colors.onSurface, fontWeight: "800", fontSize: 15 }}>{t("boards.comments")}</Text>
+              <Pressable onPress={() => setCommentsOpen(false)} hitSlop={10}>
+                <Feather name="x" size={20} color={colors.onSurface} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 320 }}>
+              {comments.length === 0 && (
+                <Text style={{ color: colors.brandSecondary, fontSize: 13, textAlign: "center", marginVertical: 20 }}>
+                  {t("boards.noComments")}
+                </Text>
+              )}
+              {comments.map((c) => (
+                <View key={c.id} style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                    <Text style={{ color: colors.onSurface, fontWeight: "700", fontSize: 13 }}>{c.user_name}</Text>
+                    {c.user_id === user?.id && (
+                      <Pressable
+                        onPress={async () => {
+                          if (!current) return;
+                          try {
+                            await api.deleteComment(current.id, c.id);
+                            setComments((cur) => cur.filter((x) => x.id !== c.id));
+                          } catch {}
+                        }}
+                        hitSlop={8}
+                      >
+                        <Feather name="trash-2" size={13} color={colors.brandSecondary} />
+                      </Pressable>
+                    )}
+                  </View>
+                  <Text style={{ color: colors.onSurface, fontSize: 13, marginTop: 2, lineHeight: 18 }}>{c.text}</Text>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
+              <TextInput
+                value={commentDraft}
+                onChangeText={setCommentDraft}
+                onSubmitEditing={postComment}
+                placeholder={t("boards.commentPlaceholder")}
+                placeholderTextColor={colors.brandSecondary}
+                style={{ flex: 1, color: colors.onSurface, fontSize: 13 }}
+              />
+              {postingComment ? (
+                <ActivityIndicator color={colors.brand} size="small" />
+              ) : (
+                <Pressable onPress={postComment} disabled={!commentDraft.trim()} hitSlop={8}>
+                  <Feather name="send" size={18} color={commentDraft.trim() ? colors.brand : colors.brandSecondary} />
+                </Pressable>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -726,6 +1032,13 @@ const styles = StyleSheet.create({
   menu: { borderRadius: 12, borderWidth: 1, paddingVertical: 6, minWidth: 200 },
   menuItem: { flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: 16 },
   renameBox: { borderRadius: 12, borderWidth: 1, padding: 18, width: "80%", maxWidth: 360 },
+  commentsBox: { borderRadius: 12, borderWidth: 1, padding: 18, width: "88%", maxWidth: 420 },
+  reactionRow: { position: "absolute", left: 0, right: 0, flexDirection: "row", justifyContent: "center", gap: 10 },
+  reactionBtn: { flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
+  sharedDot: {
+    position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: 999,
+    alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)",
+  },
   viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" },
   viewerBtn: {
     position: "absolute",

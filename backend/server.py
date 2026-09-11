@@ -196,6 +196,24 @@ class AddUserPhotoBody(BaseModel):
     image_url: str = Field(min_length=1, max_length=2000)
 
 
+# --- E1-E5: team collaboration on boards (closed 5-user team, so "invite"
+# is just picking one of the other 4 users, not an email flow) ---
+class InviteBody(BaseModel):
+    user_id: str = Field(min_length=1, max_length=64)
+
+
+class CommentBody(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    source_id: Optional[str] = Field(default=None, max_length=200)
+    photo_index: Optional[int] = Field(default=None, ge=0, le=2000)
+
+
+class ReactionBody(BaseModel):
+    source_id: str = Field(min_length=1, max_length=200)
+    photo_index: int = Field(ge=0, le=2000)
+    emoji: str = Field(min_length=1, max_length=8)  # "❤️" | "🔥"
+
+
 # ----------------------------- Auth helpers -----------------------------
 def hash_pw(pw: str) -> str:
     return bcrypt.hashpw(pw.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
@@ -2851,6 +2869,21 @@ async def _board_or_404(user_id: str, board_id: str) -> dict:
     return b
 
 
+async def _board_access_or_404(user_id: str, board_id: str) -> dict:
+    """E1: owner OR invited (shared_with) — VIEW/comment/react access.
+    Photo editing (save/unsave) and board management (rename/delete/
+    archive/share) stay owner-only via _board_or_404 above; saved_photos
+    is keyed by the OWNER's user_id (a board has one photo-list, not one
+    per collaborator), so extending editing to collaborators would need a
+    real schema change this pass deliberately didn't risk."""
+    b = await db.boards.find_one(
+        {"id": board_id, "$or": [{"user_id": user_id}, {"shared_with": user_id}]}, {"_id": 0},
+    )
+    if not b:
+        raise HTTPException(404, "Pano bulunamadı.")
+    return b
+
+
 async def _descendant_board_ids(user_id: str, root_id: str) -> list:
     """root_id + every board nested under it (any depth)."""
     all_boards = await db.boards.find({"user_id": user_id}, {"_id": 0, "id": 1, "parent_id": 1}).to_list(length=2000)
@@ -2901,15 +2934,29 @@ async def _board_tag_profile(user_id: str, board_id: str) -> dict:
 
 @api.get("/fashion/boards")
 async def list_boards(user: Annotated[dict, Depends(get_current_user)]):
-    """Every board the user has (flat; the app builds the tree from
-    parent_id) with a photo count and a cover (newest saved photo)."""
-    boards = await db.boards.find({"user_id": user["id"]}, {"_id": 0}).sort("name", 1).to_list(length=2000)
+    """Every board the user owns OR has been invited to (E1), flat (the app
+    builds the tree from parent_id) with a photo count and a cover (newest
+    saved photo). A shared board is marked "shared": true, "is_owner":
+    false — the frontend hides rename/delete/archive/invite/photo-editing
+    for those (still owner-only; see the save_photo/unsave_photo comment
+    about why editing wasn't extended to collaborators)."""
+    own = await db.boards.find({"user_id": user["id"]}, {"_id": 0}).to_list(length=2000)
+    shared = await db.boards.find({"shared_with": user["id"]}, {"_id": 0}).to_list(length=2000)
+    for b in own:
+        b["shared"] = False
+        b["is_owner"] = True
+    for b in shared:
+        b["shared"] = True
+        b["is_owner"] = False
+    boards = own + shared
+    boards.sort(key=lambda b: (b.get("name") or "").casefold())
+    board_ids = [b["id"] for b in boards]
     counts = await db.saved_photos.aggregate([
-        {"$match": {"user_id": user["id"]}},
+        {"$match": {"board_id": {"$in": board_ids}}},
         {"$sort": {"added_at": -1}},
         {"$group": {"_id": "$board_id", "n": {"$sum": 1}, "cover": {"$first": "$image_thumb"},
                     "cover_full": {"$first": "$image"}}},
-    ]).to_list(length=2000)
+    ]).to_list(length=4000)
     cmap = {c["_id"]: c for c in counts}
     for b in boards:
         c = cmap.get(b["id"], {})
@@ -2967,9 +3014,12 @@ async def delete_board(board_id: str, user: Annotated[dict, Depends(get_current_
 
 @api.get("/fashion/boards/{board_id}/photos")
 async def board_photos(board_id: str, user: Annotated[dict, Depends(get_current_user)], skip: int = 0):
-    await _board_or_404(user["id"], board_id)
+    board = await _board_access_or_404(user["id"], board_id)
+    # Photos are saved under the board's OWNER id (see _board_access_or_404's
+    # note) — a collaborator viewing a shared board must query by that, not
+    # their own id, or they'd always see an empty board.
     rows = await db.saved_photos.find(
-        {"user_id": user["id"], "board_id": board_id}, {"_id": 0, "user_id": 0},
+        {"user_id": board["user_id"], "board_id": board_id}, {"_id": 0, "user_id": 0},
     ).sort("added_at", -1).skip(max(0, skip)).limit(_BOARD_PHOTO_PAGE).to_list(length=_BOARD_PHOTO_PAGE)
     return {"items": rows}
 
@@ -3076,6 +3126,153 @@ async def share_board(board_id: str, user: Annotated[dict, Depends(get_current_u
 async def unshare_board(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
     await _board_or_404(user["id"], board_id)
     await db.boards.update_one({"id": board_id, "user_id": user["id"]}, {"$set": {"public": False}})
+    return {"status": "ok"}
+
+
+@api.get("/fashion/team")
+async def fashion_team(user: Annotated[dict, Depends(get_current_user)]):
+    """E1/E3: the other members of this closed 5-user team, for the board
+    invite picker and @mention autocomplete."""
+    rows = await db.users.find(
+        {"id": {"$ne": user["id"]}}, {"_id": 0, "id": 1, "name": 1, "email": 1},
+    ).sort("name", 1).to_list(length=50)
+    return {"items": [{"id": r["id"], "name": r.get("name") or r.get("email") or ""} for r in rows]}
+
+
+@api.post("/fashion/boards/{board_id}/invite")
+async def invite_to_board(board_id: str, body: InviteBody, user: Annotated[dict, Depends(get_current_user)]):
+    """E1: owner-only — invites are managed by whoever owns the board."""
+    await _board_or_404(user["id"], board_id)
+    target = await db.users.find_one({"id": body.user_id}, {"_id": 0, "id": 1})
+    if not target:
+        raise HTTPException(404, "Kullanıcı bulunamadı.")
+    await db.boards.update_one(
+        {"id": board_id, "user_id": user["id"]}, {"$addToSet": {"shared_with": body.user_id}},
+    )
+    return {"status": "ok"}
+
+
+@api.post("/fashion/boards/{board_id}/uninvite")
+async def uninvite_from_board(board_id: str, body: InviteBody, user: Annotated[dict, Depends(get_current_user)]):
+    await _board_or_404(user["id"], board_id)
+    await db.boards.update_one(
+        {"id": board_id, "user_id": user["id"]}, {"$pull": {"shared_with": body.user_id}},
+    )
+    return {"status": "ok"}
+
+
+def _parse_mentions(text: str, team_by_name: dict) -> list:
+    """E3: "@Ece" style mentions -> matching user ids. Matches on first
+    name, case-insensitive; ignores anything that doesn't match a real
+    team member (never invents a mention)."""
+    found = []
+    for m in re.finditer(r"@(\w+)", text):
+        uid = team_by_name.get(m.group(1).strip().casefold())
+        if uid and uid not in found:
+            found.append(uid)
+    return found
+
+
+@api.get("/fashion/boards/{board_id}/comments")
+async def list_comments(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    await _board_access_or_404(user["id"], board_id)
+    rows = await db.board_comments.find({"board_id": board_id}, {"_id": 0}).sort("created_at", 1).to_list(length=500)
+    return {"items": rows}
+
+
+@api.post("/fashion/boards/{board_id}/comments")
+async def add_comment(board_id: str, body: CommentBody, user: Annotated[dict, Depends(get_current_user)]):
+    """E2/E3: a comment on the board itself, or on one of its photos
+    (source_id+photo_index given). @name mentions are parsed against the
+    real team roster (E5's inbox reads db.board_comments.mentions)."""
+    await _board_access_or_404(user["id"], board_id)
+    team = await db.users.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(length=50)
+    team_by_name = {(u.get("name") or u.get("email") or "").casefold(): u["id"] for u in team if u.get("name") or u.get("email")}
+    mentions = _parse_mentions(body.text, team_by_name)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "board_id": board_id,
+        "source_id": body.source_id,
+        "photo_index": body.photo_index,
+        "user_id": user["id"],
+        "user_name": user.get("name") or user.get("email") or "",
+        "text": body.text.strip(),
+        "mentions": mentions,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.board_comments.insert_one(dict(doc))
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/fashion/boards/{board_id}/comments/{comment_id}")
+async def delete_comment(board_id: str, comment_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    """Only the comment's own author can delete it (not the board owner —
+    keeps this simple and avoids a moderation-permissions rabbit hole)."""
+    res = await db.board_comments.delete_one({"id": comment_id, "board_id": board_id, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Yorum bulunamadı.")
+    return {"status": "ok"}
+
+
+_REACTION_EMOJIS = ("❤️", "🔥")
+
+
+@api.post("/fashion/boards/{board_id}/react")
+async def toggle_reaction(board_id: str, body: ReactionBody, user: Annotated[dict, Depends(get_current_user)]):
+    """E4: one emoji per (user, photo) — posting the same emoji again
+    removes it (toggle); posting a different one replaces it."""
+    if body.emoji not in _REACTION_EMOJIS:
+        raise HTTPException(400, "Geçersiz reaksiyon.")
+    await _board_access_or_404(user["id"], board_id)
+    key = {"board_id": board_id, "source_id": body.source_id, "photo_index": body.photo_index, "user_id": user["id"]}
+    existing = await db.board_reactions.find_one(key, {"_id": 0, "emoji": 1})
+    if existing and existing.get("emoji") == body.emoji:
+        await db.board_reactions.delete_one(key)
+        return {"status": "ok", "emoji": None}
+    await db.board_reactions.update_one(key, {"$set": {**key, "emoji": body.emoji}}, upsert=True)
+    return {"status": "ok", "emoji": body.emoji}
+
+
+@api.get("/fashion/boards/{board_id}/reactions")
+async def list_reactions(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    await _board_access_or_404(user["id"], board_id)
+    rows = await db.board_reactions.find({"board_id": board_id}, {"_id": 0}).to_list(length=5000)
+    return {"items": rows}
+
+
+@api.get("/notifications")
+async def list_notifications(user: Annotated[dict, Depends(get_current_user)]):
+    """E5: "Bana gönderilenler" — comments that @mention you, plus every
+    comment on a board you own or collaborate on (excluding your own),
+    newest first. `unread` counts anything newer than your last visit
+    (db.users.notif_seen_at) — GET here does NOT itself mark them seen,
+    POST /notifications/seen does (called when the inbox screen opens)."""
+    my_boards = await db.boards.find(
+        {"$or": [{"user_id": user["id"]}, {"shared_with": user["id"]}]}, {"_id": 0, "id": 1},
+    ).to_list(length=2000)
+    my_board_ids = [b["id"] for b in my_boards]
+    rows = await db.board_comments.find(
+        {
+            "user_id": {"$ne": user["id"]},
+            "$or": [{"mentions": user["id"]}, {"board_id": {"$in": my_board_ids}}],
+        },
+        {"_id": 0},
+    ).sort("created_at", -1).limit(100).to_list(length=100)
+    board_names = {b["id"]: b.get("name") for b in await db.boards.find(
+        {"id": {"$in": [r["board_id"] for r in rows]}}, {"_id": 0, "id": 1, "name": 1},
+    ).to_list(length=2000)}
+    for r in rows:
+        r["board_name"] = board_names.get(r["board_id"]) or ""
+        r["mentioned_you"] = user["id"] in (r.get("mentions") or [])
+    seen_at = (user.get("notif_seen_at") or "")
+    unread = sum(1 for r in rows if r["created_at"] > seen_at)
+    return {"items": rows, "unread": unread}
+
+
+@api.post("/notifications/seen")
+async def mark_notifications_seen(user: Annotated[dict, Depends(get_current_user)]):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"notif_seen_at": datetime.now(timezone.utc).isoformat()}})
     return {"status": "ok"}
 
 
@@ -4652,10 +4849,18 @@ async def on_startup():
     await db.fashion.create_index("city")
     await db.fashion.create_index([("season_rank", -1), ("feed_seq", 1)])
     await db.boards.create_index([("user_id", 1), ("parent_id", 1)])
+    await db.boards.create_index("shared_with")  # E1: "boards I was invited to"
+    await db.boards.create_index("share_token")  # F5
     await db.saved_photos.create_index(
         [("user_id", 1), ("board_id", 1), ("source_id", 1), ("photo_index", 1)], unique=True,
     )
     await db.saved_photos.create_index([("user_id", 1), ("board_id", 1), ("added_at", -1)])
+    await db.saved_photos.create_index("board_id")  # list_boards' cross-owner photo-count lookup
+    await db.board_comments.create_index([("board_id", 1), ("created_at", 1)])
+    await db.board_comments.create_index("mentions")  # E5 inbox
+    await db.board_reactions.create_index(
+        [("board_id", 1), ("source_id", 1), ("photo_index", 1), ("user_id", 1)], unique=True,
+    )
     await seed_users()
     # A CronTrigger built standalone (as below) does NOT inherit the
     # scheduler's `timezone=` — it defaults to the host's local system time,
