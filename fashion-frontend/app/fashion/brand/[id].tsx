@@ -25,6 +25,8 @@ import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import RetryImage from "@/src/components/RetryImage";
 import { saveLastCollection } from "@/src/utils/lastCollection";
 import { useAuth } from "@/src/context/AuthContext";
+import { sharePhoto } from "@/src/utils/sharePhoto";
+import { useWatermarkPref } from "@/src/hooks/useWatermarkPref";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
@@ -32,6 +34,7 @@ export default function BrandGallery() {
   const { t, formatSeason, lang } = useT();
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const { watermark } = useWatermarkPref();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
@@ -473,6 +476,21 @@ export default function BrandGallery() {
                 color={(savedKeys[`${id}#${viewerIndex}`]?.length ?? 0) > 0 ? "#fff" : "#fff"}
                 style={{ opacity: (savedKeys[`${id}#${viewerIndex}`]?.length ?? 0) > 0 ? 1 : 0.55 }}
               />
+            </Pressable>
+          )}
+          {viewerIndex !== null && (
+            <Pressable
+              testID="brand-viewer-share"
+              onPress={() =>
+                sharePhoto(
+                  { image: images[viewerIndex], brand_tr: title, season: seasonRaw, season_label: season },
+                  watermark,
+                )
+              }
+              style={[styles.viewerClose, { top: insets.top + 60, left: 16, right: undefined }]}
+              hitSlop={12}
+            >
+              <Feather name="share" size={21} color="#fff" />
             </Pressable>
           )}
           {viewerIndex !== null && (

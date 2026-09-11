@@ -22,6 +22,8 @@ import { useT } from "@/src/i18n";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
 import { shareBoard } from "@/src/utils/shareBoard";
+import { sharePhoto } from "@/src/utils/sharePhoto";
+import { useWatermarkPref } from "@/src/hooks/useWatermarkPref";
 import { ZoomableImage } from "@/src/components/ZoomableImage";
 
 export default function Boards() {
@@ -43,6 +45,7 @@ export default function Boards() {
   const [renaming, setRenaming] = useState(false);
   const [renameVal, setRenameVal] = useState("");
   const [viewer, setViewer] = useState<SavedPhoto | null>(null);
+  const { watermark } = useWatermarkPref();
 
   // A1: personal note on a saved photo (the user's own, not the AI's tags).
   const [noteEditing, setNoteEditing] = useState(false);
@@ -467,6 +470,19 @@ export default function Boards() {
             )}
             {photos.length > 0 && (
               <Pressable
+                testID="boards-lookbook"
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push(`/fashion/lookbook?board=${encodeURIComponent(boardId)}` as any);
+                }}
+              >
+                <Feather name="book-open" size={16} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 10 }}>{t("boards.lookbook")}</Text>
+              </Pressable>
+            )}
+            {photos.length > 0 && (
+              <Pressable
                 testID="boards-summarize"
                 style={styles.menuItem}
                 onPress={() => {
@@ -559,6 +575,16 @@ export default function Boards() {
           {viewer && (
             <Pressable style={[styles.viewerBtn, { top: insets.top + 12, left: 16 }]} onPress={() => removePhoto(viewer)} hitSlop={12}>
               <Feather name="trash-2" size={22} color="#fff" />
+            </Pressable>
+          )}
+          {viewer && (
+            <Pressable
+              testID="board-viewer-share"
+              style={[styles.viewerBtn, { top: insets.top + 12, left: 112 }]}
+              onPress={() => sharePhoto(viewer, watermark)}
+              hitSlop={12}
+            >
+              <Feather name="share" size={19} color="#fff" />
             </Pressable>
           )}
           {viewer && (

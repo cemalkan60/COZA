@@ -13,6 +13,7 @@ import { useT } from "@/src/i18n";
 import { useAuth } from "@/src/context/AuthContext";
 import { formatDate } from "@/src/utils/format";
 import { usePwaInstall } from "@/src/hooks/usePwaInstall";
+import { useWatermarkPref } from "@/src/hooks/useWatermarkPref";
 
 export default function Settings() {
   const { colors, spacing, mode, toggle } = useTheme();
@@ -31,6 +32,7 @@ export default function Settings() {
   const [modelsChecking, setModelsChecking] = useState(false);
 
   const pwaInstall = usePwaInstall();
+  const { watermark, toggle: toggleWatermark } = useWatermarkPref();
   const [showIosInstallSteps, setShowIosInstallSteps] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -279,6 +281,23 @@ export default function Settings() {
               </Pressable>
             ))}
           </View>
+        </View>
+
+        <View style={[styles.row, { marginTop: 12, borderColor: colors.border }]}>
+          <Feather name="droplet" size={18} color={colors.onSurfaceSecondary} />
+          <Text style={{ color: colors.onSurface, fontWeight: "600", flex: 1, marginLeft: 12 }}>
+            {t("settings.watermark")}
+          </Text>
+          <Switch
+            testID="watermark-toggle"
+            value={watermark}
+            onValueChange={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              toggleWatermark();
+            }}
+            trackColor={{ true: colors.brand, false: colors.surfaceTertiary }}
+            thumbColor={colors.surface}
+          />
         </View>
 
         {(pwaInstall.status === "available" || pwaInstall.status === "ios") && (
