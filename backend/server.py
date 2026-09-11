@@ -2693,6 +2693,67 @@ async def fashion_looks(
     return {"items": rows}
 
 
+@api.get("/fashion/looks/{look_id}/similar")
+async def fashion_look_similar(look_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    """B4: "şuna benzeyenleri bul" — TAG-based similarity (item/color/
+    material/pattern overlap on the photo's own Gemini tags), not true
+    image-embedding similarity. Real visual embeddings need a different
+    Google API surface than this project's plain API-key Gemini client
+    (Vertex AI's multimodal embedding model, its own auth/billing setup) —
+    flagged rather than silently faked with a weaker substitute passed off
+    as the real thing."""
+    source_id, sep, idx_s = look_id.rpartition("#")
+    if not sep:
+        raise HTTPException(400, "Geçersiz görünüm kimliği.")
+    try:
+        idx = int(idx_s)
+    except ValueError:
+        raise HTTPException(400, "Geçersiz görünüm kimliği.")
+    doc = await db.fashion.find_one({"source_id": source_id}, {"_id": 0, "image_tags": 1})
+    tags_list = (doc or {}).get("image_tags") or []
+    if not doc or idx < 0 or idx >= len(tags_list) or not isinstance(tags_list[idx], dict):
+        raise HTTPException(404, "Görünüm bulunamadı veya henüz etiketlenmemiş.")
+    tags = tags_list[idx]
+    facets = {
+        f: tags.get(f) for f in ("item", "color", "material", "pattern")
+        if tags.get(f) and tags.get(f) not in _TREND_IGNORE
+    }
+    if not facets:
+        return {"items": []}
+
+    pipeline = [
+        {"$match": {"image_tags": {"$exists": True, "$ne": []}}},
+        {"$project": {
+            "_id": 0, "sid": "$source_id", "brand_tr": 1, "season": 1, "season_label": 1,
+            "images": 1, "images_thumb": 1, "image_tags": 1,
+        }},
+        {"$unwind": {"path": "$image_tags", "includeArrayIndex": "i"}},
+        {"$addFields": {"score": {"$sum": [
+            {"$cond": [{"$eq": [f"$image_tags.{f}", v]}, 1, 0]} for f, v in facets.items()
+        ]}}},
+        {"$match": {"score": {"$gte": 1}}},
+        {"$project": {
+            "source_id": {"$concat": ["$sid", "#", {"$toString": "$i"}]},
+            "brand_tr": {"$ifNull": ["$brand_tr", ""]},
+            "season": {"$ifNull": ["$season", ""]},
+            "season_text_tr": {"$ifNull": ["$season_label", ""]},
+            "image": {"$ifNull": [
+                {"$arrayElemAt": ["$images_thumb", "$i"]},
+                {"$arrayElemAt": ["$images", "$i"]},
+            ]},
+            "score": 1,
+        }},
+        {"$match": {"image": {"$nin": [None, ""]}}},
+        {"$sort": {"score": -1}},
+        {"$limit": 25},
+    ]
+    rows = await db.fashion.aggregate(pipeline).to_list(length=25)
+    items = [r for r in rows if r["source_id"] != look_id][:24]
+    for r in items:
+        r.pop("score", None)
+    return {"items": items}
+
+
 def _looks_pipeline(
     gender: Optional[str], season: Optional[str], item: Optional[str], color: Optional[str],
     material: Optional[str], pattern: Optional[str], q: Optional[str], skip: int, limit: int,

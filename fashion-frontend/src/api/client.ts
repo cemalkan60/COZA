@@ -231,6 +231,10 @@ export const api = {
   fashionLookFilters: (): Promise<FashionLookFilters> => request("/fashion/looks/filters", {}, true),
   fashionLooks: (params: FashionLookQuery = {}): Promise<{ items: FashionLookItem[] }> =>
     request(`/fashion/looks${toQuery(params as Record<string, unknown>)}`, {}, true),
+  // B4: "şuna benzeyenleri bul" — tag-based (item/color/material/pattern
+  // overlap), not true image-embedding similarity — see server.py's note.
+  fashionLookSimilar: (lookId: string): Promise<{ items: FashionLookItem[] }> =>
+    request(`/fashion/looks/${encodeURIComponent(lookId)}/similar`, {}, true),
 
   // ---- COZA Lens boards (saved photos in nested folders) ----
   boardsList: (): Promise<{ boards: Board[] }> => request("/fashion/boards", {}, true),

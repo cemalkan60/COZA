@@ -152,6 +152,31 @@ export default function FashionSearch() {
     }
   };
 
+  // B4: "şuna benzeyenleri bul" — swaps the grid to tag-similarity results
+  // for one look; "Aramaya dön" restores the normal filtered results
+  // (which are left untouched underneath, not re-fetched).
+  const [similarFor, setSimilarFor] = useState<string | null>(null);
+  const [similarItems, setSimilarItems] = useState<FashionLookItem[]>([]);
+  const [loadingSimilar, setLoadingSimilar] = useState(false);
+  const findSimilar = async (lookId: string) => {
+    setViewerItem(null);
+    setLoadingSimilar(true);
+    setSimilarFor(lookId);
+    try {
+      const res = await api.fashionLookSimilar(lookId);
+      setSimilarItems(res.items || []);
+    } catch {
+      setSimilarItems([]);
+    } finally {
+      setLoadingSimilar(false);
+    }
+  };
+  const exitSimilar = () => {
+    setSimilarFor(null);
+    setSimilarItems([]);
+  };
+  const displayItems = similarFor ? similarItems : items;
+
   // C4: "more from this show" strip — other photos from the same
   // collection as the photo currently open in the viewer.
   const [moreFromShow, setMoreFromShow] = useState<string[]>([]);
@@ -494,14 +519,29 @@ export default function FashionSearch() {
             })}
           </ScrollView>
 
-          {items.length === 0 ? (
+          {similarFor && (
+            <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.xl, paddingBottom: 10, gap: 8 }}>
+              <Feather name="image" size={13} color={colors.brand} />
+              <Text style={{ flex: 1, color: colors.brandSecondary, fontSize: 12, fontWeight: "700" }}>
+                {t("lens.similarResults")}
+              </Text>
+              <Pressable testID="lens-exit-similar" onPress={exitSimilar}>
+                <Text style={{ color: colors.brand, fontWeight: "700", fontSize: 12 }}>{t("lens.backToSearch")}</Text>
+              </Pressable>
+            </View>
+          )}
+          {loadingSimilar ? (
+            <View style={{ paddingTop: 40, alignItems: "center" }}>
+              <ActivityIndicator color={colors.brand} />
+            </View>
+          ) : displayItems.length === 0 ? (
             <View style={{ paddingHorizontal: spacing.xl, marginTop: 40 }}>
               <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>{t("lens.empty")}</Text>
             </View>
           ) : (
             <>
               <View style={[styles.grid, { gap, paddingHorizontal: gridPad, paddingTop: 6 }]}>
-                {items.map((it, idx) => (
+                {displayItems.map((it, idx) => (
                   <LookCard
                     key={`${it.source_id}-${idx}`}
                     item={it}
@@ -513,7 +553,7 @@ export default function FashionSearch() {
                   />
                 ))}
               </View>
-              {hasMore && (
+              {!similarFor && hasMore && (
                 <Pressable
                   testID="look-load-more"
                   onPress={loadMore}
@@ -589,6 +629,16 @@ export default function FashionSearch() {
                 color="#fff"
                 style={{ opacity: (savedKeys[viewerItem.source_id]?.length ?? 0) > 0 ? 1 : 0.55 }}
               />
+            </Pressable>
+          )}
+          {viewerItem && (
+            <Pressable
+              testID="look-viewer-similar"
+              onPress={() => findSimilar(viewerItem.source_id)}
+              style={[styles.viewerClose, { top: insets.top + 60, left: 16, right: undefined }]}
+              hitSlop={12}
+            >
+              <Feather name="image" size={20} color="#fff" />
             </Pressable>
           )}
           {viewerItem && (

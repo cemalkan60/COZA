@@ -89,6 +89,8 @@ export const tr = {
     addPhotoUpload: "Dosya seç",
     addPhotoOk: "Eklendi ✓",
     addPhotoError: "Eklenemedi, bağlantıyı kontrol et.",
+    similarResults: "Benzer görünümler (etiketlere göre)",
+    backToSearch: "Aramaya dön",
   },
   detail: {
     photos: "{count} fotoğraf",
@@ -263,6 +265,8 @@ export const en: Dict = {
     addPhotoUpload: "Choose file",
     addPhotoOk: "Added ✓",
     addPhotoError: "Couldn't add it, check the link.",
+    similarResults: "Similar looks (by tags)",
+    backToSearch: "Back to search",
   },
   detail: {
     photos: "{count} photos",
@@ -437,6 +441,8 @@ export const es: Dict = {
     addPhotoUpload: "Elegir archivo",
     addPhotoOk: "Añadida ✓",
     addPhotoError: "No se pudo añadir, revisa el enlace.",
+    similarResults: "Looks similares (por etiquetas)",
+    backToSearch: "Volver a la búsqueda",
   },
   detail: {
     photos: "{count} fotos",
