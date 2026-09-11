@@ -496,6 +496,32 @@ def backfill_thumb(full_url: str) -> Optional[str]:
         return None
 
 
+def blurhash_for_url(thumb_url: str) -> Optional[str]:
+    """D5: a short placeholder string for `thumb_url` (expo-image renders it
+    as a blurred preview while the real thumbnail loads). Deliberately its
+    own standalone function rather than threaded through cache_image_with_
+    thumb's return shape — that function is on the hot scraping path with
+    several call sites, and a blur placeholder is cosmetic, not worth the
+    risk of touching it. Re-downloads the (small, already-cached) thumbnail;
+    best-effort, None on any failure — callers should just skip the
+    placeholder, never block on it."""
+    if not thumb_url:
+        return None
+    try:
+        import blurhash
+        from io import BytesIO
+        from PIL import Image
+
+        resp = _http().get(thumb_url, headers=_DOWNLOAD_HEADERS, timeout=15)
+        resp.raise_for_status()
+        img = Image.open(BytesIO(resp.content)).convert("RGB")
+        img.thumbnail((32, 32))
+        return blurhash.encode(img, x_components=4, y_components=3)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("image_store: blurhash failed for %s: %s", thumb_url, exc)
+        return None
+
+
 # Modest by default — this runs inside a per-collection semaphore in
 # server.py, so real image-decode concurrency is this x that. Too high and
 # the box OOM-kills mid-scrape (seen live). Both are env-tunable.

@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import time
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
@@ -67,6 +68,7 @@ _JOB_LABELS = {
     "fashion_drop_dead_images": "Ölü fotoğraf adreslerini temizleme",
     "fashion_cover_fix": "Kapak düzeltme",
     "fashion_thumbnails": "Küçük resimler",
+    "fashion_blurhash": "Kapak bulanık önizlemesi",
     "fashion_merge_duplicates": "Yinelenen birleştirme",
     "fashion_clean_cruft": "Bozuk kayıt temizliği",
     "fashion_prune_old": "Eski kayıt temizliği",
@@ -171,6 +173,19 @@ class SavePhotoBody(BaseModel):
     url: str = Field(default="", max_length=1000)
 
 
+class SavedPhotoNoteBody(BaseModel):
+    """A1: personal note + custom tags on a saved photo (not the AI's tags —
+    the user's own, editable freely)."""
+    note: Optional[str] = Field(default=None, max_length=500)
+    tags: Optional[list[str]] = Field(default=None, max_length=20)
+
+
+class FashionReportBody(BaseModel):
+    """G2: "bu kapak/marka yanlış" — a user flag, routed to an admin queue."""
+    reason: str = Field(min_length=1, max_length=30)  # "wrong_cover" | "wrong_brand" | "other"
+    note: str = Field(default="", max_length=300)
+
+
 # ----------------------------- Auth helpers -----------------------------
 def hash_pw(pw: str) -> str:
     return bcrypt.hashpw(pw.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
@@ -206,7 +221,25 @@ async def get_current_user(
     user = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
     if not user:
         raise err
+    _touch_last_active(uid)
     return user
+
+
+# H2: "kim kullanıyor, ne sıklıkta" — last-seen timestamp per user, updated
+# at most once a minute per user (in-memory throttle) so this doesn't turn
+# every authenticated request into an extra DB write; fine to lose on a
+# redeploy, it just means one user's dot goes a minute stale.
+_LAST_ACTIVE_WRITTEN: dict = {}
+
+
+def _touch_last_active(user_id: str) -> None:
+    now = time.time()
+    if now - _LAST_ACTIVE_WRITTEN.get(user_id, 0) < 60:
+        return
+    _LAST_ACTIVE_WRITTEN[user_id] = now
+    asyncio.create_task(
+        db.users.update_one({"id": user_id}, {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}})
+    )
 
 
 async def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dict:
@@ -818,6 +851,17 @@ BACKFILL_FIRSTVIEW_YEARS = (2026, 2027)
 # the signature of a scraper whose CSS selectors / URL patterns broke
 # against a site redesign (how the firstview season-format change went
 # unnoticed for weeks, only ever logged, never surfaced in the app).
+async def _bump_usage_counter(kind: str, n: int = 1) -> None:
+    """H1: monthly usage counters (photos tagged, R2 uploads) — NOT real
+    billing (we have no Google Cloud / Cloudflare billing API access), just
+    what our own backend actually did this month. Keyed per-month so it
+    resets naturally without a cron job."""
+    if n <= 0:
+        return
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    await db.meta.update_one({"_id": f"usage:{month}"}, {"$inc": {kind: n}}, upsert=True)
+
+
 _SCRAPE_YIELD_SITES = ("fashion-press", "firstview")
 
 
@@ -1752,6 +1796,34 @@ async def admin_gemini_models(admin: Annotated[dict, Depends(require_admin)]):
     return await asyncio.to_thread(gemini_client.discover_models)
 
 
+@api.get("/admin/usage")
+async def admin_usage(admin: Annotated[dict, Depends(require_admin)]):
+    """H1 + H2. H1 is deliberately NOT a real cost panel — we have no
+    Google Cloud / Cloudflare billing API access, so putting a TL/USD
+    figure here would just be a guess dressed up as a fact. This shows
+    what our own backend actually did (this month's Gemini calls/photos
+    tagged, total photos cached in R2) — check Google Cloud Console /
+    Cloudflare's own dashboards for the real bill."""
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    usage_doc = await db.meta.find_one({"_id": f"usage:{month}"}, {"_id": 0}) or {}
+    r2_count = (await db.fashion.aggregate([
+        {"$group": {"_id": None, "n": {"$sum": {"$size": {"$ifNull": ["$images", []]}}}}},
+    ]).to_list(length=1))
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("name", 1).to_list(length=200)
+    return {
+        "month": month,
+        "gemini_calls_this_month": usage_doc.get("gemini_calls", 0),
+        "gemini_photos_tagged_this_month": usage_doc.get("gemini_photos_tagged", 0),
+        "r2_photos_cached": (r2_count[0]["n"] if r2_count else 0),
+        "collections": await db.fashion.count_documents({}),
+        "users": [
+            {"name": u.get("name") or "", "email": u.get("email") or "", "role": u.get("role") or "",
+             "last_active": u.get("last_active")}
+            for u in users
+        ],
+    }
+
+
 @api.get("/admin/dashboard")
 async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
     """Everything the admin panel needs in one call. Admin-only (viewers get
@@ -2145,6 +2217,25 @@ async def fashion_trends(season: str, user: Annotated[dict, Depends(get_current_
     }
 
 
+@api.get("/fashion/brands")
+async def fashion_brands_index(user: Annotated[dict, Depends(get_current_user)]):
+    """C1: A–Z brand index — every distinct brand with a collection count
+    and a cover photo (its most recent collection's cover)."""
+    rows = await db.fashion.aggregate([
+        {"$match": {"brand_tr": {"$nin": ["", None]}}},
+        {"$sort": {"season_rank": -1}},
+        {"$group": {
+            "_id": "$brand_tr", "n": {"$sum": 1},
+            "cover": {"$first": "$image_thumb"}, "cover_full": {"$first": "$image"},
+        }},
+        {"$sort": {"_id": 1}},
+    ]).to_list(length=5000)
+    return {"items": [
+        {"name": r["_id"], "count": r["n"], "cover": r.get("cover") or r.get("cover_full")}
+        for r in rows
+    ]}
+
+
 # A gallery with this many photos or fewer is treated as suspiciously thin
 # rather than trusted as final -- see fashion_collection_detail and
 # run_fashion_cover_fix, both of which give a "gallery_fetched" doc this
@@ -2346,13 +2437,67 @@ async def fashion_describe_photo(
     await db.fashion.update_one(
         {"source_id": source_id}, {"$set": {f"photo_descriptions.{cache_key}": text}}
     )
+    await _bump_usage_counter("gemini_calls")
     return {"description": text, "cached": False}
+
+
+@api.post("/fashion/collections/{source_id}/report")
+async def report_fashion_collection(
+    source_id: str, body: FashionReportBody, user: Annotated[dict, Depends(get_current_user)],
+):
+    """G2: "Bu kapak/marka yanlış" — queued for an admin, not acted on
+    automatically (a wrong report shouldn't be able to mess up the catalog)."""
+    doc = await db.fashion.find_one({"source_id": source_id}, {"_id": 0, "brand_tr": 1, "season_label": 1})
+    if not doc:
+        raise HTTPException(404, "Koleksiyon bulunamadı.")
+    await db.fashion_reports.insert_one({
+        "id": str(uuid.uuid4()),
+        "source_id": source_id,
+        "brand_tr": doc.get("brand_tr") or "",
+        "season_label": doc.get("season_label") or "",
+        "user_id": user["id"],
+        "user_name": user.get("name") or user.get("email") or "",
+        "reason": body.reason,
+        "note": body.note.strip(),
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"status": "ok"}
 
 
 @api.get("/fashion/looks/filters")
 async def fashion_looks_filters(user: Annotated[dict, Depends(get_current_user)]):
     """Static filter option lists (season/gender/item/color/material/pattern) for coordinate search."""
     return fashion_scraper.looks_filters()
+
+
+class ParseQueryBody(BaseModel):
+    text: str = Field(min_length=1, max_length=300)
+
+
+@api.post("/fashion/looks/parse-query")
+async def fashion_parse_query(body: ParseQueryBody, user: Annotated[dict, Depends(get_current_user)]):
+    """B3: "Kelimeyle ara" — a free sentence (any of tr/en/es) -> Lens
+    filter values, via Gemini. The Kombin Arama filter panel already has a
+    fast keyword-table free-text search (fashion_tag_map.free_text_conditions,
+    used by /fashion/looks's own `q` param) — this is the heavier, opt-in
+    "understand a whole sentence and set the actual filter dropdowns" path."""
+    raw = fashion_scraper.looks_filters()
+    vocab = {
+        "gender": [g["value"] for g in raw["genders"] if g["value"]],
+        "season": [s["value"] for s in raw["seasons"]],
+        "item": [opt["value"] for group in raw["items"] for opt in group["options"]],
+        "color": [c["value"] for c in raw["colors"]],
+        "material": [m["value"] for m in raw["materials"]],
+        "pattern": [p["value"] for p in raw["patterns"]],
+    }
+    if not gemini_client.ENABLED:
+        raise HTTPException(503, "Yapay zeka şu anda kullanılamıyor.")
+    parsed = await asyncio.to_thread(gemini_client.parse_look_query, body.text, vocab)
+    if parsed is None:
+        raise HTTPException(502, "Anlaşılamadı, tekrar dene.")
+    await _bump_usage_counter("gemini_calls")
+    return {"filters": parsed}
 
 
 _LOOKS_LIMIT = 90
@@ -2491,6 +2636,40 @@ async def _descendant_board_ids(user_id: str, root_id: str) -> list:
     return out
 
 
+async def _board_tag_profile(user_id: str, board_id: str) -> dict:
+    """A7 input: brand distribution + top item/color/material words across
+    a board's saved photos (joins back to each photo's collection to read
+    its image_tags — saved_photos itself only carries brand/season)."""
+    photos = await db.saved_photos.find(
+        {"user_id": user_id, "board_id": board_id},
+        {"_id": 0, "source_id": 1, "photo_index": 1, "brand_tr": 1},
+    ).to_list(length=2000)
+    if not photos:
+        return {}
+    source_ids = list({p["source_id"] for p in photos})
+    docs = await db.fashion.find(
+        {"source_id": {"$in": source_ids}}, {"_id": 0, "source_id": 1, "image_tags": 1},
+    ).to_list(length=len(source_ids))
+    tags_by_source = {d["source_id"]: d.get("image_tags") or [] for d in docs}
+    from collections import Counter
+    brands = Counter()
+    counts = {f: Counter() for f in _TREND_FACETS}
+    for p in photos:
+        brands[p.get("brand_tr") or "?"] += 1
+        tags = tags_by_source.get(p["source_id"]) or []
+        idx = p["photo_index"]
+        if 0 <= idx < len(tags) and isinstance(tags[idx], dict):
+            for f in counts:
+                v = (tags[idx].get(f) or "").strip().lower()
+                if v and v not in _TREND_IGNORE:
+                    counts[f][v] += 1
+    return {
+        "photo_count": len(photos),
+        "brands": [{"name": n, "count": c} for n, c in brands.most_common(6)],
+        **{f"top_{f}": [w for w, _ in c.most_common(5)] for f, c in counts.items()},
+    }
+
+
 @api.get("/fashion/boards")
 async def list_boards(user: Annotated[dict, Depends(get_current_user)]):
     """Every board the user has (flat; the app builds the tree from
@@ -2588,6 +2767,87 @@ async def unsave_photo(board_id: str, source_id: str, photo_index: int,
         "source_id": source_id, "photo_index": photo_index,
     })
     return {"status": "ok"}
+
+
+@api.patch("/fashion/boards/{board_id}/photos/{source_id}/{photo_index}")
+async def update_saved_photo_note(
+    board_id: str, source_id: str, photo_index: int,
+    body: SavedPhotoNoteBody, user: Annotated[dict, Depends(get_current_user)],
+):
+    """A1: personal note + custom tags on a saved photo — the user's own,
+    doesn't touch the AI's image_tags on the collection itself."""
+    upd: dict = {}
+    if body.note is not None:
+        upd["note"] = body.note.strip()
+    if body.tags is not None:
+        upd["custom_tags"] = [t.strip() for t in body.tags if t.strip()][:20]
+    if not upd:
+        return {"status": "ok"}
+    res = await db.saved_photos.update_one(
+        {"user_id": user["id"], "board_id": board_id, "source_id": source_id, "photo_index": photo_index},
+        {"$set": upd},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "Kayıtlı fotoğraf bulunamadı.")
+    return {"status": "ok"}
+
+
+@api.post("/fashion/boards/{board_id}/duplicate")
+async def duplicate_board(board_id: str, user: Annotated[dict, Depends(get_current_user)]):
+    """A3: copy a board (name + its own direct photos only, not sub-folders)
+    as a new sibling board."""
+    src = await _board_or_404(user["id"], board_id)
+    if await db.boards.count_documents({"user_id": user["id"]}) >= 500:
+        raise HTTPException(400, "Çok fazla pano var.")
+    now = datetime.now(timezone.utc).isoformat()
+    new_id = str(uuid.uuid4())
+    await db.boards.insert_one({
+        "id": new_id, "user_id": user["id"], "name": f"{src['name']} (kopya)",
+        "parent_id": src.get("parent_id"), "created_at": now, "updated_at": now,
+    })
+    photos = await db.saved_photos.find(
+        {"user_id": user["id"], "board_id": board_id}, {"_id": 0, "user_id": 0, "board_id": 0, "added_at": 0},
+    ).to_list(length=20000)
+    if photos:
+        await db.saved_photos.insert_many([
+            {**p, "user_id": user["id"], "board_id": new_id, "added_at": now} for p in photos
+        ])
+    return {"id": new_id, "status": "ok", "photos_copied": len(photos)}
+
+
+@api.post("/fashion/boards/{board_id}/archive")
+async def archive_board(board_id: str, user: Annotated[dict, Depends(get_current_user)], archived: bool = True):
+    """A3: hide a board from the normal folder view without deleting it."""
+    await _board_or_404(user["id"], board_id)
+    await db.boards.update_one(
+        {"id": board_id, "user_id": user["id"]},
+        {"$set": {"archived": archived, "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"status": "ok"}
+
+
+@api.post("/fashion/boards/{board_id}/summarize")
+async def summarize_board_endpoint(
+    board_id: str, user: Annotated[dict, Depends(get_current_user)], lang: str = "tr", force: bool = False,
+):
+    """A7: "Board'u özetle" — cached on the board doc so re-opening never
+    re-calls Gemini; pass force=true to regenerate (e.g. after adding photos)."""
+    board = await _board_or_404(user["id"], board_id)
+    if not force and board.get("summary") and board.get("summary_lang") == lang:
+        return {"summary": board["summary"], "cached": True}
+    profile = await _board_tag_profile(user["id"], board_id)
+    if not profile or not profile.get("photo_count"):
+        raise HTTPException(400, "Pano boş, özetlenecek bir şey yok.")
+    if not gemini_client.ENABLED:
+        raise HTTPException(503, "Yapay zeka şu anda kullanılamıyor.")
+    text = await asyncio.to_thread(gemini_client.summarize_board, profile, lang)
+    if not text:
+        raise HTTPException(502, "Özet oluşturulamadı, tekrar dene.")
+    await db.boards.update_one(
+        {"id": board_id, "user_id": user["id"]}, {"$set": {"summary": text, "summary_lang": lang}},
+    )
+    await _bump_usage_counter("gemini_calls")
+    return {"summary": text, "cached": False}
 
 
 @api.get("/fashion/saved-keys")
@@ -2986,6 +3246,49 @@ async def admin_fashion_fix_thumbnails(admin: Annotated[dict, Depends(require_ad
     return {"status": "started"}
 
 
+async def run_fashion_blurhash_backfill() -> dict:
+    """D5: a blur placeholder for each collection's COVER thumbnail only
+    (not every photo in every gallery — that's a much bigger job for a
+    cosmetic feature). Deliberately not wired into the live scrape path
+    (see image_store.blurhash_for_url) — this is a standalone backfill an
+    admin re-runs occasionally to cover newly-scraped collections."""
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
+        docs = await db.fashion.find(
+            {"image_thumb": {"$exists": True, "$ne": None}, "image_blurhash": {"$exists": False}},
+            {"_id": 0, "source_id": 1, "image_thumb": 1},
+        ).to_list(length=None)
+        logger.info("Fashion blurhash: %d collection(s) missing a cover placeholder.", len(docs))
+        sem = asyncio.Semaphore(_IMG_WORK_CONCURRENCY)
+        fixed = 0
+
+        async def _one(d: dict):
+            nonlocal fixed
+            async with sem:
+                bh = await asyncio.to_thread(image_store.blurhash_for_url, d["image_thumb"])
+                if bh:
+                    await db.fashion.update_one({"source_id": d["source_id"]}, {"$set": {"image_blurhash": bh}})
+                    fixed += 1
+
+        await asyncio.gather(*(_one(d) for d in docs))
+        logger.info("Fashion blurhash: done, %d/%d collection(s) updated.", fixed, len(docs))
+        await _record_job_run(
+            "fashion_blurhash", status="ok", started_at=started_at,
+            done=fixed, total=len(docs), detail=f"{fixed}/{len(docs)} koleksiyona bulanık önizleme eklendi",
+        )
+        return {"status": "ok", "total": len(docs), "fixed": fixed}
+
+
+@api.post("/admin/fashion-fix-blurhash")
+async def admin_fashion_fix_blurhash(admin: Annotated[dict, Depends(require_admin)]):
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(_run_tracked("fashion_blurhash", run_fashion_blurhash_backfill()))
+    return {"status": "started"}
+
+
 # How many photos of one collection's gallery to tag. Cem wants every
 # photo tagged (not just the first N), so this defaults high enough to
 # cover any real gallery — the scrapers themselves cap a collection at a
@@ -3249,6 +3552,115 @@ async def admin_fashion_drop_dead_images(admin: Annotated[dict, Depends(require_
     return {"status": "started"}
 
 
+@api.get("/admin/fashion-reports")
+async def admin_fashion_reports(admin: Annotated[dict, Depends(require_admin)], status: str = "open"):
+    """G2: the queue of user-flagged "wrong cover/brand" reports."""
+    q = {} if status == "all" else {"status": status}
+    rows = await db.fashion_reports.find(q, {"_id": 0}).sort("created_at", -1).to_list(length=500)
+    return {"items": rows}
+
+
+@api.post("/admin/fashion-reports/{report_id}/resolve")
+async def admin_resolve_fashion_report(report_id: str, admin: Annotated[dict, Depends(require_admin)]):
+    res = await db.fashion_reports.update_one(
+        {"id": report_id},
+        {"$set": {
+            "status": "resolved",
+            "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_by": admin.get("name") or admin.get("email") or "",
+        }},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(404, "Bildirim bulunamadı.")
+    return {"status": "ok"}
+
+
+@api.post("/admin/fashion-collections/{source_id}/refetch")
+async def admin_refetch_collection(source_id: str, admin: Annotated[dict, Depends(require_admin)]):
+    """G3: "Koleksiyonu yeniden çek" — only fashion-press.net collections
+    support an on-demand re-fetch (see fashion_collection_detail); other
+    sources already scrape their full gallery up front and only refresh on
+    the next site-wide sweep."""
+    doc = await db.fashion.find_one({"source_id": source_id}, {"_id": 0, "fp_source_id": 1})
+    if not doc:
+        raise HTTPException(404, "Koleksiyon bulunamadı.")
+    fp_id = doc.get("fp_source_id")
+    if not fp_id:
+        return {"status": "no_source", "detail": "Bu koleksiyon fashion-press.net kaynaklı değil, tek tek yeniden çekilemiyor."}
+    images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, fp_id)
+    if not images:
+        return {"status": "empty", "detail": "Kaynaktan hiç fotoğraf gelmedi."}
+    images_thumb = images
+    if image_store.ENABLED:
+        cached = await asyncio.to_thread(image_store.cache_images_with_thumb, images)
+        images = [full for full, _ in cached]
+        images_thumb = [thumb for _, thumb in cached]
+    await db.fashion.update_one(
+        {"source_id": source_id},
+        {"$set": {
+            "images": images, "images_thumb": images_thumb,
+            "image": images[0], "image_thumb": images_thumb[0],
+            "gallery_fetched": True,
+        }},
+    )
+    return {"status": "ok", "photo_count": len(images)}
+
+
+class BrandMergeBody(BaseModel):
+    from_names: list[str] = Field(min_length=1, max_length=30)
+    to_name: str = Field(min_length=1, max_length=200)
+
+
+@api.get("/admin/fashion-brands")
+async def admin_fashion_brands(admin: Annotated[dict, Depends(require_admin)], q: Optional[str] = None):
+    """G5: every distinct brand name + how many collections use it, for the
+    admin merge screen."""
+    match: dict = {"brand_tr": {"$nin": ["", None]}}
+    if q and q.strip():
+        match["brand_tr"] = {"$regex": re.escape(q.strip()), "$options": "i"}
+    rows = await db.fashion.aggregate([
+        {"$match": match},
+        {"$group": {"_id": "$brand_tr", "n": {"$sum": 1}}},
+        {"$sort": {"_id": 1}},
+    ]).to_list(length=5000)
+    return {"items": [{"name": r["_id"], "count": r["n"]} for r in rows]}
+
+
+@api.post("/admin/fashion-brands/merge")
+async def admin_merge_brands(body: BrandMergeBody, admin: Annotated[dict, Depends(require_admin)]):
+    """G5: rename `brand_tr` on every collection under any of `from_names`
+    to `to_name` — a straight rename, not a doc merge (fashion-merge-
+    duplicates already handles the same-show-different-source case)."""
+    from_names = [n.strip() for n in body.from_names if n.strip() and n.strip() != body.to_name.strip()]
+    if not from_names:
+        return {"status": "ok", "renamed": 0}
+    res = await db.fashion.update_many(
+        {"brand_tr": {"$in": from_names}}, {"$set": {"brand_tr": body.to_name.strip()}},
+    )
+    return {"status": "ok", "renamed": res.modified_count}
+
+
+@api.post("/admin/fashion-brands/suggest-merges")
+async def admin_suggest_brand_merges(admin: Annotated[dict, Depends(require_admin)]):
+    """G6: ask Gemini to cluster brand names that are probably the same
+    house written differently — admin reviews and approves each cluster
+    with G5's merge endpoint, nothing renamed automatically."""
+    rows = await db.fashion.aggregate([
+        {"$match": {"brand_tr": {"$nin": ["", None]}}},
+        {"$group": {"_id": "$brand_tr", "n": {"$sum": 1}}},
+        {"$sort": {"n": -1}},
+        {"$limit": 400},
+    ]).to_list(length=400)
+    brands = [{"name": r["_id"], "count": r["n"]} for r in rows]
+    if not gemini_client.ENABLED:
+        raise HTTPException(503, "Yapay zeka şu anda kullanılamıyor.")
+    suggestions = await asyncio.to_thread(gemini_client.suggest_brand_merges, brands)
+    if suggestions is None:
+        raise HTTPException(502, "Öneri alınamadı, tekrar dene.")
+    await _bump_usage_counter("gemini_calls")
+    return {"suggestions": suggestions}
+
+
 async def run_fashion_tag_photos() -> dict:
     """Sweep: tag every still-untagged runway photo across the WHOLE feed
     (all sources) via Gemini vision, so the look feed can be filtered by
@@ -3352,6 +3764,7 @@ async def run_fashion_tag_photos() -> dict:
 
         logger.info("Fashion tagging: run finished, %d photo(s) tagged.", tagged)
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        await _bump_usage_counter("gemini_photos_tagged", tagged)
 
         # Turn the per-photo failure tally into a plain-language reason, so
         # "it stopped" has a real answer in the Admin panel instead of a

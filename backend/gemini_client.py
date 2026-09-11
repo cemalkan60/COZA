@@ -478,6 +478,130 @@ class GeminiUnavailable(Exception):
     replying "NONE". Callers use this to know NOT to cache the miss."""
 
 
+_MERGE_SUGGEST_PROMPT = (
+    "You are cleaning up a fashion runway catalog's brand/designer name list. "
+    "Below is a JSON array of brand names as scraped, each with its collection "
+    "count. Some names are actually the SAME brand written differently — typos, "
+    "transliteration variants, extra punctuation/spacing, a house name vs its "
+    "designer, etc. (e.g. \"Rui viton\" and \"Louis Vuitton\" are the same "
+    "house; \"Comme des Garcons\" and \"Comme des Garçons\" are the same). "
+    "Find ONLY groups you are confident are the same brand. Reply with ONLY a "
+    "JSON array, no markdown, no explanation, each element: "
+    '{"canonical": "<the correct/best-spelled name>", "variants": ["<other '
+    'names that should be renamed to it>", ...]}. Skip anything you are not '
+    "confident about — do not guess. Skip a name entirely if it has no "
+    "duplicate.\n\nBrand names:\n{brands_json}"
+)
+
+
+def suggest_brand_merges(brands: list) -> "Optional[list]":
+    """G6: batch-cluster brand names that are probably the same house
+    written differently. `brands` is [{"name": str, "count": int}, ...].
+    Returns [{"canonical": str, "variants": [str]}, ...], or None if Gemini
+    couldn't answer at all (caller should treat that as "try again later",
+    not "no duplicates found")."""
+    if not ENABLED or not brands:
+        return None
+    text = _generate(
+        [{"text": _MERGE_SUGGEST_PROMPT.format(brands_json=json.dumps(brands, ensure_ascii=False))}],
+        max_output_tokens=4096,
+        timeout=60,
+        response_json=True,
+    )
+    if not text:
+        return None
+    m = re.search(r"\[.*\]", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        arr = json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(arr, list):
+        return None
+    out = []
+    for row in arr:
+        if not isinstance(row, dict):
+            continue
+        canonical = str(row.get("canonical") or "").strip()
+        variants = [str(v).strip() for v in (row.get("variants") or []) if str(v).strip()]
+        if canonical and variants:
+            out.append({"canonical": canonical, "variants": variants})
+    return out
+
+
+_BOARD_SUMMARY_PROMPT = (
+    "You are a fashion editor describing a moodboard's overall style "
+    "direction to its owner. Below is structured data about the board's "
+    "saved photos: the brands represented, and the most common garment/"
+    "color/fabric words tagged across them. Write a short, vivid paragraph "
+    "(2-4 sentences) in {language} describing the styling story/mood this "
+    "board is telling. Flowing prose only — no bullet points, no headers, "
+    "and don't just list the raw data back.\n\n{data_json}"
+)
+
+
+def summarize_board(profile: dict, lang: str = "tr") -> "Optional[str]":
+    """A7: "Board'u özetle" — a short moodboard-direction paragraph from a
+    board's brand/tag distribution (see server.py's _board_tag_profile)."""
+    if not ENABLED or not profile:
+        return None
+    language = _DESCRIBE_LANG_NAMES.get(lang, _DESCRIBE_LANG_NAMES["tr"])
+    text = _generate(
+        [{"text": _BOARD_SUMMARY_PROMPT.format(language=language, data_json=json.dumps(profile, ensure_ascii=False))}],
+        max_output_tokens=300,
+    )
+    if not text:
+        return None
+    return text.strip().strip("\"'` \n\t") or None
+
+
+_PARSE_QUERY_PROMPT = (
+    "You are turning a free-form fashion search sentence into structured "
+    "filters for a runway-photo search. The user may write in Turkish, "
+    "English, or Spanish. Below are the ONLY valid values for each filter "
+    "field (as a JSON object of field -> list of allowed values). Read the "
+    "user's sentence and reply with ONLY a compact JSON object using AT "
+    "MOST these keys: gender, season, item, color, material, pattern — "
+    "include a key ONLY if the sentence clearly implies a value for it, "
+    "and its value MUST be exactly one of that field's allowed values "
+    "(never invent a value, never use a label instead of the raw value). "
+    "Omit a key entirely if unsure. No markdown, no explanation.\n\n"
+    "Allowed values:\n{vocab_json}\n\nUser sentence: {query}"
+)
+
+
+def parse_look_query(query: str, vocab: dict) -> "Optional[dict]":
+    """B3: "Kelimeyle ara" — free sentence -> structured Lens filters.
+    `vocab` is {field: [valid value, ...]}. Returns a dict using only keys/
+    values from `vocab` (never trusted blindly by the caller either), or
+    None if Gemini couldn't answer."""
+    if not ENABLED or not (query or "").strip():
+        return None
+    text = _generate(
+        [{"text": _PARSE_QUERY_PROMPT.format(vocab_json=json.dumps(vocab, ensure_ascii=False), query=query.strip()[:300])}],
+        max_output_tokens=200,
+        response_json=True,
+    )
+    if not text:
+        return None
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(obj, dict):
+        return None
+    out = {}
+    for field, allowed in vocab.items():
+        v = obj.get(field)
+        if isinstance(v, str) and v in allowed:
+            out[field] = v
+    return out
+
+
 def resolve_brand_name(brand_ja: str) -> "str | None":
     """Ask Gemini for the real Latin-script spelling of a brand name written
     in Japanese.
