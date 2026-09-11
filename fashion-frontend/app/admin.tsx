@@ -7,7 +7,7 @@ import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
-import { api, type AdminDashboard, type JobRun } from "@/src/api/client";
+import { api, type AdminDashboard, type AdminUsage, type FashionReport, type JobRun } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useAuth } from "@/src/context/AuthContext";
 import { formatDate } from "@/src/utils/format";
@@ -97,11 +97,26 @@ export default function AdminPanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
+  // H1/H2, G2 report queue.
+  const [usage, setUsage] = useState<AdminUsage | null>(null);
+  const [reports, setReports] = useState<FashionReport[]>([]);
+
+  // G5/G6 brand merge tool.
+  const [mergeSuggestions, setMergeSuggestions] = useState<{ canonical: string; variants: string[] }[] | null>(null);
+  const [suggestingMerges, setSuggestingMerges] = useState(false);
+  const [mergingKey, setMergingKey] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     try {
       setErr("");
-      const d = await api.adminDashboard();
+      const [d, u, r] = await Promise.all([
+        api.adminDashboard(),
+        api.adminUsage().catch(() => null),
+        api.adminFashionReports("open").catch(() => ({ items: [] })),
+      ]);
       setData(d);
+      setUsage(u);
+      setReports(r.items || []);
     } catch (e: any) {
       setErr(e?.message || "Yüklenemedi.");
     } finally {
@@ -313,6 +328,13 @@ export default function AdminPanel() {
                 </Pressable>
                 <Pressable
                   disabled={!!busy}
+                  onPress={() => runAction("blurhash", api.fashionFixBlurhash, "Kapak bulanık önizlemesi oluşturma başladı.")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Bulanık önizleme</Text>
+                </Pressable>
+                <Pressable
+                  disabled={!!busy}
                   onPress={() => runAction("covers", api.fashionFixCovers, "Kapak düzeltme başladı.")}
                   style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
                 >
@@ -383,19 +405,130 @@ export default function AdminPanel() {
               <Row k="Parti (foto/istek)" v={d.gemini.batch} />
             </Section>
 
-            {/* Kullanıcılar */}
-            <Section title={`Kullanıcılar (${d.users.length})`}>
-              {d.users.map((u, i) => (
-                <View key={u.email ?? i} style={styles.row}>
-                  <Text style={{ color: colors.onSurface, fontSize: fontSize.sm, flex: 1 }}>
-                    {u.name || u.email}
-                  </Text>
-                  <Text style={{ color: u.role === "admin" ? colors.onSurface : colors.brandSecondary, fontSize: fontSize.xs, fontWeight: "700" }}>
-                    {u.role === "admin" ? "YÖNETİCİ" : "GÖZLEMCİ"}
-                  </Text>
+            {/* Kullanıcılar (H2: en son ne zaman aktifti) */}
+            <Section title={`Kullanıcılar (${(usage?.users ?? d.users).length})`}>
+              {(usage?.users ?? d.users).map((u: any, i: number) => (
+                <View key={u.email ?? i} style={{ paddingVertical: 7 }}>
+                  <View style={styles.row}>
+                    <Text style={{ color: colors.onSurface, fontSize: fontSize.sm, flex: 1 }}>
+                      {u.name || u.email}
+                    </Text>
+                    <Text style={{ color: u.role === "admin" ? colors.onSurface : colors.brandSecondary, fontSize: fontSize.xs, fontWeight: "700" }}>
+                      {u.role === "admin" ? "YÖNETİCİ" : "GÖZLEMCİ"}
+                    </Text>
+                  </View>
+                  {"last_active" in u && (
+                    <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 2 }}>
+                      son aktif: {fmtWhen(u.last_active)}
+                    </Text>
+                  )}
                 </View>
               ))}
             </Section>
+
+            {/* H1: kullanım (NOT gerçek maliyet — Cloud/Cloudflare fatura
+                erişimimiz yok, o yüzden TL/USD rakamı yerine ne yaptığımızı
+                gösteriyoruz; gerçek tutar için Google Cloud Console / Cloudflare paneline bak) */}
+            {!!usage && (
+              <Section title={`Kullanım · ${usage.month}`}>
+                <Row k="Bu ay Gemini isteği" v={usage.gemini_calls_this_month} />
+                <Row k="Bu ay etiketlenen fotoğraf" v={usage.gemini_photos_tagged_this_month} />
+                <Row k="R2'de toplam fotoğraf" v={usage.r2_photos_cached} />
+                <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 10, lineHeight: 16 }}>
+                  Bu gerçek bir maliyet paneli değil — Google Cloud / Cloudflare fatura API'sine erişimimiz yok. Gerçek TL tutarı için ilgili panellerine bak.
+                </Text>
+              </Section>
+            )}
+
+            {/* G5/G6: marka birleştirme */}
+            <Section title="Marka Birleştirme">
+              <Pressable
+                disabled={suggestingMerges}
+                onPress={async () => {
+                  setSuggestingMerges(true);
+                  setMergeSuggestions(null);
+                  try {
+                    const res = await api.adminSuggestBrandMerges();
+                    setMergeSuggestions(res.suggestions || []);
+                  } catch (e: any) {
+                    setMsg(e?.message || "Öneri alınamadı.");
+                  } finally {
+                    setSuggestingMerges(false);
+                  }
+                }}
+                style={[styles.btn, { borderColor: colors.border, opacity: suggestingMerges ? 0.5 : 1 }]}
+              >
+                <Feather name="cpu" size={15} color={colors.onSurface} />
+                <Text style={[styles.btnTxt, { color: colors.onSurface }]}>
+                  {suggestingMerges ? "Taranıyor…" : "AI ile aday bul"}
+                </Text>
+              </Pressable>
+              {mergeSuggestions?.length === 0 && (
+                <Text style={{ color: colors.brandSecondary, fontSize: fontSize.sm, marginTop: 10 }}>Aday bulunamadı.</Text>
+              )}
+              {mergeSuggestions?.map((s) => {
+                const key = `${s.canonical}|${s.variants.join(",")}`;
+                return (
+                  <View key={key} style={[styles.row, { alignItems: "flex-start", paddingVertical: 10 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.onSurface, fontSize: fontSize.sm, fontWeight: "700" }}>{s.canonical}</Text>
+                      <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 2 }}>
+                        ← {s.variants.join(", ")}
+                      </Text>
+                    </View>
+                    <Pressable
+                      disabled={mergingKey === key}
+                      onPress={async () => {
+                        setMergingKey(key);
+                        try {
+                          await api.adminMergeBrands(s.variants, s.canonical);
+                          setMergeSuggestions((cur) => cur?.filter((x) => `${x.canonical}|${x.variants.join(",")}` !== key) || null);
+                        } catch (e: any) {
+                          setMsg(e?.message || "Birleştirilemedi.");
+                        } finally {
+                          setMergingKey(null);
+                        }
+                      }}
+                      style={[styles.btnSm, { borderColor: colors.border, marginLeft: 10 }]}
+                    >
+                      <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>
+                        {mergingKey === key ? "…" : "Onayla"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
+            </Section>
+
+            {/* G2: kullanıcı bildirimleri */}
+            {reports.length > 0 && (
+              <Section title={`Bildirimler (${reports.length})`}>
+                {reports.map((r) => (
+                  <View key={r.id} style={[styles.row, { alignItems: "flex-start", paddingVertical: 10 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.onSurface, fontSize: fontSize.sm, fontWeight: "700" }}>
+                        {r.brand_tr || r.source_id} {r.season_label ? `· ${r.season_label}` : ""}
+                      </Text>
+                      <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 2 }}>
+                        {r.reason === "wrong_cover" ? "Kapak yanlış" : r.reason === "wrong_brand" ? "Marka yanlış" : "Diğer"}
+                        {r.note ? ` — ${r.note}` : ""} · {r.user_name}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={async () => {
+                        try {
+                          await api.adminResolveFashionReport(r.id);
+                          setReports((cur) => cur.filter((x) => x.id !== r.id));
+                        } catch {}
+                      }}
+                      style={[styles.btnSm, { borderColor: colors.border, marginLeft: 10 }]}
+                    >
+                      <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Tamam</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </Section>
+            )}
 
             {/* Sistem */}
             <Section title="Sistem">

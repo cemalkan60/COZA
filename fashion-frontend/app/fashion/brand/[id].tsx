@@ -24,11 +24,14 @@ import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/Zoomab
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import RetryImage from "@/src/components/RetryImage";
 import { saveLastCollection } from "@/src/utils/lastCollection";
+import { useAuth } from "@/src/context/AuthContext";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
   const { colors, spacing } = useTheme();
   const { t, formatSeason, lang } = useT();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
@@ -66,6 +69,24 @@ export default function BrandGallery() {
   const [reportOpen, setReportOpen] = useState(false);
   const [reportSending, setReportSending] = useState(false);
   const [reportSent, setReportSent] = useState(false);
+  // G3: admin-only "koleksiyonu yeniden çek" (fashion-press.net sources only).
+  const [refetching, setRefetching] = useState(false);
+  const doRefetch = async () => {
+    if (refetching) return;
+    setRefetching(true);
+    try {
+      const res = await api.adminRefetchCollection(id);
+      if (res.status === "ok") {
+        const d = await api.fashionCollectionDetail(id);
+        setImages(d.images || []);
+        setImagesThumb(d.images_thumb?.length ? d.images_thumb : d.images || []);
+      }
+    } catch {
+    } finally {
+      setRefetching(false);
+    }
+  };
+
   const sendReport = async (reason: string) => {
     if (reportSending) return;
     setReportSending(true);
@@ -304,9 +325,20 @@ export default function BrandGallery() {
           {headerLabel || t("detail.gallery")}
         </Text>
       </Pressable>
-      <Pressable testID="brand-report" onPress={() => setReportOpen(true)} hitSlop={10}>
-        <Feather name="flag" size={20} color={colors.onSurfaceSecondary} />
-      </Pressable>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
+        {isAdmin && (
+          <Pressable testID="brand-refetch" onPress={doRefetch} disabled={refetching} hitSlop={10}>
+            {refetching ? (
+              <ActivityIndicator size="small" color={colors.onSurfaceSecondary} />
+            ) : (
+              <Feather name="refresh-cw" size={19} color={colors.onSurfaceSecondary} />
+            )}
+          </Pressable>
+        )}
+        <Pressable testID="brand-report" onPress={() => setReportOpen(true)} hitSlop={10}>
+          <Feather name="flag" size={20} color={colors.onSurfaceSecondary} />
+        </Pressable>
+      </View>
     </View>
   );
 
