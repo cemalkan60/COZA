@@ -2209,6 +2209,11 @@ async def fashion_collection_detail(source_id: str):
     doc = await db.fashion.find_one({"source_id": source_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Koleksiyon bulunamadı.")
+    # G4: tag coverage ("42/50 foto analiz edildi") — image_tags is always a
+    # contiguous prefix of images (see _merge_one_doc_group_inner), so its
+    # length alone is the tagged count; the denominator is capped the same
+    # way the tagger itself caps a doc (_doc_taggable/_TAG_MAX_PHOTOS_PER_DOC).
+    tagged_count = len(doc.get("image_tags") or [])
     fp_id = doc.get("fp_source_id")
     # Bug fixed here: `gallery_fetched` was being treated as permanent, but
     # fashion-press.net publishes a show's photos progressively -- a
@@ -2221,7 +2226,13 @@ async def fashion_collection_detail(source_id: str):
     # other use in run_fashion_cover_fix.
     already_thin = len(doc.get("images") or []) <= _THIN_GALLERY_MAX
     if not fp_id or (doc.get("gallery_fetched") and not already_thin):
-        return {"images": doc.get("images") or [], "images_thumb": doc.get("images_thumb") or []}
+        imgs = doc.get("images") or []
+        return {
+            "images": imgs,
+            "images_thumb": doc.get("images_thumb") or [],
+            "tagged_count": tagged_count,
+            "taggable_count": min(len(imgs), _TAG_MAX_PHOTOS_PER_DOC),
+        }
     try:
         images = await asyncio.to_thread(fashion_scraper.fetch_collection_images, fp_id)
         images_thumb = images
@@ -2248,9 +2259,12 @@ async def fashion_collection_detail(source_id: str):
     # re-trigger this fetch (and re-hit fashion-press.net) on every view —
     # the existing thumbnail stays as the fallback.
     await db.fashion.update_one({"source_id": source_id}, {"$set": update})
+    final_images = images or doc.get("images") or []
     return {
-        "images": images or doc.get("images") or [],
+        "images": final_images,
         "images_thumb": images_thumb or doc.get("images_thumb") or [],
+        "tagged_count": tagged_count,
+        "taggable_count": min(len(final_images), _TAG_MAX_PHOTOS_PER_DOC),
     }
 
 

@@ -23,6 +23,7 @@ import { goBack } from "@/src/utils/nav";
 import { ZoomableImage, type ZoomableImageHandle } from "@/src/components/ZoomableImage";
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import RetryImage from "@/src/components/RetryImage";
+import { saveLastCollection } from "@/src/utils/lastCollection";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
@@ -48,6 +49,9 @@ export default function BrandGallery() {
   // hasn't reached yet -- see the merge in fetchImages below.
   const [imagesThumb, setImagesThumb] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  // G4: tag coverage ("42/50 foto analiz edildi") — null until the detail
+  // fetch resolves, or if the backend response predates this field.
+  const [tagCoverage, setTagCoverage] = useState<{ tagged: number; taggable: number } | null>(null);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [viewerZoomed, setViewerZoomed] = useState(false);
   const [savedKeys, setSavedKeys] = useState<Record<string, string[]>>({});
@@ -158,6 +162,9 @@ export default function BrandGallery() {
             const res = await fetch(`${base}/api/fashion/collections/${encodeURIComponent(id)}`);
             if (res.ok) {
               const data = await res.json();
+              if (typeof data.tagged_count === "number" && typeof data.taggable_count === "number" && !cancelled) {
+                setTagCoverage({ tagged: data.tagged_count, taggable: data.taggable_count });
+              }
               if (Array.isArray(data.images)) {
                 const thumbs = Array.isArray(data.images_thumb) ? data.images_thumb : [];
                 data.images.forEach((u: string, i: number) => {
@@ -201,6 +208,16 @@ export default function BrandGallery() {
         if (!cancelled) {
           setImages(mergedImgs);
           setImagesThumb(mergedThumbs);
+          // A6: "Kaldığın yerden devam" — remember this as the most
+          // recently opened collection for the Fashion tab's resume card.
+          if (id && mergedImgs.length) {
+            saveLastCollection({
+              source_id: id,
+              title,
+              season: seasonRaw,
+              image: mergedThumbs[0] || mergedImgs[0],
+            });
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -271,6 +288,16 @@ export default function BrandGallery() {
         numColumns={columns}
         contentContainerStyle={{ padding: gridPad, paddingTop: 16 }}
         columnWrapperStyle={columns > 1 ? { gap } : undefined}
+        ListHeaderComponent={
+          tagCoverage && tagCoverage.taggable > 0 ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 14, marginLeft: 2 }}>
+              <Feather name="tag" size={12} color={colors.brandSecondary} />
+              <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
+                {t("detail.tagCoverage", { tagged: tagCoverage.tagged, taggable: tagCoverage.taggable })}
+              </Text>
+            </View>
+          ) : null
+        }
         renderItem={({ item, index }) => (
           <Pressable
             testID={`brand-thumb-${index}`}
@@ -434,7 +461,7 @@ export default function BrandGallery() {
               )}
 
               <Text style={styles.viewerCounter}>
-                {viewerIndex + 1} / {images.length}
+                {t("detail.lookCounter", { n: viewerIndex + 1, total: images.length })}
               </Text>
 
               <View style={[styles.viewerZoomControls, { bottom: insets.bottom + 24 }]}>

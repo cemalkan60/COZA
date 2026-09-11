@@ -14,7 +14,7 @@ import {
   Dimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
@@ -26,6 +26,7 @@ import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 import RetryImage from "@/src/components/RetryImage";
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import { useGridColumns } from "@/src/hooks/useGridColumns";
+import { getLastCollection, LastCollection } from "@/src/utils/lastCollection";
 
 const { width } = Dimensions.get("window");
 
@@ -37,6 +38,12 @@ export default function Fashion() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { cols, cycle: cycleCols, widthPct } = useGridColumns();
+  const [lastCollection, setLastCollection] = useState<LastCollection | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      getLastCollection().then(setLastCollection);
+    }, []),
+  );
 
   const [items, setItems] = useState<FashionItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -211,6 +218,34 @@ export default function Fashion() {
           )}
         </View>
       </View>
+
+      {lastCollection && (
+        <Pressable
+          testID="fashion-resume"
+          onPress={() =>
+            router.push(
+              `/fashion/brand/${encodeURIComponent(lastCollection.source_id)}?title=${encodeURIComponent(lastCollection.title)}&season=${encodeURIComponent(lastCollection.season)}`,
+            )
+          }
+          style={[styles.resumeCard, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}
+        >
+          <View style={[styles.resumeThumbWrap, { backgroundColor: colors.surfaceTertiary }]}>
+            {lastCollection.image ? (
+              <RetryImage uri={fashionImageUri(lastCollection.image)} style={styles.image} contentFit="cover" transition={180} />
+            ) : null}
+          </View>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700" }}>{t("feed.resume")}</Text>
+            <Text numberOfLines={1} style={{ color: colors.onSurface, fontWeight: "700", fontSize: 14, marginTop: 2 }}>
+              {lastCollection.title}
+              {lastCollection.season ? (
+                <Text style={{ color: colors.brandSecondary, fontWeight: "600" }}> ({formatSeason(lastCollection.season, lastCollection.season)})</Text>
+              ) : null}
+            </Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.brandSecondary} />
+        </Pressable>
+      )}
 
       {loading ? (
         <View style={styles.center}>
@@ -642,6 +677,15 @@ function FashionFilterModal({
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  resumeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 14,
+  },
+  resumeThumbWrap: { width: 44, height: 58, borderRadius: 4, overflow: "hidden" },
   header: {
     flexDirection: "row",
     alignItems: "center",

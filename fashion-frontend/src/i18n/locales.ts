@@ -64,6 +64,7 @@ export const tr = {
     loadError: "İçerik yüklenemedi. Bağlantını kontrol edip tekrar dene.",
     loadMoreError: "Yüklenemedi — tekrar dene",
     note: "İçerik fashion-press.net ve FirstView'dan derlenir. Her gün 07:00'de otomatik güncellenir. Son güncelleme: {date}",
+    resume: "Kaldığın yerden devam",
   },
   lens: {
     title: "LENS",
@@ -85,6 +86,8 @@ export const tr = {
     similar: "Benzer koleksiyonlar",
     saveToBoard: "Panoya kaydet",
     saved: "Kaydedildi",
+    lookCounter: "Görünüm {n}/{total}",
+    tagCoverage: "{tagged}/{taggable} foto etiketlendi",
   },
   boards: {
     title: "Kaydettiklerim",
@@ -182,6 +185,7 @@ export const en: Dict = {
     loadError: "Couldn't load content. Check your connection and try again.",
     loadMoreError: "Couldn't load — try again",
     note: "Content is compiled from fashion-press.net and FirstView. Updated daily at 07:00. Last update: {date}",
+    resume: "Continue where you left off",
   },
   lens: {
     title: "LENS",
@@ -203,6 +207,8 @@ export const en: Dict = {
     similar: "Similar collections",
     saveToBoard: "Save to board",
     saved: "Saved",
+    lookCounter: "Look {n}/{total}",
+    tagCoverage: "{tagged}/{taggable} photos tagged",
   },
   boards: {
     title: "Saved",
@@ -300,6 +306,7 @@ export const es: Dict = {
     loadError: "No se pudo cargar. Revisa tu conexión e inténtalo de nuevo.",
     loadMoreError: "No se pudo cargar — reintentar",
     note: "El contenido se recopila de fashion-press.net y FirstView. Se actualiza a diario a las 07:00. Última actualización: {date}",
+    resume: "Continuar donde lo dejaste",
   },
   lens: {
     title: "LENS",
@@ -321,6 +328,8 @@ export const es: Dict = {
     similar: "Colecciones similares",
     saveToBoard: "Guardar en tablero",
     saved: "Guardado",
+    lookCounter: "Look {n}/{total}",
+    tagCoverage: "{tagged}/{taggable} fotos etiquetadas",
   },
   boards: {
     title: "Guardados",
