@@ -2246,6 +2246,37 @@ async def fashion_brands_index(user: Annotated[dict, Depends(get_current_user)])
     ]}
 
 
+@api.get("/fashion/fashion-weeks")
+async def fashion_weeks_index(user: Annotated[dict, Depends(get_current_user)]):
+    """C2/C3: "Moda haftası merkezi" — every (city, season) combination
+    that actually happened, as a browsable retrospective index. NOT a
+    forward-looking calendar/countdown (C3's other half) — we only learn a
+    show exists once fashion-press/firstview have already published it, so
+    there's no upcoming-show date to build a countdown from without a new
+    external data source. Detail view reuses /fashion/collections?city=&
+    season= directly, no separate endpoint needed."""
+    rows = await db.fashion.aggregate([
+        {"$match": {"city": {"$nin": ["", None]}, "season": {"$nin": ["", None]}}},
+        {"$sort": {"season_rank": -1}},
+        {"$group": {
+            "_id": {"city": "$city", "season": "$season"},
+            "n": {"$sum": 1},
+            "season_label": {"$first": "$season_label"},
+            "season_rank": {"$first": "$season_rank"},
+            "cover": {"$first": "$image_thumb"},
+            "cover_full": {"$first": "$image"},
+        }},
+        {"$sort": {"season_rank": -1, "_id.city": 1}},
+    ]).to_list(length=2000)
+    return {"items": [
+        {
+            "city": r["_id"]["city"], "season": r["_id"]["season"], "season_label": r.get("season_label") or "",
+            "count": r["n"], "cover": r.get("cover") or r.get("cover_full"),
+        }
+        for r in rows
+    ]}
+
+
 async def _finish_user_photo(user: dict, full_url: str, thumb_url: str) -> dict:
     """A5: cache one externally-added photo as its own tiny synthetic
     collection and auto-tag it, so it's searchable in Lens exactly like a

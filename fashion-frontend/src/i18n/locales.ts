@@ -152,6 +152,11 @@ export const tr = {
     searchPlaceholder: "Marka ara…",
     empty: "Marka bulunamadı.",
   },
+  weeks: {
+    title: "Moda Haftaları",
+    hint: "Geçmiş moda haftaları, şehir ve sezona göre. Henüz gerçekleşmemiş defileler için bir takvim/geri sayım yok — bunu ancak kaynak siteler yayınladıktan sonra öğreniyoruz.",
+    empty: "Henüz moda haftası verisi yok.",
+  },
   settings: {
     title: "Ayarlar",
     darkMode: "Koyu Mod",
@@ -321,6 +326,11 @@ export const en: Dict = {
     searchPlaceholder: "Search brands…",
     empty: "No brands found.",
   },
+  weeks: {
+    title: "Fashion Weeks",
+    hint: "Past fashion weeks, by city and season. There's no calendar/countdown for shows that haven't happened yet — we only learn about one once a source site has already published it.",
+    empty: "No fashion week data yet.",
+  },
   settings: {
     title: "Settings",
     darkMode: "Dark mode",
@@ -489,6 +499,11 @@ export const es: Dict = {
     title: "Marcas",
     searchPlaceholder: "Buscar marcas…",
     empty: "No se encontraron marcas.",
+  },
+  weeks: {
+    title: "Semanas de la Moda",
+    hint: "Semanas de la moda pasadas, por ciudad y temporada. No hay calendario/cuenta atrás para desfiles que aún no han ocurrido — solo nos enteramos una vez que un sitio fuente ya lo publicó.",
+    empty: "Aún no hay datos de semanas de la moda.",
   },
   settings: {
     title: "Ajustes",

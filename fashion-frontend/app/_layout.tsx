@@ -41,6 +41,9 @@ function ThemedShell() {
         <Stack.Screen name="fashion/house" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="fashion/brands" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="fashion/lookbook" options={{ animation: "slide_from_right" }} />
+        <Stack.Screen name="fashion/public/[token]" options={{ animation: "slide_from_right" }} />
+        <Stack.Screen name="fashion/weeks" options={{ animation: "slide_from_right" }} />
+        <Stack.Screen name="fashion/week" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="fashion/brand/[id]" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="settings" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="admin" options={{ animation: "slide_from_right" }} />

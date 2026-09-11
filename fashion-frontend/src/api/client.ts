@@ -282,6 +282,11 @@ export const api = {
   // C1: A-Z brand index.
   fashionBrands: (): Promise<{ items: { name: string; count: number; cover: string | null }[] }> =>
     request("/fashion/brands", {}, true),
+  // C2/C3: retrospective fashion-week index (city+season pairs that
+  // actually happened) — NOT a forward calendar/countdown, see server.py.
+  fashionWeeks: (): Promise<{
+    items: { city: string; season: string; season_label: string; count: number; cover: string | null }[];
+  }> => request("/fashion/fashion-weeks", {}, true),
   // G2: "bu kapak/marka yanlış" -> admin queue.
   fashionReportCollection: (sourceId: string, reason: string, note = "") =>
     request(

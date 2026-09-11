@@ -228,6 +228,14 @@ export default function Fashion() {
           <Feather name="list" size={18} color={colors.onSurface} />
         </Pressable>
         <Pressable
+          testID="fashion-open-weeks"
+          onPress={() => router.push("/fashion/weeks" as any)}
+          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
+          hitSlop={8}
+        >
+          <Feather name="calendar" size={18} color={colors.onSurface} />
+        </Pressable>
+        <Pressable
           testID="fashion-open-settings"
           onPress={() => router.push("/settings" as any)}
           style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
