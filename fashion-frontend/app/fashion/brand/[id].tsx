@@ -39,6 +39,11 @@ export default function BrandGallery() {
   const seasonParam = (params.season as string) || "";
   const seasonRaw = seasonParam ? decodeURIComponent(seasonParam) : "";
   const season = seasonRaw ? formatSeason(seasonRaw, seasonRaw) : "";
+  // C4: "more from this show" strips (Lens/board viewers) link here with
+  // ?open=<index> to jump straight to the tapped photo instead of always
+  // landing on the cover.
+  const openParam = (params.open as string) || "";
+  const openIndex = openParam ? parseInt(openParam, 10) : NaN;
   const headerLabel = season ? `${title} (${season})` : title;
 
   const [images, setImages] = useState<string[]>([]);
@@ -229,6 +234,13 @@ export default function BrandGallery() {
       cancelled = true;
     };
   }, [id]);
+
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current || !images.length || isNaN(openIndex)) return;
+    autoOpenedRef.current = true;
+    setViewerIndex(Math.max(0, Math.min(images.length - 1, openIndex)));
+  }, [images, openIndex]);
 
   const columns = width >= 1200 ? 6 : width >= 900 ? 5 : width >= 700 ? 4 : width >= 480 ? 3 : 2;
   const gap = 10;

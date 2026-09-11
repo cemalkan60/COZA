@@ -177,6 +177,12 @@ export const api = {
     sourceId: string,
   ): Promise<{ items: { source_id: string; brand_tr: string; season: string; season_label: string; image: string | null }[] }> =>
     request(`/fashion/collections/${encodeURIComponent(sourceId)}/similar`, {}, true),
+  // Not auth-gated on the backend (same public data brand/[id].tsx already
+  // fetches directly) — used for the "more from this show" strip (C4).
+  fashionCollectionDetail: (
+    sourceId: string,
+  ): Promise<{ images: string[]; images_thumb: string[]; tagged_count?: number; taggable_count?: number }> =>
+    request(`/fashion/collections/${encodeURIComponent(sourceId)}`),
   fashionAnalytics: () => request("/fashion/analytics", {}, true),
   fashionMeta: () => request("/fashion/meta", {}, true),
   fashionLookFilters: (): Promise<FashionLookFilters> => request("/fashion/looks/filters", {}, true),

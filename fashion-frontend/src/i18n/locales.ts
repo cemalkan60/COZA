@@ -77,6 +77,7 @@ export const tr = {
     empty: "Bu filtreye uygun sonuç bulunamadı.",
     recent: "Son aramalar",
     clearRecent: "Temizle",
+    moreFromShow: "Bu defileden daha fazlası",
   },
   detail: {
     photos: "{count} fotoğraf",
@@ -198,6 +199,7 @@ export const en: Dict = {
     empty: "No results match this filter.",
     recent: "Recent searches",
     clearRecent: "Clear",
+    moreFromShow: "More from this show",
   },
   detail: {
     photos: "{count} photos",
@@ -319,6 +321,7 @@ export const es: Dict = {
     empty: "No hay resultados para este filtro.",
     recent: "Búsquedas recientes",
     clearRecent: "Borrar",
+    moreFromShow: "Más de este desfile",
   },
   detail: {
     photos: "{count} fotos",

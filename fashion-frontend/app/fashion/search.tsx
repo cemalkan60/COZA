@@ -62,6 +62,28 @@ export default function FashionSearch() {
   const [openModal, setOpenModal] = useState<FilterKey | null>(null);
   const [viewerItem, setViewerItem] = useState<FashionLookItem | null>(null);
   const [saveItem, setSaveItem] = useState<FashionLookItem | null>(null);
+  // C4: "more from this show" strip — other photos from the same
+  // collection as the photo currently open in the viewer.
+  const [moreFromShow, setMoreFromShow] = useState<string[]>([]);
+  useEffect(() => {
+    if (!viewerItem) {
+      setMoreFromShow([]);
+      return;
+    }
+    let cancelled = false;
+    const { source_id: collectionId } = splitLookId(viewerItem.source_id);
+    api
+      .fashionCollectionDetail(collectionId)
+      .then((r) => {
+        if (!cancelled) setMoreFromShow((r.images_thumb?.length ? r.images_thumb : r.images) || []);
+      })
+      .catch(() => {
+        if (!cancelled) setMoreFromShow([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewerItem]);
   const [savedKeys, setSavedKeys] = useState<Record<string, string[]>>({});
   const refreshSaved = useCallback(() => {
     api.savedKeys().then((r) => setSavedKeys(r.saved || {})).catch(() => {});
@@ -447,6 +469,28 @@ export default function FashionSearch() {
               )}
             </Pressable>
           )}
+          {viewerItem && moreFromShow.length > 1 && (
+            <View style={styles.moreFromShow} pointerEvents="box-none">
+              <Text style={styles.moreFromShowLabel}>{t("lens.moreFromShow")}</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+                {moreFromShow.map((thumb, idx) => (
+                  <Pressable
+                    key={`${thumb}-${idx}`}
+                    testID={`look-viewer-more-${idx}`}
+                    onPress={() => {
+                      const { source_id: collectionId } = splitLookId(viewerItem.source_id);
+                      setViewerItem(null);
+                      router.push(
+                        `/fashion/brand/${encodeURIComponent(collectionId)}?title=${encodeURIComponent(viewerItem.brand_tr || "")}&season=${encodeURIComponent(viewerItem.season || "")}&open=${idx}` as any,
+                      );
+                    }}
+                  >
+                    <Image source={{ uri: fashionImageUri(thumb) }} style={styles.moreFromShowThumb} contentFit="cover" transition={150} />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
         </View>
       </Modal>
 
@@ -671,6 +715,9 @@ const styles = StyleSheet.create({
   viewerOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.95)", alignItems: "center", justifyContent: "center" },
   viewerImageWrap: { alignItems: "center", justifyContent: "center", width: "100%" },
   viewerCaption: { color: "#fff", fontSize: 13, fontWeight: "700", marginTop: 16, textAlign: "center", paddingHorizontal: 24 },
+  moreFromShow: { position: "absolute", left: 0, right: 0, bottom: 28, zIndex: 10 },
+  moreFromShowLabel: { color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: "700", marginBottom: 8, marginLeft: 16 },
+  moreFromShowThumb: { width: 46, height: 61, borderRadius: 4, backgroundColor: "rgba(255,255,255,0.1)" },
   viewerClose: {
     position: "absolute",
     right: 16,
