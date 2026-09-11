@@ -2101,6 +2101,50 @@ async def fashion_collections(
     return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
+_TREND_FACETS = ("item", "color", "material", "pattern")
+_TREND_IGNORE = {"unknown", "none", "n/a"}
+
+
+@api.get("/fashion/trends")
+async def fashion_trends(season: str, user: Annotated[dict, Depends(get_current_user)]):
+    """B2: "Trend özeti metni" — the most common item/color/material/pattern
+    words tagged across every collection of one season, for the frontend to
+    weave into a sentence (no Gemini call: this is a straight count over
+    already-tagged data, not something that needs generation)."""
+    if not season:
+        raise HTTPException(400, "season gerekli.")
+    match = {"season": season, "image_tags": {"$exists": True, "$ne": []}}
+    facet_stage = {
+        facet: [
+            {"$match": {f"image_tags.{facet}": {"$nin": list(_TREND_IGNORE)}}},
+            {"$group": {"_id": f"$image_tags.{facet}", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}},
+            {"$limit": 5},
+        ]
+        for facet in _TREND_FACETS
+    }
+    pipeline = [
+        {"$match": match},
+        {"$project": {"image_tags": 1}},
+        {"$unwind": "$image_tags"},
+        {"$facet": facet_stage},
+    ]
+    result = await db.fashion.aggregate(pipeline).to_list(length=1)
+    facets = result[0] if result else {}
+    collections = await db.fashion.count_documents(match)
+    return {
+        "season": season,
+        "collections": collections,
+        **{
+            f"top_{facet}": [
+                {"value": row["_id"], "label_tr": fashion_tag_map.tag_label_tr(facet, row["_id"]), "count": row["n"]}
+                for row in facets.get(facet, [])
+            ]
+            for facet in _TREND_FACETS
+        },
+    }
+
+
 # A gallery with this many photos or fewer is treated as suspiciously thin
 # rather than trusted as final -- see fashion_collection_detail and
 # run_fashion_cover_fix, both of which give a "gallery_fetched" doc this

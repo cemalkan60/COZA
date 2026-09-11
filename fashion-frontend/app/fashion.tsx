@@ -34,7 +34,7 @@ const CATEGORY_VALUES = ["women", "men", "haute-couture"] as const;
 
 export default function Fashion() {
   const { colors, spacing } = useTheme();
-  const { t, formatSeason } = useT();
+  const { t, formatSeason, optLabel, lang } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { cols, cycle: cycleCols, widthPct } = useGridColumns();
@@ -49,6 +49,37 @@ export default function Fashion() {
   const [total, setTotal] = useState(0);
   const [analytics, setAnalytics] = useState<FashionAnalytics | null>(null);
   const [season, setSeason] = useState<string | undefined>(undefined);
+  // B2: "trend özeti metni" — a season's top item/color/material words,
+  // computed from already-tagged photos (no Gemini call).
+  const [trends, setTrends] = useState<Awaited<ReturnType<typeof api.fashionTrends>> | null>(null);
+  useEffect(() => {
+    if (!season) {
+      setTrends(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .fashionTrends(season)
+      .then((r) => {
+        if (!cancelled) setTrends(r);
+      })
+      .catch(() => {
+        if (!cancelled) setTrends(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [season]);
+
+  // TR uses the backend's Turkish label directly; EN/ES try the Lens
+  // filter-option translation table (built for a different, overlapping
+  // vocabulary — best-effort) and fall back to a title-cased English word.
+  const trendLabel = (facet: string, entry?: { value: string; label_tr: string }) => {
+    if (!entry) return "";
+    if (lang === "tr") return entry.label_tr;
+    const titleCased = entry.value.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    return optLabel(facet, entry.value, titleCased);
+  };
   const [category, setCategory] = useState<string | undefined>(undefined);
   const [city, setCity] = useState<string | undefined>(undefined);
   const [source, setSource] = useState<string | undefined>(undefined);
@@ -323,6 +354,21 @@ export default function Fashion() {
               <Text style={{ color: colors.onSurface, fontSize: 12, fontWeight: "700" }}>{cols}</Text>
             </Pressable>
           </ScrollView>
+
+          {trends && trends.collections > 0 && trends.top_item[0] && trends.top_color[0] && trends.top_material[0] && (
+            <View style={[styles.trendCard, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}>
+              <Feather name="trending-up" size={14} color={colors.brand} style={{ marginTop: 1 }} />
+              <Text style={{ flex: 1, color: colors.onSurface, fontSize: 13, lineHeight: 19 }}>
+                {t("feed.trendSummary", {
+                  season: formatSeason(season, season),
+                  item: trendLabel("item", trends.top_item[0]),
+                  color: trendLabel("color", trends.top_color[0]),
+                  material: trendLabel("material", trends.top_material[0]),
+                  count: trends.collections,
+                })}
+              </Text>
+            </View>
+          )}
 
           {items.length === 0 ? (
             <View style={{ paddingHorizontal: spacing.xl, marginTop: 40, alignItems: "center", gap: 14 }}>
@@ -686,6 +732,15 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   resumeThumbWrap: { width: 44, height: 58, borderRadius: 4, overflow: "hidden" },
+  trendCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 14,
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",

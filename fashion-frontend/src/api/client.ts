@@ -195,6 +195,18 @@ export const api = {
       { method: "POST" },
       true,
     ),
+  // B2: trend-summary sentence — top item/color/material/pattern words
+  // tagged across a season's collections (counts only, no Gemini call).
+  fashionTrends: (
+    season: string,
+  ): Promise<{
+    season: string;
+    collections: number;
+    top_item: { value: string; label_tr: string; count: number }[];
+    top_color: { value: string; label_tr: string; count: number }[];
+    top_material: { value: string; label_tr: string; count: number }[];
+    top_pattern: { value: string; label_tr: string; count: number }[];
+  }> => request(`/fashion/trends?season=${encodeURIComponent(season)}`, {}, true),
   fashionAnalytics: () => request("/fashion/analytics", {}, true),
   fashionMeta: () => request("/fashion/meta", {}, true),
   fashionLookFilters: (): Promise<FashionLookFilters> => request("/fashion/looks/filters", {}, true),

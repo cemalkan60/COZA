@@ -317,3 +317,46 @@ def tag_match_conditions(
         if vals:
             out[facet] = {"$in": sorted(vals)}
     return out
+
+
+# --------------------------------------------------------------------------
+# B2: Turkish labels for raw Gemini tag words (for the trend-summary
+# sentence, /fashion/trends). NOT the same vocabulary as fashion-press's
+# LOOKS_* filter options above — Gemini's own words are looser/simpler
+# (see gemini_client._TAG_SHAPE_RULES) — so this is its own small table
+# rather than reusing looks_filters(). Anything not listed here falls back
+# to a title-cased version of the English word (see tag_label_tr).
+_TAG_LABELS_TR = {
+    "item": {
+        "dress": "elbise", "coat": "palto", "suit": "takım elbise", "skirt": "etek",
+        "trousers": "pantolon", "pants": "pantolon", "jacket": "ceket", "blouse": "bluz",
+        "jumpsuit": "tulum", "shirt": "gömlek", "t-shirt": "tişört", "sweater": "kazak",
+        "coat dress": "palto elbise", "shorts": "şort", "vest": "yelek", "cardigan": "hırka",
+    },
+    "color": {
+        "black": "siyah", "white": "beyaz", "red": "kırmızı", "beige": "bej",
+        "navy": "lacivert", "multicolor": "çok renkli", "grey": "gri", "gray": "gri",
+        "pink": "pembe", "blue": "mavi", "green": "yeşil", "yellow": "sarı",
+        "orange": "turuncu", "purple": "mor", "brown": "kahverengi", "gold": "altın",
+        "silver": "gümüş", "ivory": "fildişi", "khaki": "haki",
+    },
+    "material": {
+        "denim": "kot kumaşı", "leather": "deri", "knit": "triko", "silk": "ipek",
+        "wool": "yün", "cotton": "pamuk", "sequin": "pullu", "velvet": "kadife",
+        "satin": "saten", "lace": "dantel", "fur": "kürk", "suede": "süet",
+    },
+    "pattern": {
+        "solid": "düz renk", "striped": "çizgili", "floral": "çiçekli", "plaid": "ekose",
+        "animal print": "hayvan deseni", "polka dot": "puantiyeli", "none": "desensiz",
+        "check": "kareli", "geometric": "geometrik", "logo": "logolu", "print": "baskılı",
+    },
+}
+
+
+def tag_label_tr(facet: str, value: str) -> str:
+    """Turkish label for a raw Gemini tag word, e.g. tag_label_tr("color",
+    "black") -> "siyah". Falls back to the English word itself (title
+    case) for anything not in the table above."""
+    v = (value or "").strip().lower()
+    label = _TAG_LABELS_TR.get(facet, {}).get(v)
+    return label or v.replace("_", " ").title()
