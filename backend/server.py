@@ -2268,6 +2268,43 @@ async def fashion_collection_detail(source_id: str):
     }
 
 
+@api.post("/fashion/collections/{source_id}/describe")
+async def fashion_describe_photo(
+    source_id: str,
+    index: int,
+    user: Annotated[dict, Depends(get_current_user)],
+    lang: str = "tr",
+):
+    """B1: "Bu görünümü anlat" — one-sentence AI description of a single
+    photo. Auth-gated (unlike the plain collection-detail GET above)
+    because, unlike that endpoint, this one costs a real Gemini call —
+    cached per (photo, language) in db.fashion.photo_descriptions so
+    re-opening the same photo/language never calls Gemini twice."""
+    if lang not in ("tr", "en", "es"):
+        lang = "tr"
+    doc = await db.fashion.find_one(
+        {"source_id": source_id}, {"_id": 0, "images": 1, "photo_descriptions": 1}
+    )
+    if not doc:
+        raise HTTPException(404, "Koleksiyon bulunamadı.")
+    images = doc.get("images") or []
+    if index < 0 or index >= len(images):
+        raise HTTPException(400, "Geçersiz foto numarası.")
+    cache_key = f"{index}:{lang}"
+    cached = (doc.get("photo_descriptions") or {}).get(cache_key)
+    if cached:
+        return {"description": cached, "cached": True}
+    if not gemini_client.ENABLED:
+        raise HTTPException(503, "Yapay zeka şu anda kullanılamıyor.")
+    text = await asyncio.to_thread(gemini_client.describe_image, images[index], lang)
+    if not text:
+        raise HTTPException(502, "Açıklama oluşturulamadı, tekrar dene.")
+    await db.fashion.update_one(
+        {"source_id": source_id}, {"$set": {f"photo_descriptions.{cache_key}": text}}
+    )
+    return {"description": text, "cached": False}
+
+
 @api.get("/fashion/looks/filters")
 async def fashion_looks_filters(user: Annotated[dict, Depends(get_current_user)]):
     """Static filter option lists (season/gender/item/color/material/pattern) for coordinate search."""

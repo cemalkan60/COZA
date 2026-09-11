@@ -183,6 +183,18 @@ export const api = {
     sourceId: string,
   ): Promise<{ images: string[]; images_thumb: string[]; tagged_count?: number; taggable_count?: number }> =>
     request(`/fashion/collections/${encodeURIComponent(sourceId)}`),
+  // B1: "Bu görünümü anlat" — one-sentence AI description, cached per
+  // (photo, language) on the backend so re-opening never re-calls Gemini.
+  fashionDescribePhoto: (
+    sourceId: string,
+    index: number,
+    lang: string,
+  ): Promise<{ description: string; cached: boolean }> =>
+    request(
+      `/fashion/collections/${encodeURIComponent(sourceId)}/describe?index=${index}&lang=${encodeURIComponent(lang)}`,
+      { method: "POST" },
+      true,
+    ),
   fashionAnalytics: () => request("/fashion/analytics", {}, true),
   fashionMeta: () => request("/fashion/meta", {}, true),
   fashionLookFilters: (): Promise<FashionLookFilters> => request("/fashion/looks/filters", {}, true),

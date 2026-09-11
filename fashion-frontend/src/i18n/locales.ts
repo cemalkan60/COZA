@@ -89,6 +89,7 @@ export const tr = {
     saved: "Kaydedildi",
     lookCounter: "Görünüm {n}/{total}",
     tagCoverage: "{tagged}/{taggable} foto etiketlendi",
+    describeError: "Açıklama oluşturulamadı, tekrar dene.",
   },
   boards: {
     title: "Kaydettiklerim",
@@ -211,6 +212,7 @@ export const en: Dict = {
     saved: "Saved",
     lookCounter: "Look {n}/{total}",
     tagCoverage: "{tagged}/{taggable} photos tagged",
+    describeError: "Couldn't generate a description, try again.",
   },
   boards: {
     title: "Saved",
@@ -333,6 +335,7 @@ export const es: Dict = {
     saved: "Guardado",
     lookCounter: "Look {n}/{total}",
     tagCoverage: "{tagged}/{taggable} fotos etiquetadas",
+    describeError: "No se pudo generar la descripción, inténtalo de nuevo.",
   },
   boards: {
     title: "Guardados",

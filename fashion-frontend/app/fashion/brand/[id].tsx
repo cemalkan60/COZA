@@ -28,7 +28,7 @@ import { saveLastCollection } from "@/src/utils/lastCollection";
 export default function BrandGallery() {
   const params = useLocalSearchParams();
   const { colors, spacing } = useTheme();
-  const { t, formatSeason } = useT();
+  const { t, formatSeason, lang } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
@@ -121,6 +121,24 @@ export default function BrandGallery() {
   useEffect(() => {
     setViewerZoomed(false);
   }, [viewerIndex]);
+
+  // B1: "Bu görünümü anlat" — one-sentence AI description of whichever
+  // photo is currently open in the viewer.
+  const [description, setDescription] = useState<string | null>(null);
+  const [describing, setDescribing] = useState(false);
+  useEffect(() => {
+    setDescription(null);
+    setDescribing(false);
+  }, [viewerIndex]);
+  const handleDescribe = useCallback(() => {
+    if (viewerIndex === null || describing) return;
+    setDescribing(true);
+    api
+      .fashionDescribePhoto(id, viewerIndex, lang)
+      .then((r) => setDescription(r.description))
+      .catch(() => setDescription(t("detail.describeError")))
+      .finally(() => setDescribing(false));
+  }, [id, viewerIndex, lang, describing, t]);
 
   // react-native-web's FlatList doesn't reliably honor `initialScrollIndex` on
   // mount, so on web the viewer always opened on the first photo no matter
@@ -472,9 +490,25 @@ export default function BrandGallery() {
                 </Pressable>
               )}
 
+              {description ? (
+                <Text style={[styles.viewerCounter, styles.viewerDescription, { bottom: insets.bottom + 60 }]}>
+                  {description}
+                </Text>
+              ) : null}
+
               <Text style={styles.viewerCounter}>
                 {t("detail.lookCounter", { n: viewerIndex + 1, total: images.length })}
               </Text>
+
+              <Pressable
+                testID="brand-viewer-describe"
+                onPress={handleDescribe}
+                disabled={describing}
+                style={[styles.viewerZoomBtn, { position: "absolute", left: 16, bottom: insets.bottom + 24, opacity: describing ? 0.6 : 1 }]}
+                hitSlop={10}
+              >
+                {describing ? <ActivityIndicator size="small" color="#fff" /> : <Feather name="message-circle" size={18} color="#fff" />}
+              </Pressable>
 
               <View style={[styles.viewerZoomControls, { bottom: insets.bottom + 24 }]}>
                 <Pressable
@@ -580,6 +614,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
+  },
+  viewerDescription: {
+    left: 24,
+    right: 24,
+    maxWidth: undefined,
+    fontWeight: "600",
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   viewerZoomControls: {
     position: "absolute",

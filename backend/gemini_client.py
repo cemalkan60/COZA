@@ -675,3 +675,37 @@ def tag_images(image_urls: list) -> list:
 def tag_image(image_url: str) -> "Optional[dict]":
     """Single-photo convenience wrapper around tag_images()."""
     return tag_images([image_url])[0]
+
+
+# --------------------------------------------------------------------------
+# B1: "Bu görünümü anlat" — one-sentence photo description (vision, prose)
+# --------------------------------------------------------------------------
+_DESCRIBE_LANG_NAMES = {"tr": "Turkish", "en": "English", "es": "Spanish"}
+
+_DESCRIBE_PROMPT = (
+    "You are a fashion editor describing a runway look for a catalog app. "
+    "Look at the outfit in this photo and write exactly ONE vivid, concrete "
+    "sentence in {language} describing it — silhouette, standout garment, "
+    "color(s), fabric/texture if visible, and mood. No preamble, no "
+    "markdown, no quotes around it — reply with just the sentence itself."
+)
+
+
+def describe_image(image_url: str, lang: str = "tr") -> "Optional[str]":
+    """One-sentence description of a single runway photo, in `lang`
+    (tr/en/es). Called on demand (never in bulk — each call costs a real
+    Gemini request), so callers should cache the result themselves."""
+    if not ENABLED or not (image_url or "").strip():
+        return None
+    part = _download_image(image_url)
+    if part is None:
+        return None
+    language = _DESCRIBE_LANG_NAMES.get(lang, _DESCRIBE_LANG_NAMES["tr"])
+    text = _generate(
+        [{"text": _DESCRIBE_PROMPT.format(language=language)}, part],
+        max_output_tokens=120,
+    )
+    if not text:
+        return None
+    text = text.strip().strip("\"'` \n\t")
+    return text or None
