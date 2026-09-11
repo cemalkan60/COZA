@@ -519,6 +519,10 @@ function FashionCard({
   const saveScale = useRef(new Animated.Value(1)).current;
   const lastTapRef = useRef(0);
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // D2: "ızgarada bas-göz at" — hold a tile to preview it bigger without
+  // leaving the grid, release to dismiss (Pressable suppresses onPress for
+  // a gesture that already fired onLongPress, so this never also navigates).
+  const [peeking, setPeeking] = useState(false);
 
   const pulseSave = () => {
     saveScale.setValue(1);
@@ -607,8 +611,27 @@ function FashionCard({
     <Pressable
       testID={`fashion-card-${item.source_id}`}
       onPress={handlePress}
+      onLongPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setPeeking(true);
+      }}
+      onPressOut={() => setPeeking(false)}
+      delayLongPress={280}
       style={({ pressed }) => [styles.card, widthPct ? { width: widthPct } : null, { opacity: pressed ? 0.9 : 1 }]}
     >
+      <Modal visible={peeking} transparent animationType="fade" onRequestClose={() => setPeeking(false)}>
+        <View style={styles.peekOverlay} pointerEvents="none">
+          <View style={styles.peekCard}>
+            {displayImg && (
+              <RetryImage uri={fashionImageUri(displayImg)} style={styles.peekImage} contentFit="cover" />
+            )}
+            <Text numberOfLines={1} style={styles.peekCaption}>
+              {item.brand_tr || item.title_tr}
+              {item.season || item.season_label ? ` · ${formatSeason(item.season, item.season_label)}` : ""}
+            </Text>
+          </View>
+        </View>
+      </Modal>
       <View style={[styles.imageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {displayImg ? (
           <RetryImage
@@ -737,6 +760,10 @@ function FashionFilterModal({
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  peekOverlay: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.55)", padding: 40 },
+  peekCard: { width: "100%", maxWidth: 320, borderRadius: 10, overflow: "hidden", backgroundColor: "#111" },
+  peekImage: { width: "100%", aspectRatio: 3 / 4 },
+  peekCaption: { color: "#fff", fontWeight: "700", fontSize: 13, padding: 10 },
   resumeCard: {
     flexDirection: "row",
     alignItems: "center",
