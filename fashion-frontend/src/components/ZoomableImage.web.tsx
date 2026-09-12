@@ -148,7 +148,7 @@ export const ZoomableImage = forwardRef<
       style={{ width, height, overflow: "hidden", cursor: t.s > 1 ? "grab" : "zoom-in", touchAction: "none" }}
     >
       <View style={{ width, height, transform: [{ translateX: t.x }, { translateY: t.y }, { scale: t.s }] }}>
-        <Image source={fashionImageSource(uri)} style={{ width, height }} contentFit={contentFit} />
+        <Image source={fashionImageSource(uri)} style={{ width, height }} contentFit={contentFit} loading="eager" />
       </View>
     </View>
   );

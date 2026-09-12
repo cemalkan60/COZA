@@ -106,6 +106,7 @@ export default function Lookbook() {
                       source={{ uri: fashionImageUri(p.image_thumb || p.image) }}
                       style={{ width: "100%", aspectRatio: 3 / 4, backgroundColor: "#eee", borderRadius: 2 }}
                       contentFit="cover"
+                      loading="eager"
                     />
                     <Text numberOfLines={1} style={{ fontSize: 11, color: "#333", marginTop: 4, fontWeight: "700" }}>
                       {layout === "contact" ? `${i + 1}. ` : ""}

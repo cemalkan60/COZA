@@ -285,6 +285,7 @@ export const ZoomableImage = forwardRef<
             source={fashionImageSource(bustedUri)}
             style={{ width, height }}
             contentFit={contentFit}
+            loading="eager"
             cachePolicy={FASHION_IMAGE_CACHE_POLICY}
             onError={() => {
               if (imgAttempt >= MAX_IMAGE_RETRIES) return;

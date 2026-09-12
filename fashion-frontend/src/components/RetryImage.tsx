@@ -83,6 +83,16 @@ export default function RetryImage({ uri, ...rest }: Props) {
     <Image
       {...rest}
       source={fashionImageSource(bustedUri)}
+      // expo-image on web defaults to loading="lazy" (an <img loading=lazy>
+      // driven by IntersectionObserver). Confirmed live: Safari never fired
+      // that observer for images inside this app's nested ScrollViews, so
+      // every photo — including ones nowhere near a probe/cache-mode issue,
+      // like the "kaldığın yerden devam" card — stayed permanently blank
+      // there while the exact same page worked in Chrome (Chrome's
+      // IntersectionObserver handles nested scrollers fine). No effect on
+      // native. See RetryImage's other Safari-loading fix in fashionImage.ts
+      // for a second, narrower issue this doesn't cover on its own.
+      loading="eager"
       // Native: bypass the disk cache entirely for these photos. A
       // stale/failed disk-cache entry from before the R2 object recovered
       // was suspected as one way this could keep failing forever on a given

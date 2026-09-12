@@ -558,7 +558,7 @@ export default function Boards() {
               >
                 <View style={[styles.folderCover, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
                   {b.cover ? (
-                    <Image source={{ uri: fashionImageUri(b.cover) }} style={{ width: "100%", height: "100%" }} contentFit="cover" />
+                    <Image source={{ uri: fashionImageUri(b.cover) }} style={{ width: "100%", height: "100%" }} contentFit="cover" loading="eager" />
                   ) : (
                     <Feather name="folder" size={26} color={colors.brandSecondary} />
                   )}
@@ -639,6 +639,7 @@ export default function Boards() {
                         style={{ width: "100%", height: "100%" }}
                         contentFit="cover"
                         transition={200}
+                        loading="eager"
                       />
                       {selectMode && (
                         <View style={[styles.selectDot, { backgroundColor: isSelected ? colors.brand : "rgba(0,0,0,0.35)", borderColor: "#fff" }]}>
@@ -978,6 +979,7 @@ export default function Boards() {
               style={{ width, height: height * 0.86 }}
               contentFit="contain"
               transition={700}
+              loading="eager"
             />
           )}
           {photos[zenIndex] && (photos[zenIndex].brand_tr || photos[zenIndex].season) && (

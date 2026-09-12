@@ -673,7 +673,7 @@ export default function FashionSearch() {
                       );
                     }}
                   >
-                    <Image source={{ uri: fashionImageUri(thumb) }} style={styles.moreFromShowThumb} contentFit="cover" transition={150} />
+                    <Image source={{ uri: fashionImageUri(thumb) }} style={styles.moreFromShowThumb} contentFit="cover" transition={150} loading="eager" />
                   </Pressable>
                 ))}
               </ScrollView>
@@ -836,7 +836,7 @@ function LookCard({
     >
       <View style={[styles.cardImageWrap, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
         {item.image ? (
-          <Image source={{ uri: fashionImageUri(item.image) }} style={styles.cardImage} contentFit="cover" transition={220} />
+          <Image source={{ uri: fashionImageUri(item.image) }} style={styles.cardImage} contentFit="cover" transition={220} loading="eager" />
         ) : (
           <View style={styles.cardImagePlaceholder}>
             <Feather name="image" size={20} color={colors.brandSecondary} />
