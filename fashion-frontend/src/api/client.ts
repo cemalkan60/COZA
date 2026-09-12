@@ -399,6 +399,11 @@ export const api = {
   // images_thumb / image_tags aligned; never deletes from R2 or touches
   // source-site URLs. See run_fashion_drop_dead_images in server.py.
   fashionDropDeadImages: () => request("/admin/fashion-drop-dead-images", { method: "POST" }, true),
+  // One-time (safe to re-run) sweep: rewrite any stored photo URL still on
+  // a bare pub-<hash>.r2.dev address to the current R2_PUBLIC_BASE_URL
+  // (a Custom Domain) — a hostname swap only, the object never moved.
+  // See run_fashion_migrate_image_domain in server.py.
+  fashionMigrateImageDomain: () => request("/admin/fashion-migrate-image-domain", { method: "POST" }, true),
   // Diagnostic: probes every (key, model) slot the tagging rotation uses.
   geminiCheck: (): Promise<{
     enabled: boolean;

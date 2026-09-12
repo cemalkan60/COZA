@@ -368,6 +368,13 @@ export default function AdminPanel() {
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.error }]}>Ölü fotoları temizle</Text>
                 </Pressable>
+                <Pressable
+                  disabled={!!busy}
+                  onPress={() => runAction("domainmigrate", api.fashionMigrateImageDomain, "Fotoğraf adresleri yeni alan adına taşınıyor — eski pub-*.r2.dev linkleri güncel adrese güncelleniyor.")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Foto adreslerini yeni domaine taşı</Text>
+                </Pressable>
               </View>
             </Section>
 

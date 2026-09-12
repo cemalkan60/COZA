@@ -67,6 +67,7 @@ _JOB_LABELS = {
     "fashion_backfill": "Fashion taraması (2026'dan beri)",
     "fashion_tag_photos": "Fotoğraf etiketleme",
     "fashion_repair_urls": "Fotoğraf adreslerini onarma",
+    "fashion_migrate_image_domain": "Fotoğraf adreslerini yeni alan adına taşıma",
     "fashion_drop_dead_images": "Ölü fotoğraf adreslerini temizleme",
     "fashion_cover_fix": "Kapak düzeltme",
     "fashion_thumbnails": "Küçük resimler",
@@ -4064,6 +4065,86 @@ async def admin_fashion_drop_dead_images(admin: Annotated[dict, Depends(require_
     if _fashion_lock.locked():
         return {"status": "already_running"}
     asyncio.create_task(_run_tracked("fashion_drop_dead_images", run_fashion_drop_dead_images()))
+    return {"status": "started"}
+
+
+# Matches any bare Cloudflare R2 "public development URL" host
+# (pub-<32 hex chars>.r2.dev) -- Cloudflare's own docs call this rate-
+# limited and "not recommended for production"; a Custom Domain replaces
+# it. This app has gone through 3 different such hashes over time (each
+# time the Public Development URL toggle was disabled and re-enabled on
+# the bucket, Cloudflare handed out a brand-new random one and the old
+# one went dead permanently) -- run_fashion_repair_urls can't fix these,
+# since is_our_url()/find_object_url() only recognize the CURRENTLY
+# configured R2_PUBLIC_BASE_URL as "ours" and treat anything else as an
+# untouched source-site URL. This is a plain hostname swap instead: the
+# object's key/path never moved, only which domain serves it did.
+_R2_DEV_HOST_RE = re.compile(r"https://pub-[0-9a-f]{32}\.r2\.dev")
+
+
+def _rehost_r2_dev_url(url: "Optional[str]", new_base: str) -> "Optional[str]":
+    if not url or not new_base:
+        return url
+    return _R2_DEV_HOST_RE.sub(new_base, url, count=1)
+
+
+async def run_fashion_migrate_image_domain() -> dict:
+    """One-time (safe to re-run) sweep: rewrite every stored photo URL that
+    still points at a bare pub-<hash>.r2.dev address to whatever
+    R2_PUBLIC_BASE_URL is configured to now (a Custom Domain). Covers
+    db.fashion (the runway feed) and db.saved_photos (board photos) --
+    everything else (board covers, weeks/brands covers) is computed from
+    these two via aggregation, so fixing these two fixes those too."""
+    new_base = os.environ.get("R2_PUBLIC_BASE_URL", "").rstrip("/")
+    if not new_base:
+        return {"status": "error", "detail": "R2_PUBLIC_BASE_URL ayarlanmamış."}
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
+
+        fashion_docs = await db.fashion.find(
+            {}, {"_id": 0, "source_id": 1, "image": 1, "image_thumb": 1, "images": 1, "images_thumb": 1},
+        ).to_list(length=None)
+        fashion_fixed = 0
+        for d in fashion_docs:
+            old_images, old_thumbs = d.get("images") or [], d.get("images_thumb") or []
+            new_images = [_rehost_r2_dev_url(u, new_base) for u in old_images]
+            new_thumbs = [_rehost_r2_dev_url(u, new_base) for u in old_thumbs]
+            new_image = _rehost_r2_dev_url(d.get("image"), new_base)
+            new_thumb = _rehost_r2_dev_url(d.get("image_thumb"), new_base)
+            if new_images != old_images or new_thumbs != old_thumbs or new_image != d.get("image") or new_thumb != d.get("image_thumb"):
+                await db.fashion.update_one(
+                    {"source_id": d["source_id"]},
+                    {"$set": {"images": new_images, "images_thumb": new_thumbs, "image": new_image, "image_thumb": new_thumb}},
+                )
+                fashion_fixed += 1
+
+        saved_docs = await db.saved_photos.find({}, {"_id": 1, "image": 1, "image_thumb": 1}).to_list(length=None)
+        saved_fixed = 0
+        for d in saved_docs:
+            new_image = _rehost_r2_dev_url(d.get("image"), new_base)
+            new_thumb = _rehost_r2_dev_url(d.get("image_thumb"), new_base)
+            if new_image != d.get("image") or new_thumb != d.get("image_thumb"):
+                await db.saved_photos.update_one({"_id": d["_id"]}, {"$set": {"image": new_image, "image_thumb": new_thumb}})
+                saved_fixed += 1
+
+        await _record_job_run(
+            "fashion_migrate_image_domain", status="ok", started_at=started_at,
+            done=fashion_fixed + saved_fixed, total=len(fashion_docs) + len(saved_docs),
+            detail=f"{fashion_fixed} koleksiyon, {saved_fixed} kaydedilen fotoğraf → {new_base}",
+        )
+        return {
+            "status": "ok", "fashion_docs_fixed": fashion_fixed,
+            "saved_photos_fixed": saved_fixed, "new_base": new_base,
+        }
+
+
+@api.post("/admin/fashion-migrate-image-domain")
+async def admin_fashion_migrate_image_domain(admin: Annotated[dict, Depends(require_admin)]):
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(_run_tracked("fashion_migrate_image_domain", run_fashion_migrate_image_domain()))
     return {"status": "started"}
 
 
