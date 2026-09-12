@@ -983,11 +983,14 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 ("fashion-press/women", fashion_scraper.scrape_collections, (40, "women")),
                 ("fashion-press/men", fashion_scraper.scrape_collections, (40, "men")),
                 ("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, (40,)),
-                # nowfashion.com is disabled for now: it blocks direct requests (403) and
-                # also fails through the plain ScraperAPI proxy (500), which points to a
-                # JS-based bot challenge — fixable with ScraperAPI's render=true mode, but
-                # that costs ~10x credits more per request, so left off pending a decision.
-                # *[(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES],
+                # nowfashion.com is the only source that carries a city (see its
+                # module docstring) -- without it, "Moda haftaları" (C2/C3) has
+                # nothing to group by and stays permanently empty (confirmed live
+                # by QA). It needs ScraperAPI's render=true fallback (~10x cost)
+                # since it blocks plain requests AND the non-rendered proxy with a
+                # JS challenge; Cem accepted that cost given this only runs twice
+                # a week (~180 render requests/week at this limit).
+                *[(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES],
             ]
             tasks += [(f"firstview/{cat}", firstview_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES]
 

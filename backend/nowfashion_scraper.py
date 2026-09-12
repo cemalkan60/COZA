@@ -62,9 +62,14 @@ def _fetch(path_or_url: str, timeout: int = 30) -> str:
         blocked = exc.response is not None and exc.response.status_code in (403, 429)
         if not (blocked and SCRAPER_API_KEY):
             raise
+        # A plain (non-rendered) proxy request still 500s here -- the block is
+        # a JS challenge, not just an IP/UA check, so it needs ScraperAPI to
+        # actually run a browser (render=true). Costs ~10x a normal request;
+        # accepted since this scraper only runs twice a week (see its call
+        # site in server.py).
         resp = requests.get(
             SCRAPER_PROXY_BASE,
-            params={"api_key": SCRAPER_API_KEY, "url": url},
+            params={"api_key": SCRAPER_API_KEY, "url": url, "render": "true"},
             timeout=max(timeout, 60),
         )
         resp.raise_for_status()
