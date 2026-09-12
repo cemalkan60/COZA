@@ -989,8 +989,12 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 # by QA). It needs ScraperAPI's render=true fallback (~10x cost)
                 # since it blocks plain requests AND the non-rendered proxy with a
                 # JS challenge; Cem accepted that cost given this only runs twice
-                # a week (~180 render requests/week at this limit).
-                *[(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES],
+                # a week. Starting with just the /fashion-week-schedules page
+                # (one task, one listing covering every city/season/category) per
+                # Cem's request rather than all 3 per-category listings at once —
+                # the per-category scrape_category(...) calls are still there,
+                # just not wired in here yet.
+                ("nowfashion/schedules", nowfashion_scraper.scrape_schedules, (60,)),
             ]
             tasks += [(f"firstview/{cat}", firstview_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES]
 

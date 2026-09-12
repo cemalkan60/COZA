@@ -155,18 +155,11 @@ def _extract_images(html: str, limit: int = 40) -> list:
     return images
 
 
-def scrape_category(category: str, limit: int = 30) -> list:
-    """Scrape nowfashion.com galleries for one of our categories
-    ("women" | "men" | "haute-couture"). Best-effort per item — a gallery
-    page that fails to fetch/parse is skipped, not fatal to the whole run.
-    """
-    param = CATEGORY_TO_PARAM[category]
-    try:
-        listing_html = _fetch(f"/search?collection={param}")
-    except Exception as exc:  # noqa: BLE001
-        logger.error("nowfashion: listing fetch failed for %s: %s", category, exc)
-        return []
-
+def _scrape_from_listing(listing_html: str, limit: int, default_category: str) -> list:
+    """Shared by scrape_category and scrape_schedules: given a listing
+    page's HTML, pull out gallery links and fetch/parse each one.
+    Best-effort per item — a gallery page that fails to fetch/parse is
+    skipped, not fatal to the whole run."""
     slugs = _extract_gallery_links(listing_html, limit)
     items = []
     for slug in slugs:
@@ -189,9 +182,40 @@ def scrape_category(category: str, limit: int = 30) -> list:
                 "brand_tr": parsed["brand"] or slug.replace("-", " ").title(),
                 "season": parsed["season"] or "",
                 "city": parsed["city"],
-                "category": parsed["category"] or category,
+                "category": parsed["category"] or default_category,
                 "source": "nowfashion",
             }
         )
+    return items
+
+
+def scrape_category(category: str, limit: int = 30) -> list:
+    """Scrape nowfashion.com galleries for one of our categories
+    ("women" | "men" | "haute-couture"), via its per-category /search
+    listing."""
+    param = CATEGORY_TO_PARAM[category]
+    try:
+        listing_html = _fetch(f"/search?collection={param}")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("nowfashion: listing fetch failed for %s: %s", category, exc)
+        return []
+    items = _scrape_from_listing(listing_html, limit, category)
     logger.info("nowfashion: scraped %d %s galleries", len(items), category)
+    return items
+
+
+def scrape_schedules(limit: int = 60) -> list:
+    """Scrape nowfashion.com's /fashion-week-schedules index instead —
+    lists shows across every city/season/category on one page, rather than
+    scrape_category's one-collection-filter-at-a-time /search listing.
+    Cem asked to start with just this page before turning the per-category
+    scrape back on. `category` is inferred per slug (see _parse_slug)
+    since this page mixes all three."""
+    try:
+        listing_html = _fetch("/fashion-week-schedules")
+    except Exception as exc:  # noqa: BLE001
+        logger.error("nowfashion: schedules listing fetch failed: %s", exc)
+        return []
+    items = _scrape_from_listing(listing_html, limit, "women")
+    logger.info("nowfashion: scraped %d galleries from fashion-week-schedules", len(items))
     return items
