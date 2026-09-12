@@ -272,21 +272,33 @@ export default function FashionSearch() {
       .catch(() => {});
   }, []);
 
+  // Rapid filter changes (clear one, pick another) fire overlapping
+  // requests; without this, a slower OLDER request could resolve AFTER a
+  // newer one and clobber correct results with stale/empty data — and
+  // since nothing else re-triggers `load`, that stuck "0 sonuç" survived
+  // even navigating away and back (only a hard refresh cleared it). Only
+  // the response for the most recently started request is ever applied.
+  const loadReqId = useRef(0);
   const load = useCallback(
     async (refresh = false) => {
+      const reqId = ++loadReqId.current;
       if (refresh) setRefreshing(true);
       else setLoading(true);
       try {
         const res = await api.fashionLooks({ gender: gender || undefined, ...selected, q: qActive || undefined });
+        if (reqId !== loadReqId.current) return;
         const list = res.items || [];
         setItems(list);
         setHasMore(list.length >= PAGE);
       } catch {
+        if (reqId !== loadReqId.current) return;
         setItems([]);
         setHasMore(false);
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (reqId === loadReqId.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [gender, selected, qActive],
