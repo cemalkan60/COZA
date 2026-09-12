@@ -71,9 +71,17 @@ export const ZoomableImage = forwardRef<
   // drags. Only re-enable single-finger panning once actually zoomed in.
   const [isZoomed, setIsZoomed] = useState(false);
   const [imgAttempt, setImgAttempt] = useState(0);
+  const imgRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (imgRetryTimer.current) clearTimeout(imgRetryTimer.current);
     setImgAttempt(0);
   }, [uri]);
+  useEffect(
+    () => () => {
+      if (imgRetryTimer.current) clearTimeout(imgRetryTimer.current);
+    },
+    [],
+  );
   const bustedUri = imgAttempt === 0 ? uri : `${uri}${uri.includes("?") ? "&" : "?"}_retry=${imgAttempt}`;
 
   const notifyZoom = (next: boolean) => {
@@ -278,7 +286,17 @@ export const ZoomableImage = forwardRef<
             style={{ width, height }}
             contentFit={contentFit}
             cachePolicy={FASHION_IMAGE_CACHE_POLICY}
-            onError={() => setImgAttempt((a) => (a < MAX_IMAGE_RETRIES ? a + 1 : a))}
+            onError={() => {
+              if (imgAttempt >= MAX_IMAGE_RETRIES) return;
+              // See RetryImage's onError comment: same growing backoff so a
+              // rate-limited R2 request isn't retried instantly into the
+              // same limit (this is the fullscreen viewer, so that failure
+              // mode is the "viewer opens completely dark" QA report).
+              if (imgRetryTimer.current) clearTimeout(imgRetryTimer.current);
+              imgRetryTimer.current = setTimeout(() => {
+                setImgAttempt((a) => (a < MAX_IMAGE_RETRIES ? a + 1 : a));
+              }, 400 * (imgAttempt + 1));
+            }}
           />
         </Animated.View>
       </GestureDetector>

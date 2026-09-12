@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 import { Image, type ImageProps } from "expo-image";
 
@@ -57,13 +57,23 @@ type Props = Omit<ImageProps, "source"> & { uri: string | undefined | null };
 
 export default function RetryImage({ uri, ...rest }: Props) {
   const [attempt, setAttempt] = useState(0);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearPendingRetry = () => {
+    if (retryTimer.current) {
+      clearTimeout(retryTimer.current);
+      retryTimer.current = null;
+    }
+  };
 
   // A new `uri` (e.g. this card recycled to a different collection) always
   // starts its own fresh retry budget rather than inheriting the previous
   // photo's attempt count.
   useEffect(() => {
+    clearPendingRetry();
     setAttempt(0);
   }, [uri]);
+  useEffect(() => clearPendingRetry, []);
 
   if (!uri) return null;
 
@@ -83,7 +93,15 @@ export default function RetryImage({ uri, ...rest }: Props) {
       // OS/version. Web keeps the default policy (see fashionImageSource).
       cachePolicy={FASHION_IMAGE_CACHE_POLICY}
       onError={() => {
-        setAttempt((a) => (a < MAX_RETRIES ? a + 1 : a));
+        if (attempt >= MAX_RETRIES) return;
+        // QA traced the R2 503s to (most likely) Cloudflare briefly
+        // rate-limiting the bucket — retrying instantly, the old behavior,
+        // just re-hit the same limit within the same second. A short,
+        // growing delay gives it a moment to clear first.
+        clearPendingRetry();
+        retryTimer.current = setTimeout(() => {
+          setAttempt((a) => (a < MAX_RETRIES ? a + 1 : a));
+        }, 400 * (attempt + 1));
       }}
     />
   );
