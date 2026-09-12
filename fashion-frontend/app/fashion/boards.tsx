@@ -10,7 +10,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,6 +22,7 @@ import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
+import { useContentWidth } from "@/src/hooks/useContentWidth";
 import { shareBoard } from "@/src/utils/shareBoard";
 import { sharePhoto } from "@/src/utils/sharePhoto";
 import { useWatermarkPref } from "@/src/hooks/useWatermarkPref";
@@ -36,7 +36,7 @@ export default function Boards() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { width, height } = useWindowDimensions();
+  const { width, height } = useContentWidth();
 
   const boardId = (params.board as string) || "";
 

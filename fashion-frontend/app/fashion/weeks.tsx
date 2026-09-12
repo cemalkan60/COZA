@@ -2,7 +2,7 @@
 // retrospective index of city+season fashion weeks (not a forward-looking
 // calendar/countdown — see the note on /fashion/fashion-weeks in server.py).
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -13,6 +13,7 @@ import { useT } from "@/src/i18n";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
 import RetryImage from "@/src/components/RetryImage";
+import { useContentWidth } from "@/src/hooks/useContentWidth";
 
 type Week = { city: string; season: string; season_label: string; count: number; cover: string | null };
 
@@ -21,7 +22,7 @@ export default function FashionWeeks() {
   const { t, formatSeason } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width } = useContentWidth();
 
   const [items, setItems] = useState<Week[]>([]);
   const [loading, setLoading] = useState(true);

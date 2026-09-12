@@ -10,7 +10,6 @@ import {
   Pressable,
   Modal,
   ScrollView,
-  useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -27,6 +26,7 @@ import { saveLastCollection, pushRecentCollection } from "@/src/utils/lastCollec
 import { useAuth } from "@/src/context/AuthContext";
 import { sharePhoto } from "@/src/utils/sharePhoto";
 import { useWatermarkPref } from "@/src/hooks/useWatermarkPref";
+import { useContentWidth } from "@/src/hooks/useContentWidth";
 
 export default function BrandGallery() {
   const params = useLocalSearchParams();
@@ -37,7 +37,7 @@ export default function BrandGallery() {
   const { watermark } = useWatermarkPref();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width, height } = useWindowDimensions();
+  const { width, height } = useContentWidth();
 
   const id = (params.id as string) || "";
   const titleParam = (params.title as string) || "";

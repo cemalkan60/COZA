@@ -11,7 +11,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,6 +25,7 @@ import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
 import { storage } from "@/src/utils/storage";
+import { useContentWidth } from "@/src/hooks/useContentWidth";
 
 // Lens source_id is "<collection source_id>#<photo index>" (see fashion_looks).
 function splitLookId(sid: string): { source_id: string; photo_index: number } {
@@ -44,7 +44,7 @@ export default function FashionSearch() {
   const { t, formatSeason, optLabel } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width, height } = useWindowDimensions();
+  const { width, height } = useContentWidth();
 
   const [filters, setFilters] = useState<FashionLookFilters | null>(null);
   const [gender, setGender] = useState("");
