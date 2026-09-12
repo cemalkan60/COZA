@@ -554,6 +554,13 @@ def blurhash_for_url(thumb_url: str) -> Optional[str]:
 # server.py, so real image-decode concurrency is this x that. Too high and
 # the box OOM-kills mid-scrape (seen live). Both are env-tunable.
 _CACHE_WORKERS = int(os.environ.get("R2_CACHE_WORKERS", "3"))
+# consolidate_into_primary is a pure byte copy (no PIL decode/resize, no
+# thumbnail generation) -- the OOM risk above doesn't apply, so this can
+# run at much higher concurrency than the general cache path. Bumped from
+# reusing _CACHE_WORKERS(=3) after that made a 3-account consolidation
+# feel like it was hanging with nothing to watch (Cem: "taşımayı
+# hızlandırmanın bi yolu yok mu").
+_CONSOLIDATE_WORKERS = int(os.environ.get("R2_CONSOLIDATE_WORKERS", "24"))
 
 
 def cache_images_with_thumb(urls: list, max_workers: int = None) -> list:
@@ -613,7 +620,7 @@ def consolidate_into_primary(max_workers: int = None) -> dict:
             logger.error("image_store consolidate: failed to copy %s from %s: %s", key, acc["bucket"], exc)
             return "failed"
 
-    workers = max_workers or _CACHE_WORKERS
+    workers = max_workers or _CONSOLIDATE_WORKERS
     for acc in _ACCOUNTS[1:]:
         keys = _list_keys(acc)
         if not keys:
