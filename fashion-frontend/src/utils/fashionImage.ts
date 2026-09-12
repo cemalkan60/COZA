@@ -62,6 +62,20 @@ function makeCandidates(original: string): string[] {
 // only if the original isn't reachable.
 export async function resolveBestImage(original: string): Promise<string> {
   const candidates = makeCandidates(original);
+  // Nothing to choose between (true for every R2-hosted photo -- everything
+  // except a fashion-press.net "/wNNN_" thumbnail URL, see makeCandidates)
+  // -- so skip the probe entirely rather than returning `original` after
+  // needlessly loading it once already. That probe loads the URL with a
+  // plain, non-CORS `new Image()` (see probeImage above), and the actual
+  // display a moment later goes through expo-image's web renderer, which
+  // loads the SAME url with crossOrigin="anonymous" (a different request
+  // mode). Safari's HTTP cache doesn't reliably partition by request mode
+  // the way Chrome's does, so it can serve the earlier plain-mode response
+  // to the later CORS-mode request; an opaque response fails the browser's
+  // CORS check, and the image never renders -- Chrome-only-works,
+  // Safari-never-works for the exact same photo, every time (Cem: "safariden
+  // girdiğimde... gözükmüyor", "bilgisayardakinde Chrome'da gözüküyor").
+  if (candidates.length <= 1) return original;
   for (const c of candidates) {
     if (!c) continue;
     const ok = await probeImage(c);
