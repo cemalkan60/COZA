@@ -289,65 +289,6 @@ export default function Fashion() {
         </View>
       </View>
 
-      {lastCollection && (
-        <Pressable
-          testID="fashion-resume"
-          onPress={() =>
-            router.push(
-              `/fashion/brand/${encodeURIComponent(lastCollection.source_id)}?title=${encodeURIComponent(lastCollection.title)}&season=${encodeURIComponent(lastCollection.season)}`,
-            )
-          }
-          style={[styles.resumeCard, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl }]}
-        >
-          <View style={[styles.resumeThumbWrap, { backgroundColor: colors.surfaceTertiary }]}>
-            {lastCollection.image ? (
-              <RetryImage uri={fashionImageUri(lastCollection.image)} style={styles.image} contentFit="cover" transition={180} />
-            ) : null}
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700" }}>{t("feed.resume")}</Text>
-            <Text numberOfLines={1} style={{ color: colors.onSurface, fontWeight: "700", fontSize: 14, marginTop: 2 }}>
-              {lastCollection.title}
-              {lastCollection.season ? (
-                <Text style={{ color: colors.brandSecondary, fontWeight: "600" }}> ({formatSeason(lastCollection.season, lastCollection.season)})</Text>
-              ) : null}
-            </Text>
-          </View>
-          <Feather name="chevron-right" size={18} color={colors.brandSecondary} />
-        </Pressable>
-      )}
-
-      {recentCollections.length > 1 && (
-        <View style={{ marginTop: 10 }}>
-          <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700", marginHorizontal: spacing.xl, marginBottom: 8 }}>
-            {t("feed.recentlyViewed")}
-          </Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 10 }}>
-            {recentCollections.slice(1).map((c) => (
-              <Pressable
-                key={c.source_id}
-                testID={`fashion-recent-${c.source_id}`}
-                onPress={() =>
-                  router.push(
-                    `/fashion/brand/${encodeURIComponent(c.source_id)}?title=${encodeURIComponent(c.title)}&season=${encodeURIComponent(c.season)}`,
-                  )
-                }
-                style={{ width: 72 }}
-              >
-                <View style={{ width: 72, height: 96, borderRadius: 4, overflow: "hidden", backgroundColor: colors.surfaceTertiary }}>
-                  {c.image ? (
-                    <RetryImage uri={fashionImageUri(c.image)} style={styles.image} contentFit="cover" />
-                  ) : null}
-                </View>
-                <Text numberOfLines={1} style={{ color: colors.onSurface, fontSize: 10, fontWeight: "600", marginTop: 4 }}>
-                  {c.title}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.brand} />
@@ -358,6 +299,68 @@ export default function Fashion() {
           contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor={colors.brand} />}
         >
+          {/* Cem: these two used to sit above this ScrollView (fixed,
+              never scrolled) — moved inside so they scroll away with
+              everything else instead of staying pinned under the header. */}
+          {lastCollection && (
+            <Pressable
+              testID="fashion-resume"
+              onPress={() =>
+                router.push(
+                  `/fashion/brand/${encodeURIComponent(lastCollection.source_id)}?title=${encodeURIComponent(lastCollection.title)}&season=${encodeURIComponent(lastCollection.season)}`,
+                )
+              }
+              style={[styles.resumeCard, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginHorizontal: spacing.xl, marginTop: 14 }]}
+            >
+              <View style={[styles.resumeThumbWrap, { backgroundColor: colors.surfaceTertiary }]}>
+                {lastCollection.image ? (
+                  <RetryImage uri={fashionImageUri(lastCollection.image)} style={styles.image} contentFit="cover" transition={180} />
+                ) : null}
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700" }}>{t("feed.resume")}</Text>
+                <Text numberOfLines={1} style={{ color: colors.onSurface, fontWeight: "700", fontSize: 14, marginTop: 2 }}>
+                  {lastCollection.title}
+                  {lastCollection.season ? (
+                    <Text style={{ color: colors.brandSecondary, fontWeight: "600" }}> ({formatSeason(lastCollection.season, lastCollection.season)})</Text>
+                  ) : null}
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={18} color={colors.brandSecondary} />
+            </Pressable>
+          )}
+
+          {recentCollections.length > 1 && (
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ color: colors.brandSecondary, fontSize: 11, fontWeight: "700", marginHorizontal: spacing.xl, marginBottom: 8 }}>
+                {t("feed.recentlyViewed")}
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 10 }}>
+                {recentCollections.slice(1).map((c) => (
+                  <Pressable
+                    key={c.source_id}
+                    testID={`fashion-recent-${c.source_id}`}
+                    onPress={() =>
+                      router.push(
+                        `/fashion/brand/${encodeURIComponent(c.source_id)}?title=${encodeURIComponent(c.title)}&season=${encodeURIComponent(c.season)}`,
+                      )
+                    }
+                    style={{ width: 72 }}
+                  >
+                    <View style={{ width: 72, height: 96, borderRadius: 4, overflow: "hidden", backgroundColor: colors.surfaceTertiary }}>
+                      {c.image ? (
+                        <RetryImage uri={fashionImageUri(c.image)} style={styles.image} contentFit="cover" />
+                      ) : null}
+                    </View>
+                    <Text numberOfLines={1} style={{ color: colors.onSurface, fontSize: 10, fontWeight: "600", marginTop: 4 }}>
+                      {c.title}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: spacing.xl, gap: 8, paddingVertical: 14 }}>
             <Chip label={t("common.all")} active={!category} onPress={() => setCategory(undefined)} colors={colors} />
             {CATEGORY_VALUES.map((c) => (
