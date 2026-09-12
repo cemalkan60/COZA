@@ -291,16 +291,31 @@ export default function Boards() {
   // intermittent 503s section A of the same report already flagged: this
   // screen refetches on every focus, and a failed fetch was wiping the
   // whole list — a board didn't actually get lost, the screen just showed
-  // an empty one until the next successful load. Only clear on the very
-  // first load (nothing to preserve yet); otherwise keep what's on screen
-  // and surface a small retry banner instead of blanking real data.
-  const hasLoadedRef = useRef(false);
+  // an empty one until the next successful load.
+  //
+  // First attempt tracked "has this component instance loaded before" in a
+  // ref, clearing only on that first-ever failure. QA's rapid back-and-forth
+  // navigation defeated that: expo-router mounts a fresh screen instance on
+  // each push, so the ref restarted at `false` every time regardless of
+  // whether the PREVIOUS instance had a perfectly good list — a failure on
+  // the very next visit still wiped it, reproducing the exact bug (Chrome,
+  // second try: banner showed, but the list under it still went empty).
+  //
+  // Reading current boards/photos from refs (kept in sync below) instead
+  // sidesteps the remount problem entirely: the catch block simply never
+  // clears them, whatever they are — `[]` on a real first load (nothing to
+  // lose) or the last good list on a refresh (worth keeping either way).
   const [loadError, setLoadError] = useState(false);
+  const boardsRef = useRef<Board[]>([]);
+  const photosRef = useRef<SavedPhoto[]>([]);
   useEffect(() => {
-    hasLoadedRef.current = false;
-  }, [boardId]);
+    boardsRef.current = boards;
+  }, [boards]);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
   const load = useCallback(async () => {
-    setLoading(!hasLoadedRef.current);
+    setLoading(boardsRef.current.length === 0 && photosRef.current.length === 0);
     try {
       const [bl, ph] = await Promise.all([
         api.boardsList(),
@@ -309,13 +324,8 @@ export default function Boards() {
       setBoards(bl.boards || []);
       setPhotos(ph.items || []);
       setLoadError(false);
-      hasLoadedRef.current = true;
     } catch {
       setLoadError(true);
-      if (!hasLoadedRef.current) {
-        setBoards([]);
-        setPhotos([]);
-      }
     } finally {
       setLoading(false);
     }
