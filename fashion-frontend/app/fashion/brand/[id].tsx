@@ -688,7 +688,18 @@ export default function BrandGallery() {
       {/* G2: "Bu kapak/marka yanlış" */}
       <Modal visible={reportOpen} transparent animationType="fade" onRequestClose={() => setReportOpen(false)}>
         <Pressable style={styles.reportOverlay} onPress={() => (reportSending ? null : setReportOpen(false))}>
-          <View style={[styles.reportBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {/* This box used to be a plain View; on web, a tap on a reason
+              button bubbled straight through it to the overlay Pressable
+              above (RN Web click events bubble through the DOM — RN's
+              native touch responder never had this problem, which is why
+              it only showed up here). That closed the whole modal
+              instantly, so the reportSent confirmation — shown in this
+              SAME box for 1.8s before auto-closing — never had a chance to
+              render, even though the report itself saved fine (QA verified
+              the POST returns 200). Making this a Pressable with a no-op
+              onPress claims the tap so it doesn't also count as "tapped
+              outside" and close the overlay. */}
+          <Pressable onPress={() => {}} style={[styles.reportBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             {reportSent ? (
               <Text style={{ color: colors.onSurface, fontWeight: "700", textAlign: "center", paddingVertical: 8 }}>
                 {t("detail.reportSent")}
@@ -712,7 +723,7 @@ export default function BrandGallery() {
                 {reportSending && <ActivityIndicator color={colors.brand} style={{ marginTop: 8 }} />}
               </>
             )}
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
     </View>
