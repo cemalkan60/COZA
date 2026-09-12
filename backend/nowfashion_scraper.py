@@ -14,6 +14,7 @@ fixed, confirmed pattern) — page text is only used as a fallback.
 """
 import os
 import re
+import json
 import logging
 
 import requests
@@ -52,7 +53,7 @@ _NON_GALLERY_SLUGS = {
 _GALLERY_HREF_RE = re.compile(r"^/([a-z0-9][a-z0-9-]{10,})/?$")
 
 
-def _fetch(path_or_url: str, timeout: int = 30, wait_for_selector: "Optional[str]" = None) -> str:
+def _fetch(path_or_url: str, timeout: int = 30, render_wait_s: "Optional[int]" = None) -> str:
     url = path_or_url if path_or_url.startswith("http") else BASE + path_or_url
     try:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
@@ -72,13 +73,23 @@ def _fetch(path_or_url: str, timeout: int = 30, wait_for_selector: "Optional[str
         # /fashion-week-schedules (a client-rendered/Next.js page): the
         # initial shell loads before its own client-side data fetch
         # populates the schedule cards, so a plain render grabs an empty
-        # DOM (confirmed live: job ran clean, 0 entries parsed). wait_for_
-        # selector tells ScraperAPI's headless browser to hold the response
-        # until that content has actually appeared.
+        # DOM (confirmed live: job ran clean, 0 entries parsed).
+        #
+        # wait_for_selector (the simple ?wait_for_selector=... query param)
+        # was the obvious next thing to reach for, but ScraperAPI itself
+        # flatly 403's any request carrying it on this account/plan --
+        # confirmed live twice (with and without a comma in the value), so
+        # it's the parameter itself being rejected, not its syntax. Their
+        # docs list a separate mechanism for the same need: a "Render
+        # Instruction Set" sent via the x-sapi-instruction_set HEADER
+        # (not a query param) supporting a plain time-based "wait"
+        # instruction -- a different delivery path, so hopefully not
+        # gated the same way.
         params = {"api_key": SCRAPER_API_KEY, "url": url, "render": "true"}
-        if wait_for_selector:
-            params["wait_for_selector"] = wait_for_selector
-        resp = requests.get(SCRAPER_PROXY_BASE, params=params, timeout=max(timeout, 90))
+        headers = {}
+        if render_wait_s:
+            headers["x-sapi-instruction_set"] = json.dumps([{"type": "wait", "value": render_wait_s}])
+        resp = requests.get(SCRAPER_PROXY_BASE, params=params, headers=headers, timeout=max(timeout, 30 + (render_wait_s or 0) + 30))
         resp.raise_for_status()
         return resp.text
 
@@ -324,13 +335,14 @@ def scrape_schedule_dates() -> list:
     unconfirmed markup; skipped for now (Cem mainly wants current/upcoming
     anyway)."""
     try:
-        # A comma-separated selector list here ("a.schedule-card-now, a.
-        # schedule-upcoming-card") got a flat 403 straight from ScraperAPI
-        # itself (confirmed live in Railway's logs) despite their docs
-        # showing no plan restriction on this parameter -- likely their
-        # validation rejects the comma. A single selector is enough: there
-        # is essentially always at least one upcoming fashion week listed.
-        html = _fetch("/fashion-week-schedules", wait_for_selector="a.schedule-upcoming-card")
+        # wait_for_selector (both a comma-separated value and a single
+        # selector) got a flat 403 from ScraperAPI itself on this account,
+        # confirmed live twice -- see _fetch's note. Using the instruction-
+        # set time-based wait instead: 8s is a guess at "long enough for a
+        # Next.js page's own client-side fetch to resolve" with no way to
+        # verify short of trying it; the diagnostic logging below stays
+        # until this is confirmed actually working.
+        html = _fetch("/fashion-week-schedules", render_wait_s=8)
     except Exception as exc:  # noqa: BLE001
         logger.error("nowfashion: schedule-dates fetch failed: %s", exc)
         return []
