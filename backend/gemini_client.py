@@ -602,6 +602,90 @@ def parse_look_query(query: str, vocab: dict) -> "Optional[dict]":
     return out
 
 
+_ASSISTANT_NAV_TARGETS = ("boards", "search", "brands", "weeks", "settings", "inbox")
+
+_ASSISTANT_PROMPT = (
+    "You are the in-app help assistant for COZA Fashion, a runway/collection "
+    "archive app. Reply in the SAME language the user's message is written "
+    "in (Turkish, English, or Spanish). Keep the reply short and friendly "
+    "(1-3 sentences), like a helpful concierge, not a manual.\n\n"
+    "What the app actually has, so you never invent a feature it doesn't:\n"
+    "- A browsable feed of runway collections (women/men/haute couture), "
+    "filterable by season/city/source, adjustable grid size.\n"
+    "- \"COZA Lens\" (the search screen): find individual runway PHOTOS by "
+    "item/color/material/pattern/season, either via dropdown filters or a "
+    "free sentence describing what's IN the photo (e.g. \"pink dress\") — it "
+    "does NOT search by brand or collection name, only by what a photo shows.\n"
+    "- \"Panolarım\" (boards): save photos into folders/boards, add personal "
+    "notes, share a board as a public read-only link, invite teammates to "
+    "view/react/comment on a board.\n"
+    "- A per-collection \"AI ile anlat\" button that describes whichever "
+    "photo is open, and a way to flag a wrong cover/brand.\n"
+    "- Moda Haftaları (fashion weeks) and Markalar (brands) index pages.\n"
+    "- Ayarlar (settings): theme, language, watermark preference, PWA "
+    "install, admin panel (admins only).\n\n"
+    "Decide the user's intent and reply with ONLY a compact JSON object, no "
+    "markdown, no code fence:\n"
+    '{"reply": "<your short answer>", "intent": "chat" | "search" | '
+    '"navigate", "navigate_to": "<one of boards|search|brands|weeks|'
+    'settings|inbox, ONLY if intent is navigate>"}\n\n'
+    'Use intent "search" when the user describes a garment/look they want '
+    'to find (color, item, material, pattern, season) — your reply should '
+    'say you\'re pulling that up, e.g. "Pembe elbiseleri getiriyorum!" '
+    '(the actual search is run separately from your reply, by another '
+    'step — you only need to signal the intent and write a natural reply '
+    "as if it's about to happen).\n"
+    'Use intent "navigate" when the user asks to go to / open / see one of '
+    "the screens above by name or clear description.\n"
+    'Otherwise use intent "chat" (questions about how something works, '
+    "general conversation, anything unclear).\n\n"
+    "{history}Kullanıcı / User: {message}"
+)
+
+
+def assistant_reply(message: str, history: list) -> "Optional[dict]":
+    """The in-app help assistant (floating chat button). `history` is the
+    last few turns as [{"role": "user"|"assistant", "text": "..."}], oldest
+    first — kept short by the caller (server.py caps it) since it's resent
+    in full on every turn (no server-side session state).
+
+    Deliberately reuses parse_look_query for the ACTUAL filter extraction
+    when intent is "search" (see server.py's /assistant/chat) rather than
+    asking this same call to also emit filter values — that prompt already
+    carefully constrains values to the real vocab and is exercised by COZA
+    Lens's own "Kelimeyle ara" every day; duplicating that logic here would
+    just be a second, unproven copy of it."""
+    if not ENABLED or not (message or "").strip():
+        return None
+    history_text = ""
+    if history:
+        lines = [f'{"Kullanıcı" if h.get("role") == "user" else "Asistan"}: {h.get("text", "")}' for h in history]
+        history_text = "Önceki mesajlar:\n" + "\n".join(lines) + "\n\n"
+    text = _generate(
+        [{"text": _ASSISTANT_PROMPT.format(history=history_text, message=message.strip()[:500])}],
+        max_output_tokens=250,
+        response_json=True,
+    )
+    if not text:
+        return None
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("reply"), str) or not obj["reply"].strip():
+        return None
+    intent = obj.get("intent") if obj.get("intent") in ("chat", "search", "navigate") else "chat"
+    navigate_to = obj.get("navigate_to")
+    if navigate_to not in _ASSISTANT_NAV_TARGETS:
+        navigate_to = None
+    if intent == "navigate" and navigate_to is None:
+        intent = "chat"  # asked to navigate but to nowhere real -- treat as a plain reply
+    return {"reply": obj["reply"].strip(), "intent": intent, "navigate_to": navigate_to}
+
+
 def resolve_brand_name(brand_ja: str) -> "str | None":
     """Ask Gemini for the real Latin-script spelling of a brand name written
     in Japanese.

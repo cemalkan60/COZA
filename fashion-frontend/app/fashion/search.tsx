@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 
 import { api, FashionLookFilters, FashionLookItem, FashionLookOption } from "@/src/api/client";
@@ -46,14 +46,22 @@ export default function FashionSearch() {
   const router = useRouter();
   const { width, height } = useContentWidth();
 
+  // The floating assistant hands off a search here as filter values in the
+  // URL (e.g. after "pembe elbise bul") — read once as the initial state,
+  // same as any other deep link; the user's own later filter taps take
+  // over from there, this never re-applies on its own.
+  const initialParams = useLocalSearchParams<{
+    gender?: string; season?: string; item?: string; color?: string; material?: string; pattern?: string;
+  }>();
+
   const [filters, setFilters] = useState<FashionLookFilters | null>(null);
-  const [gender, setGender] = useState("");
+  const [gender, setGender] = useState(initialParams.gender || "");
   const [selected, setSelected] = useState<Record<FilterKey, string>>({
-    season: "",
-    item: "",
-    color: "",
-    material: "",
-    pattern: "",
+    season: initialParams.season || "",
+    item: initialParams.item || "",
+    color: initialParams.color || "",
+    material: initialParams.material || "",
+    pattern: initialParams.pattern || "",
   });
   const [items, setItems] = useState<FashionLookItem[]>([]);
   const [loading, setLoading] = useState(true);

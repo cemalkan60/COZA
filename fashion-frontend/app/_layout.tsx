@@ -11,6 +11,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { ThemeProvider, useTheme } from "@/src/theme/ThemeContext";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { LanguageProvider } from "@/src/i18n";
+import AssistantWidget from "@/src/components/AssistantWidget";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -49,6 +50,7 @@ function ThemedShell() {
         <Stack.Screen name="settings" options={{ animation: "slide_from_right" }} />
         <Stack.Screen name="admin" options={{ animation: "slide_from_right" }} />
       </Stack>
+      <AssistantWidget />
     </View>
   );
 }

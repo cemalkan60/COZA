@@ -47,6 +47,12 @@ export const tr = {
     signingIn: "Giriş yapılıyor…",
     error: "Giriş başarısız. Bilgileri kontrol et.",
   },
+  assistant: {
+    title: "Yardımcı",
+    empty: "Bir şey sor! Örnek: \"pano nasıl oluşturulur\" ya da \"pembe elbise bul\"",
+    placeholder: "Bir şey yaz...",
+    error: "Bir şeyler ters gitti, tekrar dener misin?",
+  },
   feed: {
     title: "FASHION",
     menuBoards: "Panolarım",
@@ -244,6 +250,12 @@ export const en: Dict = {
     signingIn: "Signing in…",
     error: "Sign-in failed. Check your details.",
   },
+  assistant: {
+    title: "Assistant",
+    empty: "Ask me something! e.g. \"how do I make a board\" or \"find a pink dress\"",
+    placeholder: "Type something...",
+    error: "Something went wrong, want to try again?",
+  },
   feed: {
     title: "FASHION",
     menuBoards: "My boards",
@@ -440,6 +452,12 @@ export const es: Dict = {
     signIn: "Iniciar sesión",
     signingIn: "Iniciando sesión…",
     error: "Error al iniciar sesión. Revisa tus datos.",
+  },
+  assistant: {
+    title: "Asistente",
+    empty: "¡Pregúntame algo! Ej: \"cómo creo un tablero\" o \"busca un vestido rosa\"",
+    placeholder: "Escribe algo...",
+    error: "Algo salió mal, ¿quieres intentarlo de nuevo?",
   },
   feed: {
     title: "FASHION",

@@ -2652,6 +2652,18 @@ async def fashion_looks_filters(user: Annotated[dict, Depends(get_current_user)]
     return fashion_scraper.looks_filters()
 
 
+def _looks_vocab() -> dict:
+    raw = fashion_scraper.looks_filters()
+    return {
+        "gender": [g["value"] for g in raw["genders"] if g["value"]],
+        "season": [s["value"] for s in raw["seasons"]],
+        "item": [opt["value"] for group in raw["items"] for opt in group["options"]],
+        "color": [c["value"] for c in raw["colors"]],
+        "material": [m["value"] for m in raw["materials"]],
+        "pattern": [p["value"] for p in raw["patterns"]],
+    }
+
+
 class ParseQueryBody(BaseModel):
     text: str = Field(min_length=1, max_length=300)
 
@@ -2663,22 +2675,67 @@ async def fashion_parse_query(body: ParseQueryBody, user: Annotated[dict, Depend
     fast keyword-table free-text search (fashion_tag_map.free_text_conditions,
     used by /fashion/looks's own `q` param) — this is the heavier, opt-in
     "understand a whole sentence and set the actual filter dropdowns" path."""
-    raw = fashion_scraper.looks_filters()
-    vocab = {
-        "gender": [g["value"] for g in raw["genders"] if g["value"]],
-        "season": [s["value"] for s in raw["seasons"]],
-        "item": [opt["value"] for group in raw["items"] for opt in group["options"]],
-        "color": [c["value"] for c in raw["colors"]],
-        "material": [m["value"] for m in raw["materials"]],
-        "pattern": [p["value"] for p in raw["patterns"]],
-    }
     if not gemini_client.ENABLED:
         raise HTTPException(503, "Yapay zeka şu anda kullanılamıyor.")
-    parsed = await asyncio.to_thread(gemini_client.parse_look_query, body.text, vocab)
+    parsed = await asyncio.to_thread(gemini_client.parse_look_query, body.text, _looks_vocab())
     if parsed is None:
         raise HTTPException(502, "Anlaşılamadı, tekrar dene.")
     await _bump_usage_counter("gemini_calls")
     return {"filters": parsed}
+
+
+# Floating "help assistant" — keeps this a bounded, predictable cost (unlike
+# a scraper's fixed twice-a-week run, every message is its own Gemini call)
+# by capping how many messages one user can send per day. Env-tunable.
+_ASSISTANT_DAILY_LIMIT = int(os.environ.get("ASSISTANT_DAILY_LIMIT", "20"))
+
+
+class AssistantChatBody(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+    # [{"role": "user"|"assistant", "text": "..."}], oldest first — the
+    # frontend's own in-memory conversation, resent each turn (no server
+    # session). Capped here regardless of what the client sends.
+    history: list = Field(default_factory=list)
+
+
+@api.post("/assistant/chat")
+async def assistant_chat(body: AssistantChatBody, user: Annotated[dict, Depends(get_current_user)]):
+    """The bottom-right floating chat button. Answers app-usage questions
+    and, when the message describes a look, hands back Lens filters the
+    frontend can run a search with directly (reuses parse_look_query — see
+    gemini_client.assistant_reply's own note on why that's a separate call
+    rather than one prompt trying to do both jobs at once)."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    usage_key = {"_id": f"assistant:{user['id']}:{today}"}
+    usage_doc = await db.meta.find_one_and_update(
+        usage_key, {"$inc": {"count": 1}}, upsert=True, return_document=True,
+    )
+    if (usage_doc or {}).get("count", 0) > _ASSISTANT_DAILY_LIMIT:
+        return {
+            "reply": "Bugünkü mesaj hakkın doldu, yarın tekrar dene.",
+            "intent": "chat", "navigate_to": None, "search_filters": None, "limit_reached": True,
+        }
+    if not gemini_client.ENABLED:
+        return {
+            "reply": "Asistan şu anda kullanılamıyor.",
+            "intent": "chat", "navigate_to": None, "search_filters": None, "limit_reached": False,
+        }
+    history = [
+        {"role": h["role"], "text": str(h["text"])[:500]}
+        for h in (body.history or [])
+        if isinstance(h, dict) and h.get("role") in ("user", "assistant") and h.get("text")
+    ][-6:]
+    result = await asyncio.to_thread(gemini_client.assistant_reply, body.message, history)
+    await _bump_usage_counter("gemini_calls")
+    if not result:
+        return {
+            "reply": "Şu an cevap veremedim, tekrar dener misin?",
+            "intent": "chat", "navigate_to": None, "search_filters": None, "limit_reached": False,
+        }
+    out = {**result, "search_filters": None, "limit_reached": False}
+    if result["intent"] == "search":
+        out["search_filters"] = await asyncio.to_thread(gemini_client.parse_look_query, body.message, _looks_vocab()) or {}
+    return out
 
 
 _LOOKS_LIMIT = 90

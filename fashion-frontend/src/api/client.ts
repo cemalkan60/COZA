@@ -329,6 +329,19 @@ export const api = {
   // B3: free sentence -> Lens filter values (Gemini), applied by the caller.
   fashionParseQuery: (text: string): Promise<{ filters: Record<string, string> }> =>
     request("/fashion/looks/parse-query", { method: "POST", body: JSON.stringify({ text }) }, true),
+  // Floating help-assistant button. `history` is the conversation so far
+  // (oldest first) — this app keeps no server-side session, so the whole
+  // (capped) history is resent every turn for context.
+  assistantChat: (
+    message: string,
+    history: { role: "user" | "assistant"; text: string }[],
+  ): Promise<{
+    reply: string;
+    intent: "chat" | "search" | "navigate";
+    navigate_to: string | null;
+    search_filters: Record<string, string> | null;
+    limit_reached: boolean;
+  }> => request("/assistant/chat", { method: "POST", body: JSON.stringify({ message, history }) }, true),
   // C1: A-Z brand index.
   fashionBrands: (): Promise<{ items: { name: string; count: number; cover: string | null }[] }> =>
     request("/fashion/brands", {}, true),
