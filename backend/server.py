@@ -68,6 +68,7 @@ _JOB_LABELS = {
     "fashion_tag_photos": "Fotoğraf etiketleme",
     "fashion_repair_urls": "Fotoğraf adreslerini onarma",
     "fashion_migrate_image_domain": "Fotoğraf adreslerini yeni alan adına taşıma",
+    "fashion_consolidate_r2": "Depoları tek depoda birleştirme",
     "fashion_drop_dead_images": "Ölü fotoğraf adreslerini temizleme",
     "fashion_cover_fix": "Kapak düzeltme",
     "fashion_thumbnails": "Küçük resimler",
@@ -4145,6 +4146,44 @@ async def admin_fashion_migrate_image_domain(admin: Annotated[dict, Depends(requ
     if _fashion_lock.locked():
         return {"status": "already_running"}
     asyncio.create_task(_run_tracked("fashion_migrate_image_domain", run_fashion_migrate_image_domain()))
+    return {"status": "started"}
+
+
+async def run_fashion_consolidate_r2() -> dict:
+    """Wraps image_store.consolidate_into_primary() with this app's usual
+    job-tracking (progress isn't reported mid-run since the underlying
+    boto3 calls are all synchronous/blocking -- this can take a while for
+    a large secondary bucket, but it's safe to leave running and re-run
+    later if the request/connection times out first, since already-copied
+    keys are skipped). Run this BEFORE (or after -- order doesn't matter,
+    but not instead of) "Foto adreslerini yeni domaine taşı": that sweep
+    only fixes which DOMAIN a URL points to, this makes sure the object is
+    actually THERE regardless of which of the 3 accounts originally held
+    it."""
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
+        result = await asyncio.to_thread(image_store.consolidate_into_primary)
+        if result.get("status") == "error":
+            await _record_job_run(
+                "fashion_consolidate_r2", status="error", started_at=started_at, detail=result.get("detail", ""),
+            )
+            return result
+        await _record_job_run(
+            "fashion_consolidate_r2", status=result["status"], started_at=started_at,
+            done=result["copied"] + result["already_there"],
+            total=result["copied"] + result["already_there"] + result["failed"],
+            detail=f"{result['copied']} fotoğraf ana depoya kopyalandı, {result['already_there']} zaten oradaydı, {result['failed']} başarısız.",
+        )
+        return result
+
+
+@api.post("/admin/fashion-consolidate-r2")
+async def admin_fashion_consolidate_r2(admin: Annotated[dict, Depends(require_admin)]):
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(_run_tracked("fashion_consolidate_r2", run_fashion_consolidate_r2()))
     return {"status": "started"}
 
 

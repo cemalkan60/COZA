@@ -404,6 +404,12 @@ export const api = {
   // (a Custom Domain) — a hostname swap only, the object never moved.
   // See run_fashion_migrate_image_domain in server.py.
   fashionMigrateImageDomain: () => request("/admin/fashion-migrate-image-domain", { method: "POST" }, true),
+  // Copies every photo from the 2 secondary R2 accounts (added back when
+  // storage needed to spread across several accounts' free 10GB tiers)
+  // into the primary one, now that it's on a paid plan. Run alongside
+  // fashionMigrateImageDomain — that one only fixes which domain a URL
+  // points to, this makes sure the object is actually there.
+  fashionConsolidateR2: () => request("/admin/fashion-consolidate-r2", { method: "POST" }, true),
   // Diagnostic: probes every (key, model) slot the tagging rotation uses.
   geminiCheck: (): Promise<{
     enabled: boolean;

@@ -375,6 +375,13 @@ export default function AdminPanel() {
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Foto adreslerini yeni domaine taşı</Text>
                 </Pressable>
+                <Pressable
+                  disabled={!!busy}
+                  onPress={() => runAction("consolidate", api.fashionConsolidateR2, "Diğer 2 depodaki fotoğraflar ana depoya kopyalanıyor — büyük depolarda uzun sürebilir, güvenle tekrar çalıştırılabilir.")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Depoları tek depoda birleştir</Text>
+                </Pressable>
               </View>
             </Section>
 

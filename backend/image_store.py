@@ -568,3 +568,63 @@ def cache_images_with_thumb(urls: list, max_workers: int = None) -> list:
     workers = min(max_workers or _CACHE_WORKERS, len(urls))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return list(pool.map(cache_image_with_thumb, urls))
+
+
+def consolidate_into_primary(max_workers: int = None) -> dict:
+    """Copy every object from every secondary R2 account (_ACCOUNTS[1:] —
+    added via R2_ACCOUNTS_JSON to spread storage across several accounts'
+    free 10 GB tiers) into the primary one (_ACCOUNTS[0]), now that the
+    primary is on a paid plan and doesn't need the sharding for space
+    reasons any more. A single Custom Domain (see server.py's
+    run_fashion_migrate_image_domain, which already rewrote every stored
+    URL to point at the primary's domain) only serves the primary bucket —
+    this makes that bucket actually hold every object those URLs now
+    claim, not just the ones that happened to shard onto it originally.
+
+    Cross-account (a fully separate Cloudflare account/endpoint/credentials
+    each), so this is a real GET-then-PUT relay through this server, not a
+    single S3 copy_object call. Skips a key already present in the primary
+    bucket, so it's safe to re-run/resume after a timeout or a crash."""
+    if not ENABLED or len(_ACCOUNTS) < 2:
+        return {"status": "error", "detail": "Birden fazla depo (R2 account) yapılandırılmamış, taşınacak bir şey yok."}
+    from concurrent.futures import ThreadPoolExecutor
+
+    primary = _ACCOUNTS[0]
+    primary_client = _client_for(primary)
+    copied = already_there = failed = 0
+
+    def _list_keys(acc: dict) -> list:
+        client = _client_for(acc)
+        keys: list = []
+        for page in client.get_paginator("list_objects_v2").paginate(Bucket=acc["bucket"]):
+            keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        return keys
+
+    def _copy_one(acc: dict, key: str) -> str:
+        try:
+            if _object_exists(primary_client, primary["bucket"], key):
+                return "already_there"
+            obj = _client_for(acc).get_object(Bucket=acc["bucket"], Key=key)
+            body = obj["Body"].read()
+            content_type = obj.get("ContentType") or "application/octet-stream"
+            primary_client.put_object(Bucket=primary["bucket"], Key=key, Body=body, ContentType=content_type)
+            return "copied"
+        except Exception as exc:  # noqa: BLE001
+            logger.error("image_store consolidate: failed to copy %s from %s: %s", key, acc["bucket"], exc)
+            return "failed"
+
+    workers = max_workers or _CACHE_WORKERS
+    for acc in _ACCOUNTS[1:]:
+        keys = _list_keys(acc)
+        if not keys:
+            continue
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for result in pool.map(lambda k, acc=acc: _copy_one(acc, k), keys):
+                if result == "copied":
+                    copied += 1
+                elif result == "already_there":
+                    already_there += 1
+                else:
+                    failed += 1
+
+    return {"status": "ok" if not failed else "partial", "copied": copied, "already_there": already_there, "failed": failed}
