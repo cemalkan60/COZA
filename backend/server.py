@@ -4166,14 +4166,19 @@ async def run_fashion_consolidate_r2() -> dict:
         started_at = datetime.now(timezone.utc).isoformat()
         loop = asyncio.get_running_loop()
 
+        async def _write_progress(done: int, total: int) -> None:
+            await db.meta.update_one({"_id": "fashion"}, {"$set": {"repair_done": done, "repair_total": total}})
+
         def on_progress(done: int, total: int) -> None:
             # Called from a ThreadPoolExecutor worker thread, not the event
             # loop -- schedule the (async) Mongo write onto the loop instead
-            # of awaiting it directly here.
-            asyncio.run_coroutine_threadsafe(
-                db.meta.update_one({"_id": "fashion"}, {"$set": {"repair_done": done, "repair_total": total}}),
-                loop,
-            )
+            # of awaiting it directly here. run_coroutine_threadsafe insists
+            # on an actual coroutine object (asyncio.iscoroutine); Motor's
+            # update_one(...) call return value doesn't satisfy that check
+            # on its own ("TypeError: A coroutine object is required", seen
+            # live) even though `await`ing it directly works fine elsewhere
+            # in this file -- wrapping it in a real `async def` fixes that.
+            asyncio.run_coroutine_threadsafe(_write_progress(done, total), loop)
 
         await db.meta.update_one(
             {"_id": "fashion"},
