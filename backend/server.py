@@ -69,6 +69,7 @@ _JOB_LABELS = {
     "fashion_repair_urls": "Fotoğraf adreslerini onarma",
     "fashion_migrate_image_domain": "Fotoğraf adreslerini yeni alan adına taşıma",
     "fashion_consolidate_r2": "Depoları tek depoda birleştirme",
+    "nowfashion_schedule": "Moda haftası takvimi güncelleme",
     "fashion_drop_dead_images": "Ölü fotoğraf adreslerini temizleme",
     "fashion_cover_fix": "Kapak düzeltme",
     "fashion_thumbnails": "Küçük resimler",
@@ -983,18 +984,13 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 ("fashion-press/women", fashion_scraper.scrape_collections, (40, "women")),
                 ("fashion-press/men", fashion_scraper.scrape_collections, (40, "men")),
                 ("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, (40,)),
-                # nowfashion.com is the only source that carries a city (see its
-                # module docstring) -- without it, "Moda haftaları" (C2/C3) has
-                # nothing to group by and stays permanently empty (confirmed live
-                # by QA). It needs ScraperAPI's render=true fallback (~10x cost)
-                # since it blocks plain requests AND the non-rendered proxy with a
-                # JS challenge; Cem accepted that cost given this only runs twice
-                # a week. Starting with just the /fashion-week-schedules page
-                # (one task, one listing covering every city/season/category) per
-                # Cem's request rather than all 3 per-category listings at once —
-                # the per-category scrape_category(...) calls are still there,
-                # just not wired in here yet.
-                ("nowfashion/schedules", nowfashion_scraper.scrape_schedules, (60,)),
+                # nowfashion.com's actual runway-photo galleries (scrape_category,
+                # still in nowfashion_scraper.py) are NOT wired in here -- Cem
+                # only wants its fashion-week CALENDAR (dates, no photos), which
+                # is a fundamentally different shape than every other source
+                # here (city/season/dates, not a photo collection) and doesn't
+                # belong merged into db.fashion alongside them. See
+                # run_nowfashion_schedule_scrape's own separate job/collection.
             ]
             tasks += [(f"firstview/{cat}", firstview_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES]
 
@@ -2275,33 +2271,54 @@ async def fashion_brands_index(user: Annotated[dict, Depends(get_current_user)])
 
 @api.get("/fashion/fashion-weeks")
 async def fashion_weeks_index(user: Annotated[dict, Depends(get_current_user)]):
-    """C2/C3: "Moda haftası merkezi" — every (city, season) combination
-    that actually happened, as a browsable retrospective index. NOT a
-    forward-looking calendar/countdown (C3's other half) — we only learn a
-    show exists once fashion-press/firstview have already published it, so
-    there's no upcoming-show date to build a countdown from without a new
-    external data source. Detail view reuses /fashion/collections?city=&
-    season= directly, no separate endpoint needed."""
-    rows = await db.fashion.aggregate([
-        {"$match": {"city": {"$nin": ["", None]}, "season": {"$nin": ["", None]}}},
-        {"$sort": {"season_rank": -1}},
-        {"$group": {
-            "_id": {"city": "$city", "season": "$season"},
-            "n": {"$sum": 1},
-            "season_label": {"$first": "$season_label"},
-            "season_rank": {"$first": "$season_rank"},
-            "cover": {"$first": "$image_thumb"},
-            "cover_full": {"$first": "$image"},
-        }},
-        {"$sort": {"season_rank": -1, "_id.city": 1}},
-    ]).to_list(length=2000)
-    return {"items": [
-        {
-            "city": r["_id"]["city"], "season": r["_id"]["season"], "season_label": r.get("season_label") or "",
-            "count": r["n"], "cover": r.get("cover") or r.get("cover_full"),
-        }
-        for r in rows
-    ]}
+    """C2/C3: the fashion-week CALENDAR — city/season/date range, both past
+    and upcoming. Originally this only aggregated db.fashion's own scraped
+    collections (retrospective-only: no photos yet published means no
+    entry at all, so it could never show an upcoming show). Replaced with
+    nowfashion.com's own schedule page — the only source that publishes
+    real show dates, populated by run_nowfashion_schedule_scrape into its
+    own db.nowfashion_schedule collection (no photos, so it stays separate
+    from the regular photo-collection scrape entirely)."""
+    rows = await db.nowfashion_schedule.find({}, {"_id": 0}).to_list(length=1000)
+    now_ = [r for r in rows if r.get("happening_now")]
+    upcoming = sorted(
+        (r for r in rows if not r.get("happening_now") and r.get("starts_in_days") is not None),
+        key=lambda r: r["starts_in_days"],
+    )
+    past = sorted(
+        (r for r in rows if not r.get("happening_now") and r.get("starts_in_days") is None),
+        key=lambda r: r.get("season") or "",
+        reverse=True,
+    )
+    return {"items": now_ + upcoming + past}
+
+
+async def run_nowfashion_schedule_scrape() -> dict:
+    """Cem: just the fashion-week calendar, no photos — see
+    nowfashion_scraper.scrape_schedule_dates's own note on why this is a
+    separate, much lighter scrape than the regular photo-collection one.
+    Upserts by source_id into db.nowfashion_schedule, independent of
+    db.fashion entirely."""
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    async with _fashion_lock:
+        started_at = datetime.now(timezone.utc).isoformat()
+        items = await asyncio.to_thread(nowfashion_scraper.scrape_schedule_dates)
+        for it in items:
+            await db.nowfashion_schedule.update_one({"source_id": it["source_id"]}, {"$set": it}, upsert=True)
+        await _record_job_run(
+            "nowfashion_schedule", status="ok", started_at=started_at,
+            done=len(items), total=len(items), detail=f"{len(items)} moda haftası takvim kaydı güncellendi",
+        )
+        return {"status": "ok", "count": len(items)}
+
+
+@api.post("/admin/nowfashion-schedule-scrape")
+async def admin_nowfashion_schedule_scrape(admin: Annotated[dict, Depends(require_admin)]):
+    if _fashion_lock.locked():
+        return {"status": "already_running"}
+    asyncio.create_task(_run_tracked("nowfashion_schedule", run_nowfashion_schedule_scrape()))
+    return {"status": "started"}
 
 
 async def _finish_user_photo(user: dict, full_url: str, thumb_url: str) -> dict:

@@ -1,8 +1,11 @@
-// frontend/app/fashion/weeks.tsx — C2/C3: "Moda haftası merkezi", a
-// retrospective index of city+season fashion weeks (not a forward-looking
-// calendar/countdown — see the note on /fashion/fashion-weeks in server.py).
+// frontend/app/fashion/weeks.tsx — C2/C3: the fashion-week CALENDAR
+// (city/season/dates, past and upcoming), sourced from nowfashion.com's own
+// schedule page — see the note on GET /fashion/fashion-weeks in server.py.
+// No photos here on purpose (Cem: "normal koleksiyon çekimi istemiyorum
+// sadece tarihler falan olsun") — tapping a row opens nowfashion.com's own
+// page for it, since that's the only place with actual show content.
 import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -10,21 +13,35 @@ import { Feather } from "@expo/vector-icons";
 import { api } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
 import { useT } from "@/src/i18n";
-import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
-import RetryImage from "@/src/components/RetryImage";
-import { useContentWidth } from "@/src/hooks/useContentWidth";
 
-type Week = { city: string; season: string; season_label: string; count: number; cover: string | null };
+type WeekEntry = {
+  source_id: string;
+  city: string;
+  category: string | null;
+  season: string;
+  date_range: string | null;
+  collections_count: number | null;
+  happening_now: boolean;
+  starts_in_days: number | null;
+  url: string;
+};
+
+const CITY_DOT: Record<string, string> = {
+  Paris: "#3B82F6",
+  Milan: "#EF4444",
+  London: "#22C55E",
+  "New York": "#F59E0B",
+  "Gran Canaria": "#F59E0B",
+};
 
 export default function FashionWeeks() {
   const { colors, spacing } = useTheme();
   const { t, formatSeason } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width } = useContentWidth();
 
-  const [items, setItems] = useState<Week[]>([]);
+  const [items, setItems] = useState<WeekEntry[]>([]);
   const [loading, setLoading] = useState(true);
   // QA flagged "Henüz moda haftası verisi yok." indistinguishable from a
   // failed request — track which one it actually was.
@@ -35,16 +52,13 @@ export default function FashionWeeks() {
     api
       .fashionWeeks()
       .then((r) => {
-        setItems(r.items || []);
+        setItems((r.items || []) as WeekEntry[]);
         setError(false);
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
-
-  const cols = width >= 900 ? 3 : 2;
-  const cardW = (width - spacing.xl * 2 - 12 * (cols - 1)) / cols;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -65,34 +79,50 @@ export default function FashionWeeks() {
           <Text style={{ color: colors.brandSecondary, fontSize: 12, marginBottom: 16, lineHeight: 17 }}>
             {t("weeks.hint")}
           </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 12 }}>
-            {items.map((w) => (
-              <Pressable
-                key={`${w.city}#${w.season}`}
-                testID={`week-${w.city}-${w.season}`}
-                onPress={() =>
-                  router.push(
-                    `/fashion/week?city=${encodeURIComponent(w.city)}&season=${encodeURIComponent(w.season)}` as any,
-                  )
-                }
-                style={{ width: cardW }}
-              >
-                <View style={[styles.cover, { backgroundColor: colors.surfaceTertiary, borderColor: colors.border }]}>
-                  {w.cover ? (
-                    <RetryImage uri={fashionImageUri(w.cover)} style={{ width: "100%", height: "100%" }} contentFit="cover" />
-                  ) : (
-                    <Feather name="image" size={20} color={colors.brandSecondary} />
-                  )}
-                </View>
-                <Text numberOfLines={1} style={{ color: colors.onSurface, fontWeight: "800", fontSize: 14, marginTop: 6 }}>
-                  {w.city}
+          {items.map((w) => (
+            <Pressable
+              key={w.source_id}
+              testID={`week-${w.source_id}`}
+              onPress={() => Linking.openURL(w.url)}
+              style={[
+                styles.row,
+                {
+                  borderColor: w.happening_now ? colors.brand : colors.border,
+                  backgroundColor: w.happening_now ? colors.surfaceSecondary : "transparent",
+                },
+              ]}
+            >
+              <View style={[styles.dot, { backgroundColor: CITY_DOT[w.city] || colors.brandSecondary }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.onSurface, fontWeight: "800", fontSize: 15 }}>{w.city}</Text>
+                <Text style={{ color: colors.brandSecondary, fontSize: 12, marginTop: 2 }}>
+                  {w.category ? `${t(`category.${w.category}`)} · ` : ""}
+                  {formatSeason(w.season, w.season)}
                 </Text>
-                <Text style={{ color: colors.brandSecondary, fontSize: 12 }}>
-                  {formatSeason(w.season, w.season_label)} · {w.count}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+                {!!w.date_range && (
+                  <Text style={{ color: colors.onSurface, fontSize: 13, fontWeight: "600", marginTop: 4 }}>{w.date_range}</Text>
+                )}
+                {w.collections_count != null && (
+                  <Text style={{ color: colors.brandSecondary, fontSize: 11, marginTop: 2 }}>
+                    {t("weeks.collectionsCount", { n: w.collections_count })}
+                  </Text>
+                )}
+              </View>
+              <View style={{ alignItems: "flex-end", gap: 6 }}>
+                {w.happening_now && (
+                  <View style={[styles.badge, { backgroundColor: colors.brand }]}>
+                    <Text style={{ color: colors.onBrand, fontSize: 10, fontWeight: "800" }}>{t("weeks.happeningNow")}</Text>
+                  </View>
+                )}
+                {!w.happening_now && w.starts_in_days != null && (
+                  <Text style={{ color: colors.brand, fontSize: 11, fontWeight: "700" }}>
+                    {t("weeks.startsInDays", { n: w.starts_in_days })}
+                  </Text>
+                )}
+                <Feather name="external-link" size={14} color={colors.brandSecondary} />
+              </View>
+            </Pressable>
+          ))}
           {items.length === 0 && (
             <View style={{ alignItems: "center", marginTop: 40, gap: 10 }}>
               <Text style={{ color: colors.brandSecondary, textAlign: "center" }}>
@@ -114,5 +144,7 @@ export default function FashionWeeks() {
 const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, paddingBottom: 12, borderBottomWidth: 1 },
   title: { fontSize: 18, fontWeight: "800" },
-  cover: { width: "100%", aspectRatio: 1, borderRadius: 8, overflow: "hidden", borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  row: { flexDirection: "row", alignItems: "flex-start", gap: 12, borderWidth: 1, borderRadius: 10, padding: 14, marginBottom: 10 },
+  dot: { width: 10, height: 10, borderRadius: 5, marginTop: 5 },
+  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
 });

@@ -418,6 +418,13 @@ export default function AdminPanel() {
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>2026'dan beri</Text>
                 </Pressable>
+                <Pressable
+                  disabled={!!busy}
+                  onPress={() => runAction("nowfashionSchedule", api.nowfashionScheduleScrape, "Moda haftası takvimi güncelleniyor (fotoğraf çekilmiyor, sadece tarihler).")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Moda haftası takvimini güncelle</Text>
+                </Pressable>
               </View>
             </Section>
 

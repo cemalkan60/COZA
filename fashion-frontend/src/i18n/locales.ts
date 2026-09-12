@@ -179,8 +179,11 @@ export const tr = {
   },
   weeks: {
     title: "Moda Haftaları",
-    hint: "Geçmiş moda haftaları, şehir ve sezona göre. Henüz gerçekleşmemiş defileler için bir takvim/geri sayım yok — bunu ancak kaynak siteler yayınladıktan sonra öğreniyoruz.",
+    hint: "Şu an süren ve yaklaşan moda haftaları, tarihleriyle. Bir satıra dokununca nowfashion.com'daki sayfası açılır.",
     empty: "Henüz moda haftası verisi yok.",
+    happeningNow: "ŞU AN",
+    startsInDays: "{n} gün sonra",
+    collectionsCount: "{n} koleksiyon",
   },
   inbox: {
     title: "Bana Gönderilenler",
@@ -382,8 +385,11 @@ export const en: Dict = {
   },
   weeks: {
     title: "Fashion Weeks",
-    hint: "Past fashion weeks, by city and season. There's no calendar/countdown for shows that haven't happened yet — we only learn about one once a source site has already published it.",
+    hint: "Fashion weeks happening now and coming up, with dates. Tap a row to open its page on nowfashion.com.",
     empty: "No fashion week data yet.",
+    happeningNow: "NOW",
+    startsInDays: "in {n} days",
+    collectionsCount: "{n} collections",
   },
   inbox: {
     title: "Sent to You",
@@ -585,8 +591,11 @@ export const es: Dict = {
   },
   weeks: {
     title: "Semanas de la Moda",
-    hint: "Semanas de la moda pasadas, por ciudad y temporada. No hay calendario/cuenta atrás para desfiles que aún no han ocurrido — solo nos enteramos una vez que un sitio fuente ya lo publicó.",
+    hint: "Semanas de la moda en curso y próximas, con fechas. Toca una fila para abrir su página en nowfashion.com.",
     empty: "Aún no hay datos de semanas de la moda.",
+    happeningNow: "AHORA",
+    startsInDays: "en {n} días",
+    collectionsCount: "{n} colecciones",
   },
   inbox: {
     title: "Enviado a Ti",

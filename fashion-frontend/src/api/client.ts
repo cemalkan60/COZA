@@ -381,6 +381,9 @@ export const api = {
   // source's latest page) — much slower than fashionScrape, see its comment
   // in server.py. Separate button in Settings, not part of the schedule.
   fashionBackfill: () => request("/admin/fashion-backfill", { method: "POST" }, true),
+  // Fashion-week CALENDAR only (city/season/dates from nowfashion.com's
+  // own schedule page) — no photos, separate from the regular scrape.
+  nowfashionScheduleScrape: () => request("/admin/nowfashion-schedule-scrape", { method: "POST" }, true),
   // One-off sweep that gives every fashion-press collection a real cover
   // photo (instead of the low-res listing-page thumbnail) by fetching its
   // gallery early instead of waiting for someone to open it. See
