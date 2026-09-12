@@ -89,7 +89,7 @@ export default function AdminPanel() {
   const { colors, spacing, fontSize } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   const [data, setData] = useState<AdminDashboard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,8 +128,17 @@ export default function AdminPanel() {
 
   useFocusEffect(
     useCallback(() => {
+      // On a hard refresh / direct URL load, this effect fires before
+      // AuthContext has finished restoring the token from storage (web's
+      // AsyncStorage shim is IndexedDB-backed, not instant like
+      // localStorage) — racing that restore with this screen's OWN token
+      // read (inside api.adminDashboard()) could lose the race and send an
+      // unauthenticated request, seen live as "Not authenticated"/"Failed
+      // to fetch" that a normal in-app navigation (auth already warmed up)
+      // never hits. Waiting for authLoading serializes the two instead.
+      if (authLoading) return;
       load();
-    }, [load]),
+    }, [load, authLoading]),
   );
 
   // While a scrape or the tag sweep is running, poll every 5s so the
