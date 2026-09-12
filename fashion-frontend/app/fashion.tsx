@@ -11,7 +11,7 @@ import {
   Text,
   TextInput,
   View,
-  Dimensions,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -28,8 +28,6 @@ import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import { useGridColumns } from "@/src/hooks/useGridColumns";
 import { getLastCollection, getRecentCollections, LastCollection } from "@/src/utils/lastCollection";
 
-const { width } = Dimensions.get("window");
-
 const CATEGORY_VALUES = ["women", "men", "haute-couture"] as const;
 
 export default function Fashion() {
@@ -37,6 +35,7 @@ export default function Fashion() {
   const { t, formatSeason, optLabel, lang } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const { cols, cycle: cycleCols } = useGridColumns();
   // Bug found in QA: at low column counts (2/3), the old percentage width
   // ("${100/cols}%") plus styles.grid's own `gap` overflowed the row by
