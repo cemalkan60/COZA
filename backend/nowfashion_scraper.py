@@ -52,7 +52,7 @@ _NON_GALLERY_SLUGS = {
 _GALLERY_HREF_RE = re.compile(r"^/([a-z0-9][a-z0-9-]{10,})/?$")
 
 
-def _fetch(path_or_url: str, timeout: int = 30) -> str:
+def _fetch(path_or_url: str, timeout: int = 30, wait_for_selector: "Optional[str]" = None) -> str:
     url = path_or_url if path_or_url.startswith("http") else BASE + path_or_url
     try:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
@@ -67,11 +67,18 @@ def _fetch(path_or_url: str, timeout: int = 30) -> str:
         # actually run a browser (render=true). Costs ~10x a normal request;
         # accepted since this scraper only runs twice a week (see its call
         # site in server.py).
-        resp = requests.get(
-            SCRAPER_PROXY_BASE,
-            params={"api_key": SCRAPER_API_KEY, "url": url, "render": "true"},
-            timeout=max(timeout, 60),
-        )
+        #
+        # render=true alone returned the page too early for
+        # /fashion-week-schedules (a client-rendered/Next.js page): the
+        # initial shell loads before its own client-side data fetch
+        # populates the schedule cards, so a plain render grabs an empty
+        # DOM (confirmed live: job ran clean, 0 entries parsed). wait_for_
+        # selector tells ScraperAPI's headless browser to hold the response
+        # until that content has actually appeared.
+        params = {"api_key": SCRAPER_API_KEY, "url": url, "render": "true"}
+        if wait_for_selector:
+            params["wait_for_selector"] = wait_for_selector
+        resp = requests.get(SCRAPER_PROXY_BASE, params=params, timeout=max(timeout, 90))
         resp.raise_for_status()
         return resp.text
 
@@ -317,7 +324,7 @@ def scrape_schedule_dates() -> list:
     unconfirmed markup; skipped for now (Cem mainly wants current/upcoming
     anyway)."""
     try:
-        html = _fetch("/fashion-week-schedules")
+        html = _fetch("/fashion-week-schedules", wait_for_selector="a.schedule-card-now, a.schedule-upcoming-card")
     except Exception as exc:  # noqa: BLE001
         logger.error("nowfashion: schedule-dates fetch failed: %s", exc)
         return []
