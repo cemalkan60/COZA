@@ -14,7 +14,7 @@ fixed, confirmed pattern) — page text is only used as a fallback.
 """
 import os
 import re
-import json
+import time
 import logging
 
 import requests
@@ -53,7 +53,7 @@ _NON_GALLERY_SLUGS = {
 _GALLERY_HREF_RE = re.compile(r"^/([a-z0-9][a-z0-9-]{10,})/?$")
 
 
-def _fetch(path_or_url: str, timeout: int = 30, render_wait_s: "Optional[int]" = None) -> str:
+def _fetch(path_or_url: str, timeout: int = 30) -> str:
     url = path_or_url if path_or_url.startswith("http") else BASE + path_or_url
     try:
         resp = requests.get(url, headers=HEADERS, timeout=timeout)
@@ -69,27 +69,22 @@ def _fetch(path_or_url: str, timeout: int = 30, render_wait_s: "Optional[int]" =
         # accepted since this scraper only runs twice a week (see its call
         # site in server.py).
         #
-        # render=true alone returned the page too early for
-        # /fashion-week-schedules (a client-rendered/Next.js page): the
-        # initial shell loads before its own client-side data fetch
-        # populates the schedule cards, so a plain render grabs an empty
-        # DOM (confirmed live: job ran clean, 0 entries parsed).
-        #
-        # wait_for_selector (the simple ?wait_for_selector=... query param)
-        # was the obvious next thing to reach for, but ScraperAPI itself
-        # flatly 403's any request carrying it on this account/plan --
-        # confirmed live twice (with and without a comma in the value), so
-        # it's the parameter itself being rejected, not its syntax. Their
-        # docs list a separate mechanism for the same need: a "Render
-        # Instruction Set" sent via the x-sapi-instruction_set HEADER
-        # (not a query param) supporting a plain time-based "wait"
-        # instruction -- a different delivery path, so hopefully not
-        # gated the same way.
-        params = {"api_key": SCRAPER_API_KEY, "url": url, "render": "true"}
-        headers = {}
-        if render_wait_s:
-            headers["x-sapi-instruction_set"] = json.dumps([{"type": "wait", "value": render_wait_s}])
-        resp = requests.get(SCRAPER_PROXY_BASE, params=params, headers=headers, timeout=max(timeout, 30 + (render_wait_s or 0) + 30))
+        # render=true alone can return /fashion-week-schedules (a client-
+        # rendered/Next.js page) before its own client-side data fetch has
+        # populated the schedule cards -- confirmed live, an empty DOM.
+        # Both of ScraperAPI's own "wait longer" mechanisms misbehaved on
+        # this account rather than helping: wait_for_selector (the simple
+        # ?wait_for_selector=... param) got a flat 403 from ScraperAPI
+        # itself, with or without a comma in the value; the Render
+        # Instruction Set's time-based wait (sent via the
+        # x-sapi-instruction_set header) got a slow ~55s 500 instead. Both
+        # abandoned -- see scrape_schedule_dates's own retry loop, which
+        # just calls this plain path a few times instead.
+        resp = requests.get(
+            SCRAPER_PROXY_BASE,
+            params={"api_key": SCRAPER_API_KEY, "url": url, "render": "true"},
+            timeout=max(timeout, 60),
+        )
         resp.raise_for_status()
         return resp.text
 
@@ -334,31 +329,39 @@ def scrape_schedule_dates() -> list:
     a "Load older seasons" click to paginate further and use a different,
     unconfirmed markup; skipped for now (Cem mainly wants current/upcoming
     anyway)."""
-    try:
-        # wait_for_selector (both a comma-separated value and a single
-        # selector) got a flat 403 from ScraperAPI itself on this account,
-        # confirmed live twice -- see _fetch's note. Using the instruction-
-        # set time-based wait instead: 8s is a guess at "long enough for a
-        # Next.js page's own client-side fetch to resolve" with no way to
-        # verify short of trying it; the diagnostic logging below stays
-        # until this is confirmed actually working.
-        html = _fetch("/fashion-week-schedules", render_wait_s=8)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("nowfashion: schedule-dates fetch failed: %s", exc)
+    # Both of ScraperAPI's own "wait longer" mechanisms misbehaved on this
+    # account: wait_for_selector got a flat 403 (twice, with a fresh working
+    # key too -- so genuinely rejected, not a credits issue), and the
+    # instruction-set time-based wait got a slow 500 after ~55s. Falling
+    # back to the simplest thing confirmed to actually work (plain
+    # render=true, no extra params) and just retrying THAT a few times with
+    # a short pause -- a fresh render attempt each time gets its own shot at
+    # nowfashion's client-side data fetch finishing in time.
+    html = None
+    last_exc: "Optional[Exception]" = None
+    for attempt in range(3):
+        try:
+            html = _fetch("/fashion-week-schedules")
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            html = None
+        else:
+            if "schedule-upcoming-card" in html:
+                break
+            last_exc = None
+        if attempt < 2:
+            time.sleep(5)
+    if html is None:
+        logger.error("nowfashion: schedule-dates fetch failed after retries: %s", last_exc)
         return []
-    # Diagnostic: the last 2 attempts fetched cleanly but parsed 0 rows,
-    # with no visibility into why -- log what we actually got so the next
-    # run's answer comes from real data instead of another guess.
-    logger.error(
-        "nowfashion: schedule-dates fetched %d chars; has 'schedule-upcoming-card'=%s "
-        "has 'schedule-card-now'=%s has 'Just a moment'=%s has 'cf-browser-verification'=%s; head=%r",
-        len(html),
-        "schedule-upcoming-card" in html,
-        "schedule-card-now" in html,
-        "Just a moment" in html,
-        "cf-browser-verification" in html,
-        html[:400],
-    )
+    if "schedule-upcoming-card" not in html:
+        # Diagnostic: still didn't find the expected content after 3 tries
+        # -- log what we actually got instead of guessing again.
+        logger.error(
+            "nowfashion: schedule-dates fetched %d chars after retries, still no "
+            "'schedule-upcoming-card'; has 'Just a moment'=%s has 'cf-browser-verification'=%s; head=%r",
+            len(html), "Just a moment" in html, "cf-browser-verification" in html, html[:400],
+        )
     soup = BeautifulSoup(html, "html.parser")
     seen: set = set()
     items: list = []
