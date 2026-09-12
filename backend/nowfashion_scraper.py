@@ -324,7 +324,13 @@ def scrape_schedule_dates() -> list:
     unconfirmed markup; skipped for now (Cem mainly wants current/upcoming
     anyway)."""
     try:
-        html = _fetch("/fashion-week-schedules", wait_for_selector="a.schedule-card-now, a.schedule-upcoming-card")
+        # A comma-separated selector list here ("a.schedule-card-now, a.
+        # schedule-upcoming-card") got a flat 403 straight from ScraperAPI
+        # itself (confirmed live in Railway's logs) despite their docs
+        # showing no plan restriction on this parameter -- likely their
+        # validation rejects the comma. A single selector is enough: there
+        # is essentially always at least one upcoming fashion week listed.
+        html = _fetch("/fashion-week-schedules", wait_for_selector="a.schedule-upcoming-card")
     except Exception as exc:  # noqa: BLE001
         logger.error("nowfashion: schedule-dates fetch failed: %s", exc)
         return []
