@@ -99,7 +99,7 @@ export default function BrandGallery() {
       setTimeout(() => {
         setReportOpen(false);
         setReportSent(false);
-      }, 1200);
+      }, 1800);
     } catch {
     } finally {
       setReportSending(false);
@@ -133,6 +133,18 @@ export default function BrandGallery() {
     if (viewerIndexRef.current !== null) zoomRefs.current.get(viewerIndexRef.current)?.zoomOut();
   }, []);
 
+  // A one-line ephemeral message in the viewer (QA: several actions here —
+  // reaching the feed's end, a failed share — did nothing visible at all,
+  // which reads as broken even when the underlying behavior is correct).
+  const [viewerToast, setViewerToast] = useState<string | null>(null);
+  const viewerToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showViewerToast = useCallback((msg: string) => {
+    if (viewerToastTimer.current) clearTimeout(viewerToastTimer.current);
+    setViewerToast(msg);
+    viewerToastTimer.current = setTimeout(() => setViewerToast(null), 1800);
+  }, []);
+  useEffect(() => () => { if (viewerToastTimer.current) clearTimeout(viewerToastTimer.current); }, []);
+
   // C5: at either end of this collection's photos, "next/prev" hops to the
   // adjacent collection (main-feed order) instead of doing nothing — a
   // swipe gesture itself can't do this (nothing to scroll into past the
@@ -148,13 +160,15 @@ export default function BrandGallery() {
           router.replace(
             `/fashion/brand/${encodeURIComponent(res.item.source_id)}?title=${encodeURIComponent(res.item.brand_tr)}&season=${encodeURIComponent(res.item.season)}&open=0` as any,
           );
+        } else {
+          showViewerToast(direction === "next" ? t("detail.lastCollection") : t("detail.firstCollection"));
         }
       } catch {
       } finally {
         setSwitchingCollection(false);
       }
     },
-    [id, switchingCollection],
+    [id, switchingCollection, showViewerToast, t],
   );
   const goPrev = useCallback(() => {
     const i = viewerIndexRef.current;
@@ -514,12 +528,13 @@ export default function BrandGallery() {
           {viewerIndex !== null && (
             <Pressable
               testID="brand-viewer-share"
-              onPress={() =>
-                sharePhoto(
+              onPress={async () => {
+                const ok = await sharePhoto(
                   { image: images[viewerIndex], brand_tr: title, season: seasonRaw, season_label: season },
                   watermark,
-                )
-              }
+                );
+                if (!ok) showViewerToast(t("detail.shareFailed"));
+              }}
               style={[styles.viewerClose, { top: insets.top + 60, left: 16, right: undefined }]}
               hitSlop={12}
             >
@@ -604,6 +619,12 @@ export default function BrandGallery() {
               {description ? (
                 <Text style={[styles.viewerCounter, styles.viewerDescription, { bottom: insets.bottom + 60 }]}>
                   {description}
+                </Text>
+              ) : null}
+
+              {viewerToast ? (
+                <Text style={[styles.viewerCounter, { top: insets.top + 60, bottom: undefined, backgroundColor: "rgba(0,0,0,0.7)" }]}>
+                  {viewerToast}
                 </Text>
               ) : null}
 

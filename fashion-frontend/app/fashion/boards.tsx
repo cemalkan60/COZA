@@ -51,6 +51,18 @@ export default function Boards() {
   const [viewer, setViewer] = useState<SavedPhoto | null>(null);
   const { watermark } = useWatermarkPref();
 
+  // QA: sharing silently did nothing when it failed (e.g. R2 blocking the
+  // cross-origin re-fetch sharePhoto needs to draw the watermark) — same
+  // fix as the collection viewer's toast.
+  const [viewerToast, setViewerToast] = useState<string | null>(null);
+  const viewerToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showViewerToast = useCallback((msg: string) => {
+    if (viewerToastTimer.current) clearTimeout(viewerToastTimer.current);
+    setViewerToast(msg);
+    viewerToastTimer.current = setTimeout(() => setViewerToast(null), 1800);
+  }, []);
+  useEffect(() => () => { if (viewerToastTimer.current) clearTimeout(viewerToastTimer.current); }, []);
+
   // A1: personal note on a saved photo (the user's own, not the AI's tags).
   const [noteEditing, setNoteEditing] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
@@ -230,6 +242,21 @@ export default function Boards() {
       setPostingComment(false);
     }
   };
+  // QA found @mentions parse server-side but never suggest anyone while
+  // typing — this only looks at the "@word" right at the end of the draft
+  // (not full cursor tracking, which RN's TextInput doesn't expose easily),
+  // which matches how a comment box is normally composed.
+  const mentionQuery = useMemo(() => {
+    const m = commentDraft.match(/@([^\s@]*)$/);
+    return m ? m[1].toLowerCase() : null;
+  }, [commentDraft]);
+  const mentionMatches = useMemo(() => {
+    if (mentionQuery === null) return [];
+    return team.filter((m) => m.name.toLowerCase().includes(mentionQuery)).slice(0, 5);
+  }, [mentionQuery, team]);
+  const pickMention = (name: string) => {
+    setCommentDraft((cur) => cur.replace(/@([^\s@]*)$/, `@${name} `));
+  };
 
   // E4: reactions on the photo currently open in the viewer.
   const [reactions, setReactions] = useState<{ source_id: string; photo_index: number; user_id: string; emoji: string }[]>([]);
@@ -240,17 +267,40 @@ export default function Boards() {
   const reactionsFor = (p: SavedPhoto) => reactions.filter((r) => r.source_id === p.source_id && r.photo_index === p.photo_index);
   const myReaction = (p: SavedPhoto) => reactionsFor(p).find((r) => r.user_id === user?.id)?.emoji || null;
   const react = async (p: SavedPhoto, emoji: string) => {
-    if (!current) return;
+    if (!current || !user) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      await api.toggleReaction(current.id, p.source_id, p.photo_index, emoji);
-      const fresh = await api.boardReactions(current.id);
-      setReactions(fresh.items || []);
+      // The toggle response already says exactly what changed (removed vs.
+      // set to this emoji) — patching from it avoids a second round-trip
+      // GET that briefly reset the count to its pre-tap value while it was
+      // in flight (QA: "reaksiyon türü değiştirildiğinde sayı anlık olarak
+      // bir süre görünmüyor").
+      const res = await api.toggleReaction(current.id, p.source_id, p.photo_index, emoji);
+      setReactions((cur) => {
+        const withoutMine = cur.filter(
+          (r) => !(r.source_id === p.source_id && r.photo_index === p.photo_index && r.user_id === user.id),
+        );
+        return res.emoji
+          ? [...withoutMine, { source_id: p.source_id, photo_index: p.photo_index, user_id: user.id, emoji: res.emoji }]
+          : withoutMine;
+      });
     } catch {}
   };
 
+  // QA traced a "created board vanished after refresh" report to the
+  // intermittent 503s section A of the same report already flagged: this
+  // screen refetches on every focus, and a failed fetch was wiping the
+  // whole list — a board didn't actually get lost, the screen just showed
+  // an empty one until the next successful load. Only clear on the very
+  // first load (nothing to preserve yet); otherwise keep what's on screen
+  // and surface a small retry banner instead of blanking real data.
+  const hasLoadedRef = useRef(false);
+  const [loadError, setLoadError] = useState(false);
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [boardId]);
   const load = useCallback(async () => {
-    setLoading(true);
+    setLoading(!hasLoadedRef.current);
     try {
       const [bl, ph] = await Promise.all([
         api.boardsList(),
@@ -258,9 +308,14 @@ export default function Boards() {
       ]);
       setBoards(bl.boards || []);
       setPhotos(ph.items || []);
+      setLoadError(false);
+      hasLoadedRef.current = true;
     } catch {
-      setBoards([]);
-      setPhotos([]);
+      setLoadError(true);
+      if (!hasLoadedRef.current) {
+        setBoards([]);
+        setPhotos([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -459,6 +514,16 @@ export default function Boards() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 40, paddingHorizontal: pad, paddingTop: 14 }}>
+          {loadError && (
+            <Pressable
+              onPress={load}
+              style={{ flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: colors.surfaceSecondary, borderColor: colors.border, borderWidth: 1, borderRadius: 8, padding: 10, marginBottom: 14 }}
+            >
+              <Feather name="alert-triangle" size={14} color={colors.brandSecondary} />
+              <Text style={{ flex: 1, color: colors.brandSecondary, fontSize: 12 }}>{t("boards.loadErrorStale")}</Text>
+              <Text style={{ color: colors.brand, fontWeight: "700", fontSize: 12 }}>{t("common.retry")}</Text>
+            </Pressable>
+          )}
           {!!current?.summary && (
             <View style={{ flexDirection: "row", gap: 8, backgroundColor: colors.surfaceSecondary, borderColor: colors.border, borderWidth: 1, borderRadius: 8, padding: 12, marginBottom: 16 }}>
               <Feather name="cpu" size={14} color={colors.brand} style={{ marginTop: 1 }} />
@@ -791,12 +856,18 @@ export default function Boards() {
             <Pressable
               testID="board-viewer-share"
               style={[styles.viewerBtn, { top: insets.top + 12, left: 112 }]}
-              onPress={() => sharePhoto(viewer, watermark)}
+              onPress={async () => {
+                const ok = await sharePhoto(viewer, watermark);
+                if (!ok) showViewerToast(t("detail.shareFailed"));
+              }}
               hitSlop={12}
             >
               <Feather name="share" size={19} color="#fff" />
             </Pressable>
           )}
+          {viewerToast ? (
+            <Text style={[styles.viewerToast, { top: insets.top + 60 }]}>{viewerToast}</Text>
+          ) : null}
           {viewer && current?.is_owner !== false && (
             <Pressable
               testID="board-viewer-note"
@@ -985,6 +1056,27 @@ export default function Boards() {
                 </View>
               ))}
             </ScrollView>
+            {mentionMatches.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 10 }} keyboardShouldPersistTaps="handled">
+                {mentionMatches.map((m) => (
+                  <Pressable
+                    key={m.id}
+                    onPress={() => pickMention(m.name)}
+                    style={{
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 999,
+                      backgroundColor: colors.surfaceSecondary,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      marginRight: 6,
+                    }}
+                  >
+                    <Text style={{ color: colors.onSurface, fontSize: 12, fontWeight: "700" }}>@{m.name}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
               <TextInput
                 value={commentDraft}
@@ -1059,6 +1151,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.15)",
+  },
+  viewerToast: {
+    position: "absolute",
+    alignSelf: "center",
+    zIndex: 10,
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(0,0,0,0.7)",
   },
   noteEditor: {
     position: "absolute",
