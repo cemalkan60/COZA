@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Animated,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -700,7 +701,13 @@ function FashionCard({
             style={styles.image}
             contentFit="cover"
             transition={220}
-            placeholder={item.image_blurhash ? { blurhash: item.image_blurhash } : undefined}
+            // expo-image's web renderer has open bugs around the blurhash
+            // placeholder (github.com/expo/expo#29425) -- native-only until
+            // that's actually fixed upstream, since this ran in every grid
+            // card at once and is a real candidate for why Safari (a
+            // different, stricter JS engine than Chromium) rendered nothing
+            // at all rather than a merely-ugly placeholder.
+            placeholder={Platform.OS !== "web" && item.image_blurhash ? { blurhash: item.image_blurhash } : undefined}
           />
         ) : (
           <View style={styles.imagePlaceholder}>
