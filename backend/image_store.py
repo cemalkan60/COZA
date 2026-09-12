@@ -577,7 +577,7 @@ def cache_images_with_thumb(urls: list, max_workers: int = None) -> list:
         return list(pool.map(cache_image_with_thumb, urls))
 
 
-def consolidate_into_primary(max_workers: int = None) -> dict:
+def consolidate_into_primary(max_workers: int = None, on_progress=None) -> dict:
     """Copy every object from every secondary R2 account (_ACCOUNTS[1:] —
     added via R2_ACCOUNTS_JSON to spread storage across several accounts'
     free 10 GB tiers) into the primary one (_ACCOUNTS[0]), now that the
@@ -591,7 +591,13 @@ def consolidate_into_primary(max_workers: int = None) -> dict:
     Cross-account (a fully separate Cloudflare account/endpoint/credentials
     each), so this is a real GET-then-PUT relay through this server, not a
     single S3 copy_object call. Skips a key already present in the primary
-    bucket, so it's safe to re-run/resume after a timeout or a crash."""
+    bucket, so it's safe to re-run/resume after a timeout or a crash.
+
+    `on_progress(done, total)`, if given, is called after each object
+    (from whichever worker thread finished it — this had NO visibility at
+    all before, and a 3-account copy with nothing on screen for minutes
+    read as "did this hang?" (Cem: "kopyalayıp kopyalamadığını nasıl
+    görebiliriz")."""
     if not ENABLED or len(_ACCOUNTS) < 2:
         return {"status": "error", "detail": "Birden fazla depo (R2 account) yapılandırılmamış, taşınacak bir şey yok."}
     from concurrent.futures import ThreadPoolExecutor
@@ -620,9 +626,15 @@ def consolidate_into_primary(max_workers: int = None) -> dict:
             logger.error("image_store consolidate: failed to copy %s from %s: %s", key, acc["bucket"], exc)
             return "failed"
 
+    # List everything up front (cheap — this is metadata only, no bytes)
+    # so on_progress can report a real total from the very first call
+    # instead of growing account-by-account.
+    per_account_keys = [(acc, _list_keys(acc)) for acc in _ACCOUNTS[1:]]
+    total = sum(len(keys) for _acc, keys in per_account_keys)
+    done = 0
+
     workers = max_workers or _CONSOLIDATE_WORKERS
-    for acc in _ACCOUNTS[1:]:
-        keys = _list_keys(acc)
+    for acc, keys in per_account_keys:
         if not keys:
             continue
         with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -633,5 +645,8 @@ def consolidate_into_primary(max_workers: int = None) -> dict:
                     already_there += 1
                 else:
                     failed += 1
+                done += 1
+                if on_progress:
+                    on_progress(done, total)
 
     return {"status": "ok" if not failed else "partial", "copied": copied, "already_there": already_there, "failed": failed}
