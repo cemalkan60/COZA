@@ -11,7 +11,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -26,6 +25,7 @@ import { resolveBestImage, fashionImageUri } from "@/src/utils/fashionImage";
 import RetryImage from "@/src/components/RetryImage";
 import { SaveToBoardSheet } from "@/src/components/SaveToBoardSheet";
 import { useGridColumns } from "@/src/hooks/useGridColumns";
+import { useContentWidth } from "@/src/hooks/useContentWidth";
 import { getLastCollection, getRecentCollections, LastCollection } from "@/src/utils/lastCollection";
 
 const CATEGORY_VALUES = ["women", "men", "haute-couture"] as const;
@@ -35,7 +35,7 @@ export default function Fashion() {
   const { t, formatSeason, optLabel, lang } = useT();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { width } = useContentWidth();
   const { cols, cycle: cycleCols } = useGridColumns();
   // Bug found in QA: at low column counts (2/3), the old percentage width
   // ("${100/cols}%") plus styles.grid's own `gap` overflowed the row by
@@ -49,6 +49,7 @@ export default function Fashion() {
   const [lastCollection, setLastCollection] = useState<LastCollection | null>(null);
   const [recentCollections, setRecentCollections] = useState<LastCollection[]>([]); // D6
   const [unread, setUnread] = useState(0); // E5
+  const [menuOpen, setMenuOpen] = useState(false);
   useFocusEffect(
     useCallback(() => {
       getLastCollection().then(setLastCollection);
@@ -201,78 +202,68 @@ export default function Fashion() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surface }}>
-      {/* Header — title on its own row, icons on a second row below.
-          6 icons at 40px + gaps used to sit BESIDE the flex:1 title on one
-          row; that only ever fit on a wide (desktop-web) viewport — on a
-          real phone it squeezed the title down to near-zero width, which
-          made "COZA FASHION" wrap letter-by-letter into two tall columns
-          (seen live in the APK). Two rows means the title always has the
-          full width to itself. */}
+      {/* Header — a single row. This used to be 6 individual icon buttons
+          (grown one at a time as features were added) squeezed beside the
+          title, which briefly needed a two-row split just to keep the
+          title from wrapping letter-by-letter on a real phone. One
+          hamburger button both fixes that for good (nothing new here ever
+          crowds the title again) and — per Cem — makes the options
+          actually readable instead of a row of bare icons. */}
       <View
         style={[
           styles.header,
-          { paddingTop: insets.top + 8, paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
+          { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingTop: insets.top + 8, paddingHorizontal: spacing.xl, borderBottomColor: colors.divider },
         ]}
       >
-        <Text numberOfLines={1} style={[styles.brandLine, { color: colors.onSurface }]}>
+        <Text numberOfLines={1} style={[styles.brandLine, { color: colors.onSurface, flex: 1 }]}>
           COZA <Text style={{ color: colors.brandSecondary }}>{t("feed.title")}</Text>
         </Text>
-        <View style={{ flexDirection: "row", marginTop: 10 }}>
-          <Pressable
-            testID="fashion-open-boards"
-            onPress={() => router.push("/fashion/boards" as any)}
-            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
-            hitSlop={8}
-          >
-            <Feather name="bookmark" size={18} color={colors.onSurface} />
-          </Pressable>
-          <Pressable
-            testID="fashion-open-search"
-            onPress={() => router.push("/fashion/search" as any)}
-            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-            hitSlop={8}
-          >
-            <Feather name="search" size={18} color={colors.onSurface} />
-          </Pressable>
-          <Pressable
-            testID="fashion-open-brands"
-            onPress={() => router.push("/fashion/brands" as any)}
-            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-            hitSlop={8}
-          >
-            <Feather name="list" size={18} color={colors.onSurface} />
-          </Pressable>
-          <Pressable
-            testID="fashion-open-weeks"
-            onPress={() => router.push("/fashion/weeks" as any)}
-            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-            hitSlop={8}
-          >
-            <Feather name="calendar" size={18} color={colors.onSurface} />
-          </Pressable>
-          <Pressable
-            testID="fashion-open-inbox"
-            onPress={() => router.push("/fashion/inbox" as any)}
-            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-            hitSlop={8}
-          >
-            <Feather name="bell" size={18} color={colors.onSurface} />
-            {unread > 0 && (
-              <View style={styles.unreadDot}>
-                <Text style={{ color: "#fff", fontSize: 9, fontWeight: "800" }}>{unread > 9 ? "9+" : unread}</Text>
-              </View>
-            )}
-          </Pressable>
-          <Pressable
-            testID="fashion-open-settings"
-            onPress={() => router.push("/settings" as any)}
-            style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary, marginLeft: 8 }]}
-            hitSlop={8}
-          >
-            <Feather name="settings" size={18} color={colors.onSurface} />
-          </Pressable>
-        </View>
+        <Pressable
+          testID="fashion-open-menu"
+          onPress={() => {
+            Haptics.selectionAsync();
+            setMenuOpen(true);
+          }}
+          style={[styles.searchBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
+          hitSlop={8}
+        >
+          <Feather name="menu" size={18} color={colors.onSurface} />
+          {unread > 0 && <View style={styles.unreadDot} />}
+        </Pressable>
       </View>
+
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuOpen(false)}>
+          <View style={[styles.menu, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: insets.top + 56, marginRight: spacing.xl, alignSelf: "flex-end" }]}>
+            {[
+              { testID: "fashion-open-boards", icon: "bookmark", label: t("feed.menuBoards"), href: "/fashion/boards", badge: 0 },
+              { testID: "fashion-open-search", icon: "search", label: t("feed.menuSearch"), href: "/fashion/search", badge: 0 },
+              { testID: "fashion-open-brands", icon: "list", label: t("feed.menuBrands"), href: "/fashion/brands", badge: 0 },
+              { testID: "fashion-open-weeks", icon: "calendar", label: t("feed.menuWeeks"), href: "/fashion/weeks", badge: 0 },
+              { testID: "fashion-open-inbox", icon: "bell", label: t("feed.menuInbox"), href: "/fashion/inbox", badge: unread },
+              { testID: "fashion-open-settings", icon: "settings", label: t("feed.menuSettings"), href: "/settings", badge: 0 },
+            ].map((item) => (
+              <Pressable
+                key={item.href}
+                testID={item.testID}
+                style={styles.menuItem}
+                onPress={() => {
+                  setMenuOpen(false);
+                  router.push(item.href as any);
+                }}
+              >
+                <Feather name={item.icon as any} size={17} color={colors.onSurface} />
+                <Text style={{ color: colors.onSurface, fontWeight: "600", marginLeft: 12, flex: 1 }}>{item.label}</Text>
+                {!!item.badge && (
+                  <View style={styles.menuBadge}>
+                    <Text style={{ color: "#fff", fontSize: 10, fontWeight: "800" }}>{item.badge > 9 ? "9+" : item.badge}</Text>
+                  </View>
+                )}
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
 
       {/* Serbest metin arama */}
       <View style={[styles.searchWrap, { paddingHorizontal: spacing.xl, borderBottomColor: colors.divider }]}>
@@ -875,8 +866,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   unreadDot: {
-    position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 999,
-    backgroundColor: "#D32F2F", alignItems: "center", justifyContent: "center", paddingHorizontal: 3,
+    position: "absolute", top: 6, right: 6, width: 9, height: 9, borderRadius: 999,
+    backgroundColor: "#D32F2F",
+  },
+  menuOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.4)" },
+  menu: { borderRadius: 12, borderWidth: 1, paddingVertical: 6, minWidth: 220 },
+  menuItem: { flexDirection: "row", alignItems: "center", paddingVertical: 12, paddingHorizontal: 16 },
+  menuBadge: {
+    minWidth: 18, height: 18, borderRadius: 999, backgroundColor: "#D32F2F",
+    alignItems: "center", justifyContent: "center", paddingHorizontal: 4,
   },
   chip: {
     borderWidth: 1,
