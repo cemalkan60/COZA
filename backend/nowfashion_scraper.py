@@ -334,6 +334,19 @@ def scrape_schedule_dates() -> list:
     except Exception as exc:  # noqa: BLE001
         logger.error("nowfashion: schedule-dates fetch failed: %s", exc)
         return []
+    # Diagnostic: the last 2 attempts fetched cleanly but parsed 0 rows,
+    # with no visibility into why -- log what we actually got so the next
+    # run's answer comes from real data instead of another guess.
+    logger.error(
+        "nowfashion: schedule-dates fetched %d chars; has 'schedule-upcoming-card'=%s "
+        "has 'schedule-card-now'=%s has 'Just a moment'=%s has 'cf-browser-verification'=%s; head=%r",
+        len(html),
+        "schedule-upcoming-card" in html,
+        "schedule-card-now" in html,
+        "Just a moment" in html,
+        "cf-browser-verification" in html,
+        html[:400],
+    )
     soup = BeautifulSoup(html, "html.parser")
     seen: set = set()
     items: list = []
