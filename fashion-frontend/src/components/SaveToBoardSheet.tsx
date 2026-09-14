@@ -30,6 +30,10 @@ export function SaveToBoardSheet({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Save/unsave/create-board errors used to fail silently (spinner just
+  // clears, no signal the action didn't actually happen) — same "button
+  // did nothing" shape QA already found for sharing. Surface it instead.
+  const [error, setError] = useState(false);
 
   const parentId = path.length ? path[path.length - 1].id : null;
 
@@ -50,6 +54,7 @@ export function SaveToBoardSheet({
       setPath([]);
       setCreating(false);
       setNewName("");
+      setError(false);
       load();
     }
   }, [visible, load]);
@@ -64,6 +69,7 @@ export function SaveToBoardSheet({
   const toggleSave = async (b: Board) => {
     if (!photo || busyId) return;
     setBusyId(b.id);
+    setError(false);
     try {
       if (saved.has(b.id)) {
         await api.unsavePhoto(b.id, photo.source_id, photo.photo_index);
@@ -72,7 +78,7 @@ export function SaveToBoardSheet({
       }
       onChange();
     } catch {
-      // ignore
+      setError(true);
     } finally {
       setBusyId(null);
     }
@@ -82,6 +88,7 @@ export function SaveToBoardSheet({
     const name = newName.trim();
     if (!name) return;
     setBusyId("__new__");
+    setError(false);
     try {
       const b = await api.boardCreate(name, parentId);
       setBoards((cur) => [...cur, b]);
@@ -92,7 +99,7 @@ export function SaveToBoardSheet({
         onChange();
       }
     } catch {
-      // ignore
+      setError(true);
     } finally {
       setBusyId(null);
     }
@@ -118,6 +125,12 @@ export function SaveToBoardSheet({
               <Feather name="x" size={22} color={colors.onSurface} />
             </Pressable>
           </View>
+
+          {error && (
+            <Text style={{ color: "#e05252", fontSize: 12, fontWeight: "600", paddingBottom: 8 }}>
+              {t("boards.saveFailed")}
+            </Text>
+          )}
 
           {loading ? (
             <View style={{ paddingVertical: 40 }}>
