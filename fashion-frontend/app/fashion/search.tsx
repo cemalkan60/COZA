@@ -314,16 +314,21 @@ export default function FashionSearch() {
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
+    // Same stale-response race load() guards against: if a filter change
+    // starts a new load() while this page-2+ request is still in flight,
+    // its response must not land on top of the newer filter's results.
+    const reqId = loadReqId.current;
     setLoadingMore(true);
     try {
       const res = await api.fashionLooks({ gender: gender || undefined, ...selected, q: qActive || undefined, skip: items.length });
+      if (reqId !== loadReqId.current) return;
       const list = res.items || [];
       setItems((cur) => [...cur, ...list]);
       setHasMore(list.length >= PAGE);
     } catch {
       /* sessizce geç */
     } finally {
-      setLoadingMore(false);
+      if (reqId === loadReqId.current) setLoadingMore(false);
     }
   }, [gender, selected, qActive, items.length, hasMore, loadingMore]);
 
