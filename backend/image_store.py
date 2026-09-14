@@ -237,7 +237,7 @@ def find_object_url(url: str) -> "Optional[str]":
     return None
 
 
-def _derive_variants(content: bytes, content_type: str) -> tuple:
+def _derive_variants(content: bytes, content_type: str, source_hint: str = "") -> tuple:
     """From one download, produce (full_bytes, full_ctype, thumb_bytes).
 
     Memory-frugal on purpose — this runs many-at-once during a scrape and
@@ -246,7 +246,11 @@ def _derive_variants(content: bytes, content_type: str) -> tuple:
     bitmap in RAM), then shrink the same image in place — full-res save
     first, then further down to the thumbnail. No .copy(), no second open.
     On any Pillow failure the original bytes are stored as-is and the thumb
-    falls back to them, so a decode problem never costs the photo.
+    falls back to them, so a decode problem never costs the photo — but that
+    means the "thumbnail" is really the full-size original (5-10x the
+    expected bytes on every grid view of that one photo). `source_hint`
+    (a URL or key) is logged so a spike in these is traceable to specific
+    photos instead of silent.
     """
     try:
         from io import BytesIO
@@ -273,7 +277,10 @@ def _derive_variants(content: bytes, content_type: str) -> tuple:
         img.close()
         return full_bytes, full_ctype, thumb_bytes
     except Exception as exc:  # noqa: BLE001
-        logger.warning("image_store: could not process a photo (%s) — storing as-is", exc)
+        logger.warning(
+            "image_store: could not process a photo (%s), storing as-is — thumbnail "
+            "will be full-size for %s", exc, source_hint or "<unknown>",
+        )
         return content, content_type, content
 
 
@@ -415,7 +422,7 @@ def cache_image(source_url: str) -> str:
     try:
         resp = _http().get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
-        body, ctype, _ = _derive_variants(resp.content, resp.headers.get("Content-Type", "image/jpeg"))
+        body, ctype, _ = _derive_variants(resp.content, resp.headers.get("Content-Type", "image/jpeg"), source_url)
         client.put_object(Bucket=acc["bucket"], Key=key, Body=body, ContentType=ctype or "image/jpeg", CacheControl=_CACHE_CONTROL)
         _wait_until_publicly_readable(public_url)
         return public_url
@@ -449,7 +456,7 @@ def cache_image_with_thumb(source_url: str) -> tuple:
         resp = _http().get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
         full_body, full_ctype, thumb_body = _derive_variants(
-            resp.content, resp.headers.get("Content-Type", "image/jpeg")
+            resp.content, resp.headers.get("Content-Type", "image/jpeg"), source_url
         )
         del resp
     except Exception as exc:  # noqa: BLE001
@@ -493,7 +500,7 @@ def cache_bytes_with_thumb(content: bytes, content_type: str, key_hint: str) -> 
     full_url = f"{acc['public_base_url']}/{full_key}"
     thumb_url = f"{acc['public_base_url']}/{thumb_key}"
     try:
-        full_body, full_ctype, thumb_body = _derive_variants(content, content_type or "image/jpeg")
+        full_body, full_ctype, thumb_body = _derive_variants(content, content_type or "image/jpeg", key_hint)
         client.put_object(Bucket=acc["bucket"], Key=full_key, Body=full_body, ContentType=full_ctype or "image/jpeg", CacheControl=_CACHE_CONTROL)
         client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg", CacheControl=_CACHE_CONTROL)
         _wait_until_publicly_readable(full_url)
@@ -523,7 +530,7 @@ def backfill_thumb(full_url: str) -> Optional[str]:
     try:
         resp = _http().get(full_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
-        _, _, thumb_body = _derive_variants(resp.content, "image/jpeg")
+        _, _, thumb_body = _derive_variants(resp.content, "image/jpeg", full_url)
         client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg", CacheControl=_CACHE_CONTROL)
         return thumb_url
     except Exception as exc:  # noqa: BLE001
