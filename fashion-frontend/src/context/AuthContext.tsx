@@ -6,7 +6,7 @@ import React, {
   useCallback,
 } from "react";
 
-import { api, TOKEN_KEY } from "@/src/api/client";
+import { api, TOKEN_KEY, setUnauthorizedHandler } from "@/src/api/client";
 import { storage } from "@/src/utils/storage";
 
 export type User = { id: string; email: string; name: string; role: "admin" | "viewer" };
@@ -62,6 +62,19 @@ export function AuthProvider({ children }: React.PropsWithChildren) {
     setToken(null);
     setUser(null);
   }, []);
+
+  // A token that expires or is revoked *during* a session (not just at
+  // boot) used to just degrade every screen to a generic error forever —
+  // nothing ever cleared it or sent the user back to login. Any api call
+  // that gets a 401 now routes here via client.ts's module-level handler;
+  // signOut() clears the token, and the global route guard in
+  // app/_layout.tsx (keyed on `token`) takes it from there.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      signOut();
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [signOut]);
 
   return (
     <AuthContext.Provider value={{ user, token, loading, signIn, signOut }}>

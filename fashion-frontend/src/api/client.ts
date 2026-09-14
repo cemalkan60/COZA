@@ -154,6 +154,17 @@ export type SavePhotoInput = {
   url?: string;
 };
 
+// AuthContext registers itself here on mount so this plain module (no
+// React context of its own) can react to a 401. Before this, a token that
+// expired or was revoked mid-session just degraded every screen to a
+// generic "connection problem" error forever — nothing ever signed the
+// user out or sent them back to login (see app/_layout.tsx's own guard,
+// which only fires on `!token`, i.e. no saved token at all).
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn;
+}
+
 async function request(path: string, init: RequestInit = {}, auth = false) {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
@@ -165,6 +176,10 @@ async function request(path: string, init: RequestInit = {}, auth = false) {
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
+    // Only for an authenticated call that got rejected — a 401 on login
+    // itself (wrong password) is a normal, expected error, not "your
+    // session expired", and there's nothing to sign out of yet.
+    if (res.status === 401 && auth) onUnauthorized?.();
     const message = data?.detail || `Bir hata oluştu (${res.status})`;
     throw new Error(typeof message === "string" ? message : "İstek başarısız");
   }
