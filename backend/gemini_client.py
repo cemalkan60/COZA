@@ -487,8 +487,8 @@ _MERGE_SUGGEST_PROMPT = (
     "house; \"Comme des Garcons\" and \"Comme des Garçons\" are the same). "
     "Find ONLY groups you are confident are the same brand. Reply with ONLY a "
     "JSON array, no markdown, no explanation, each element: "
-    '{"canonical": "<the correct/best-spelled name>", "variants": ["<other '
-    'names that should be renamed to it>", ...]}. Skip anything you are not '
+    '{{"canonical": "<the correct/best-spelled name>", "variants": ["<other '
+    'names that should be renamed to it>", ...]}}. Skip anything you are not '
     "confident about — do not guess. Skip a name entirely if it has no "
     "duplicate.\n\nBrand names:\n{brands_json}"
 )
