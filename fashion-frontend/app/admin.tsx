@@ -1,7 +1,7 @@
 // frontend/app/admin.tsx — admin-only dashboard. Viewers are redirected out
 // (and the backend /admin/* endpoints 403 them anyway).
 import React, { useCallback, useEffect, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -108,6 +108,15 @@ export default function AdminPanel() {
   const [suggestingMerges, setSuggestingMerges] = useState(false);
   const [mergingKey, setMergingKey] = useState<string | null>(null);
 
+  // Admin-panel user creation — outside the fixed 5-account seed list (see
+  // server.py's seed_users), so it survives a redeploy.
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserRole, setNewUserRole] = useState<"admin" | "viewer">("viewer");
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [createUserMsg, setCreateUserMsg] = useState("");
+
   const load = useCallback(async () => {
     try {
       setErr("");
@@ -163,6 +172,35 @@ export default function AdminPanel() {
       setMsg(e?.message || "Başlatılamadı.");
     } finally {
       setBusy(null);
+    }
+  };
+
+  const createUser = async () => {
+    const email = newUserEmail.trim();
+    const password = newUserPassword;
+    const name = newUserName.trim();
+    if (!email || !password || !name) {
+      setCreateUserMsg("E-posta, şifre ve isim gerekli.");
+      return;
+    }
+    if (password.length < 8) {
+      setCreateUserMsg("Şifre en az 8 karakter olmalı.");
+      return;
+    }
+    setCreatingUser(true);
+    setCreateUserMsg("");
+    try {
+      await api.adminCreateUser(email, password, name, newUserRole);
+      setNewUserEmail("");
+      setNewUserPassword("");
+      setNewUserName("");
+      setNewUserRole("viewer");
+      setCreateUserMsg(`${name} eklendi.`);
+      load();
+    } catch (e: any) {
+      setCreateUserMsg(e?.message || "Eklenemedi.");
+    } finally {
+      setCreatingUser(false);
     }
   };
 
@@ -456,6 +494,71 @@ export default function AdminPanel() {
                   )}
                 </View>
               ))}
+
+              <View style={{ marginTop: 16, paddingTop: 14, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+                <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, fontWeight: "700", letterSpacing: 0.5 }}>
+                  YENİ KULLANICI EKLE
+                </Text>
+                <TextInput
+                  testID="admin-new-user-name"
+                  value={newUserName}
+                  onChangeText={setNewUserName}
+                  placeholder="İsim"
+                  placeholderTextColor={colors.brandSecondary}
+                  style={[styles.input, { borderColor: colors.border, color: colors.onSurface }]}
+                />
+                <TextInput
+                  testID="admin-new-user-email"
+                  value={newUserEmail}
+                  onChangeText={setNewUserEmail}
+                  placeholder="E-posta"
+                  placeholderTextColor={colors.brandSecondary}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  style={[styles.input, { borderColor: colors.border, color: colors.onSurface }]}
+                />
+                <TextInput
+                  testID="admin-new-user-password"
+                  value={newUserPassword}
+                  onChangeText={setNewUserPassword}
+                  placeholder="Şifre (en az 8 karakter)"
+                  placeholderTextColor={colors.brandSecondary}
+                  secureTextEntry
+                  style={[styles.input, { borderColor: colors.border, color: colors.onSurface }]}
+                />
+                <View style={[styles.btnRow, { marginTop: 8 }]}>
+                  <Pressable
+                    testID="admin-new-user-role-viewer"
+                    onPress={() => setNewUserRole("viewer")}
+                    style={[styles.btnSm, { borderColor: newUserRole === "viewer" ? colors.onSurface : colors.border }]}
+                  >
+                    <Text style={[styles.btnTxtSm, { color: newUserRole === "viewer" ? colors.onSurface : colors.brandSecondary }]}>
+                      Gözlemci
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    testID="admin-new-user-role-admin"
+                    onPress={() => setNewUserRole("admin")}
+                    style={[styles.btnSm, { borderColor: newUserRole === "admin" ? colors.onSurface : colors.border }]}
+                  >
+                    <Text style={[styles.btnTxtSm, { color: newUserRole === "admin" ? colors.onSurface : colors.brandSecondary }]}>
+                      Yönetici
+                    </Text>
+                  </Pressable>
+                </View>
+                <Pressable
+                  testID="admin-new-user-submit"
+                  disabled={creatingUser}
+                  onPress={createUser}
+                  style={[styles.btn, { borderColor: colors.border, opacity: creatingUser ? 0.5 : 1 }]}
+                >
+                  <Feather name="user-plus" size={15} color={colors.onSurface} />
+                  <Text style={[styles.btnTxt, { color: colors.onSurface }]}>{creatingUser ? "Ekleniyor…" : "Kullanıcı Ekle"}</Text>
+                </Pressable>
+                {!!createUserMsg && (
+                  <Text style={{ color: colors.brandSecondary, fontSize: fontSize.xs, marginTop: 8 }}>{createUserMsg}</Text>
+                )}
+              </View>
             </Section>
 
             {/* H1: kullanım (NOT gerçek maliyet — Cloud/Cloudflare fatura
@@ -692,4 +795,5 @@ const styles = StyleSheet.create({
   btnRow: { flexDirection: "row", gap: 8, marginTop: 14, flexWrap: "wrap" },
   btnSm: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12 },
   btnTxtSm: { fontWeight: "700", fontSize: 12 },
+  input: { borderWidth: StyleSheet.hairlineWidth, borderRadius: 8, paddingVertical: 9, paddingHorizontal: 12, fontSize: 13, marginTop: 8 },
 });

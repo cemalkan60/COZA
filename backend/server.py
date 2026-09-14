@@ -156,6 +156,13 @@ class ProxyKeyBody(BaseModel):
     storage_note: str = Field(default="", max_length=200)
 
 
+class AdminCreateUserBody(BaseModel):
+    email: str = Field(min_length=3, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=1, max_length=80)
+    role: str = Field(default="viewer")
+
+
 # --- COZA Lens "boards" (Pinterest-style saved photos in nested folders) ---
 class BoardCreateBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
@@ -1443,11 +1450,13 @@ async def _dedupe_existing_fashion_docs():
 
 
 async def seed_users():
-    """Converge db.users to EXACTLY the fixed 5-user allow-list (closed auth wall).
+    """Converge db.users' 5 FIXED (env-var) accounts to match their configured
+    email/password/role, and clean up any of those 5 that got renamed/removed.
 
     Idempotent: preserves existing id, only rehashes when the configured
-    password no longer verifies, and deletes any user outside the allow-list so
-    no one else can authenticate.
+    password no longer verifies. The destructive cleanup below is scoped to
+    "seeded": True accounts only — it never touches a user created through
+    the admin panel (POST /admin/users), which starts life with no such flag.
     """
     import uuid
     fixed = [
@@ -1473,6 +1482,7 @@ async def seed_users():
                     "role": role,
                     "disabled": False,
                     "password_hash": pw_hash,
+                    "seeded": True,
                 },
                 "$setOnInsert": {
                     "id": str(uuid.uuid4()),
@@ -1481,10 +1491,13 @@ async def seed_users():
             },
             upsert=True,
         )
-    # Destructive by design: remove every account outside the fixed allow-list.
-    result = await db.users.delete_many({"email": {"$nin": allowed}})
+    # Only ever removes a previously-FIXED account whose email fell off the
+    # list above (e.g. a SEED_VIEWER* env var got deleted) -- "seeded": True
+    # scopes this to accounts seed_users itself created, so an admin-created
+    # user (POST /admin/users, no "seeded" field) is never touched here.
+    result = await db.users.delete_many({"email": {"$nin": allowed}, "seeded": True})
     logger.info(
-        "Auth wall: %d fixed users, removed %d stale users.",
+        "Auth wall: %d fixed users, removed %d stale seeded users.",
         len(allowed), result.deleted_count,
     )
 
@@ -1843,6 +1856,33 @@ async def admin_gemini_models(admin: Annotated[dict, Depends(require_admin)]):
     extra working model is another free-tier daily quota bucket across the
     same keys. Read-only; slow-ish (one request per candidate)."""
     return await asyncio.to_thread(gemini_client.discover_models)
+
+
+@api.post("/admin/users")
+async def admin_create_user(body: AdminCreateUserBody, admin: Annotated[dict, Depends(require_admin)]):
+    """Admin-panel account creation — outside the fixed 5-user seed list
+    (see seed_users), so it's not wiped out on the next deploy: this user
+    gets no "seeded" field, and seed_users' cleanup sweep only ever
+    targets accounts that have one."""
+    import uuid
+    if body.role not in ("admin", "viewer"):
+        raise HTTPException(400, "Rol 'admin' veya 'viewer' olmalı.")
+    email = normalize_ident(body.email)
+    if not email or "@" not in email:
+        raise HTTPException(400, "Geçerli bir e-posta adresi gir.")
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(409, "Bu e-posta zaten kayıtlı.")
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "name": body.name.strip(),
+        "role": body.role,
+        "disabled": False,
+        "password_hash": hash_pw(body.password),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(user)
+    return {"name": user["name"], "email": user["email"], "role": user["role"]}
 
 
 @api.get("/admin/usage")

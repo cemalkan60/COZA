@@ -485,6 +485,13 @@ export const api = {
     request("/admin/fashion-brands/suggest-merges", { method: "POST" }, true),
   // H1/H2: usage counters (NOT real billing) + per-user last-active.
   adminUsage: (): Promise<AdminUsage> => request("/admin/usage", {}, true),
+  adminCreateUser: (
+    email: string,
+    password: string,
+    name: string,
+    role: "admin" | "viewer",
+  ): Promise<{ name: string; email: string; role: string }> =>
+    request("/admin/users", { method: "POST", body: JSON.stringify({ email, password, name, role }) }, true),
 };
 
 export type FashionReport = {
