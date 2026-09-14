@@ -10,14 +10,23 @@ import { fashionImageUri } from "@/src/utils/fashionImage";
 // supported). R2 has CORS, so crossOrigin="anonymous" lets the canvas stay
 // un-tainted. Native: no view-shot dependency yet, so share the board as a
 // text list of photo links via the built-in Share sheet.
-export async function shareBoard(boardName: string, photos: SavedPhoto[]): Promise<void> {
+//
+// Returns whether the share actually went anywhere — same silent-failure
+// shape sharePhoto.ts already found and fixed (the button could do nothing
+// with no error shown, e.g. canvas.getContext/toBlob returning null).
+// Callers should toast on `false`.
+export async function shareBoard(boardName: string, photos: SavedPhoto[]): Promise<boolean> {
   const usable = photos.filter((p) => p.image || p.image_thumb);
-  if (usable.length === 0) return;
+  if (usable.length === 0) return false;
 
   if (Platform.OS !== "web") {
-    const lines = usable.slice(0, 40).map((p) => p.url || p.image).filter(Boolean);
-    await Share.share({ message: `${boardName} · COZA\n${lines.join("\n")}` });
-    return;
+    try {
+      const lines = usable.slice(0, 40).map((p) => p.url || p.image).filter(Boolean);
+      const res = await Share.share({ message: `${boardName} · COZA\n${lines.join("\n")}` });
+      return res.action !== Share.dismissedAction;
+    } catch {
+      return false;
+    }
   }
 
   const cols = usable.length <= 4 ? 2 : usable.length <= 9 ? 3 : 4;
@@ -29,7 +38,7 @@ export async function shareBoard(boardName: string, photos: SavedPhoto[]): Promi
   canvas.width = cols * cell + pad * (cols + 1);
   canvas.height = headerH + rows * cell + pad * (rows + 1);
   const ctx = canvas.getContext("2d");
-  if (!ctx) return;
+  if (!ctx) return false;
 
   ctx.fillStyle = "#0a0a0a";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -66,14 +75,14 @@ export async function shareBoard(boardName: string, photos: SavedPhoto[]): Promi
   );
 
   const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/png", 0.92));
-  if (!blob) return;
+  if (!blob) return false;
   const file = new File([blob], `coza-${boardName.replace(/\s+/g, "-").toLowerCase()}.png`, { type: "image/png" });
 
   const nav = navigator as any;
   if (nav.canShare && nav.canShare({ files: [file] })) {
     try {
       await nav.share({ files: [file], title: boardName });
-      return;
+      return true;
     } catch {
       /* user cancelled or share failed — fall through to download */
     }
@@ -84,4 +93,5 @@ export async function shareBoard(boardName: string, photos: SavedPhoto[]): Promi
   a.download = file.name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return true;
 }

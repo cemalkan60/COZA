@@ -9,7 +9,7 @@
 // just via the OS/browser instead of an in-app library. Native has no
 // equivalent print API, so it falls back to the existing share sheet
 // (shareBoard.ts).
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,6 +37,14 @@ export default function Lookbook() {
   const [photos, setPhotos] = useState<SavedPhoto[]>([]);
   const [loading, setLoading] = useState(true);
   const [layout, setLayout] = useState<Layout>("contact");
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(null), 1800);
+  };
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   useEffect(() => {
     if (!boardId) return;
@@ -127,11 +135,19 @@ export default function Lookbook() {
           </Text>
           <Pressable
             testID="lookbook-share-fallback"
-            onPress={() => shareBoard(boardName, photos)}
+            onPress={async () => {
+              const ok = await shareBoard(boardName, photos);
+              if (!ok) showToast(t("detail.shareFailed"));
+            }}
             style={{ marginTop: 18, borderWidth: 1, borderColor: colors.border, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 20 }}
           >
             <Text style={{ color: colors.onSurface, fontWeight: "700" }}>{t("boards.share")}</Text>
           </Pressable>
+          {toast ? (
+            <Text style={{ position: "absolute", bottom: insets.bottom + 24, color: "#fff", fontSize: 12, fontWeight: "700", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: "rgba(0,0,0,0.7)" }}>
+              {toast}
+            </Text>
+          ) : null}
         </View>
       )}
     </View>
