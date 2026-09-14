@@ -626,9 +626,9 @@ _ASSISTANT_PROMPT = (
     "install, admin panel (admins only).\n\n"
     "Decide the user's intent and reply with ONLY a compact JSON object, no "
     "markdown, no code fence:\n"
-    '{"reply": "<your short answer>", "intent": "chat" | "search" | '
+    '{{"reply": "<your short answer>", "intent": "chat" | "search" | '
     '"navigate", "navigate_to": "<one of boards|search|brands|weeks|'
-    'settings|inbox, ONLY if intent is navigate>"}\n\n'
+    'settings|inbox, ONLY if intent is navigate>"}}\n\n'
     'Use intent "search" when the user describes a garment/look they want '
     'to find (color, item, material, pattern, season) — your reply should '
     'say you\'re pulling that up, e.g. "Pembe elbiseleri getiriyorum!" '
