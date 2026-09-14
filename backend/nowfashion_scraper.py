@@ -239,22 +239,27 @@ _SCHEDULE_TYPE_MARKERS = [("ready-to-wear", "women"), ("menswear", "men"), ("cou
 def _parse_schedule_slug(slug: str) -> "Optional[dict]":
     """'paris-ready-to-wear-spring-summer-2027' -> city/category/season.
     Unlike _parse_slug (brand galleries), the city comes FIRST here and
-    there's no brand name to strip."""
-    rest = slug
-    city = None
-    for c in sorted(KNOWN_CITIES, key=len, reverse=True):
-        if rest.startswith(c + "-"):
-            city = c.replace("-", " ").title()
-            rest = rest[len(c) + 1:]
-            break
-    if not city:
-        return None
+    there's no brand name to strip.
+
+    City is NOT limited to KNOWN_CITIES (that list is only used by the
+    dormant brand-gallery parser below) — whichever of the 3 known category
+    markers appears
+    first anchors the split, so everything before it (any number of
+    hyphenated words) is taken as the city. That way a fashion week for a
+    city nowfashion adds later (Copenhagen, Tokyo, São Paulo, ...) is still
+    picked up without a code change, instead of being silently dropped."""
     category = None
+    city_part = rest = None
     for marker, cat in _SCHEDULE_TYPE_MARKERS:
-        if rest.startswith(marker + "-"):
+        idx = slug.find(f"-{marker}-")
+        if idx != -1:
             category = cat
-            rest = rest[len(marker) + 1:]
+            city_part = slug[:idx]
+            rest = slug[idx + len(marker) + 2:]
             break
+    if not city_part:
+        return None
+    city = city_part.replace("-", " ").title()
     year_m = re.search(r"(19|20)\d{2}$", rest)
     if not year_m:
         return None
@@ -291,6 +296,11 @@ def _add_schedule_entry(items: list, seen: set, a_tag, *, happening_now: bool, d
     seen.add(slug)
     parsed = _parse_schedule_slug(slug)
     if not parsed:
+        # City extraction no longer depends on a fixed list, so this now only
+        # fires for a genuinely unexpected slug (no recognized category
+        # marker, or no trailing year) — worth knowing about instead of
+        # silently dropping the card.
+        logger.warning("nowfashion: schedule card with unparseable slug %r — skipping", slug)
         return
     dates_el = a_tag.select_one(dates_sel)
     starts_m = _STARTS_IN_RE.search(a_tag.select_one(countdown_sel).get_text(" ", strip=True)) if countdown_sel and a_tag.select_one(countdown_sel) else None
