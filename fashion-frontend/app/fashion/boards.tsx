@@ -699,9 +699,10 @@ export default function Boards() {
             {photos.length > 0 && (
               <Pressable
                 style={styles.menuItem}
-                onPress={() => {
+                onPress={async () => {
                   setMenuOpen(false);
-                  shareBoard(current?.name || "COZA", photos);
+                  const ok = await shareBoard(current?.name || "COZA", photos);
+                  if (!ok) showViewerToast(t("detail.shareFailed"));
                 }}
               >
                 <Feather name="share-2" size={16} color={colors.onSurface} />
@@ -1005,7 +1006,12 @@ export default function Boards() {
       {/* E1: team invite picker */}
       <Modal visible={inviteOpen} transparent animationType="fade" onRequestClose={() => setInviteOpen(false)}>
         <Pressable style={styles.menuOverlay} onPress={() => setInviteOpen(false)}>
-          <View style={[styles.menu, { backgroundColor: colors.surface, borderColor: colors.border, maxHeight: 420 }]}>
+          {/* RN-Web bubbles a tap on the checkbox rows up through a plain
+              View to this overlay's own onPress, closing the picker after
+              every single invite — same class of bug already fixed for the
+              report modal and AssistantWidget. A no-op Pressable here
+              claims the tap instead of letting it bubble. */}
+          <Pressable onPress={() => {}} style={[styles.menu, { backgroundColor: colors.surface, borderColor: colors.border, maxHeight: 420 }]}>
             <Text style={{ color: colors.brandSecondary, fontSize: 12, fontWeight: "700", paddingHorizontal: 16, paddingTop: 12, paddingBottom: 6 }}>
               {t("boards.inviteTitle")}
             </Text>
@@ -1025,7 +1031,7 @@ export default function Boards() {
                 </Text>
               )}
             </ScrollView>
-          </View>
+          </Pressable>
         </Pressable>
       </Modal>
 
