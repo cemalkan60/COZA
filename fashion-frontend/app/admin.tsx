@@ -204,24 +204,38 @@ export default function AdminPanel() {
     }
   };
 
+  // Bug found live: Section/Row used to be plain consts re-created on every
+  // render. Typing a single character into the new-user form re-rendered
+  // this component, which made <Section>/<Row> a "new" component type each
+  // time -- React unmounted and remounted the whole page's content under
+  // them, which reset scroll to the top on every keystroke. useCallback
+  // keeps the same function identity across renders as long as colors/
+  // spacing/fontSize (themselves memoized in ThemeContext) haven't changed.
+  // Must stay above the early return below -- hooks can't be conditional.
+  const Section = useCallback(
+    ({ title, children }: React.PropsWithChildren<{ title: string }>) => (
+      <View style={{ marginTop: spacing.xl }}>
+        <Text style={[styles.sectionTitle, { color: colors.brandSecondary }]}>{title.toLocaleUpperCase("tr-TR")}</Text>
+        <View style={[styles.card, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>{children}</View>
+      </View>
+    ),
+    [colors, spacing],
+  );
+
+  const Row = useCallback(
+    ({ k, v, danger }: { k: string; v: string | number; danger?: boolean }) => (
+      <View style={styles.row}>
+        <Text style={{ color: colors.brandSecondary, fontSize: fontSize.sm, flex: 1 }}>{k}</Text>
+        <Text style={{ color: danger && Number(v) > 0 ? colors.error : colors.onSurface, fontWeight: "700", fontSize: fontSize.sm }}>
+          {v}
+        </Text>
+      </View>
+    ),
+    [colors, fontSize],
+  );
+
   // Non-admins never see this screen.
   if (user && user.role !== "admin") return <Redirect href="/settings" />;
-
-  const Section = ({ title, children }: React.PropsWithChildren<{ title: string }>) => (
-    <View style={{ marginTop: spacing.xl }}>
-      <Text style={[styles.sectionTitle, { color: colors.brandSecondary }]}>{title.toLocaleUpperCase("tr-TR")}</Text>
-      <View style={[styles.card, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>{children}</View>
-    </View>
-  );
-
-  const Row = ({ k, v, danger }: { k: string; v: string | number; danger?: boolean }) => (
-    <View style={styles.row}>
-      <Text style={{ color: colors.brandSecondary, fontSize: fontSize.sm, flex: 1 }}>{k}</Text>
-      <Text style={{ color: danger && Number(v) > 0 ? colors.error : colors.onSurface, fontWeight: "700", fontSize: fontSize.sm }}>
-        {v}
-      </Text>
-    </View>
-  );
 
   const d = data;
   const tagged = d?.photos.tagged ?? 0;
