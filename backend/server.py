@@ -263,14 +263,26 @@ async def get_current_user(
 _LAST_ACTIVE_WRITTEN: dict = {}
 
 
+async def _write_last_active(user_id: str) -> None:
+    try:
+        await db.users.update_one({"id": user_id}, {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}})
+    except Exception:  # noqa: BLE001
+        logger.exception("_touch_last_active: failed to write last_active for %s", user_id)
+
+
 def _touch_last_active(user_id: str) -> None:
     now = time.time()
     if now - _LAST_ACTIVE_WRITTEN.get(user_id, 0) < 60:
         return
     _LAST_ACTIVE_WRITTEN[user_id] = now
-    asyncio.create_task(
-        db.users.update_one({"id": user_id}, {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}})
-    )
+    # asyncio.create_task() requires a genuine coroutine object
+    # (asyncio.iscoroutine()) -- Motor's db.users.update_one(...) call,
+    # while awaitable, doesn't satisfy that directly and raised
+    # "TypeError: a coroutine was expected, got <Future ...>" here on every
+    # request that actually hit the once-a-minute throttle above. Same fix
+    # as the R2-consolidation progress writer earlier this session: wrap it
+    # in a real `async def` so calling it produces a real coroutine.
+    asyncio.create_task(_write_last_active(user_id))
 
 
 async def require_admin(user: Annotated[dict, Depends(get_current_user)]) -> dict:
