@@ -124,25 +124,36 @@ export default function Fashion() {
     return () => clearTimeout(t);
   }, [q]);
 
+  // Rapid filter changes (city/season/source/sort taps) fire overlapping
+  // requests; without this, a slower OLDER request could resolve AFTER a
+  // newer one and clobber correct results with stale data (same race
+  // already fixed in Lens's search.tsx). Only the response for the most
+  // recently started request is ever applied.
+  const loadReqId = useRef(0);
   const load = useCallback(
     async (refresh = false) => {
+      const reqId = ++loadReqId.current;
       if (refresh) setRefreshing(true);
       try {
         const [feed, stats] = await Promise.all([
           api.fashionCollections({ season, category, city, source, sort, q: qActive || undefined, limit: PAGE_SIZE }),
           api.fashionAnalytics(),
         ]);
+        if (reqId !== loadReqId.current) return;
         setItems(feed.items || []);
         setTotal(feed.total ?? (feed.items || []).length);
         setAnalytics(stats);
         setError(false);
       } catch {
+        if (reqId !== loadReqId.current) return;
         // Keep whatever's already on screen; just flag the failure so the
         // empty state can show "connection problem / retry" not "no content".
         setError(true);
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (reqId === loadReqId.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [season, category, city, source, sort, qActive],
@@ -150,6 +161,7 @@ export default function Fashion() {
 
   const loadMore = useCallback(async () => {
     if (loadingMore || items.length >= total) return;
+    const reqId = loadReqId.current;
     setLoadingMore(true);
     setMoreError(false);
     try {
@@ -163,12 +175,13 @@ export default function Fashion() {
         skip: items.length,
         limit: PAGE_SIZE,
       });
+      if (reqId !== loadReqId.current) return;
       setItems((cur) => [...cur, ...(feed.items || [])]);
       setTotal(feed.total ?? total);
     } catch {
-      setMoreError(true);
+      if (reqId === loadReqId.current) setMoreError(true);
     } finally {
-      setLoadingMore(false);
+      if (reqId === loadReqId.current) setLoadingMore(false);
     }
   }, [season, category, city, source, sort, qActive, items.length, total, loadingMore]);
 
