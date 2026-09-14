@@ -2314,14 +2314,31 @@ async def run_nowfashion_schedule_scrape() -> dict:
     nowfashion_scraper.scrape_schedule_dates's own note on why this is a
     separate, much lighter scrape than the regular photo-collection one.
     Upserts by source_id into db.nowfashion_schedule, independent of
-    db.fashion entirely."""
+    db.fashion entirely.
+
+    Also a live progress bar (Cem: wanted this to look like the other jobs
+    instead of just sitting there with no feedback) — phase
+    "updating_schedule" while the (slow, ScraperAPI-render) fetch is in
+    flight with no countable substep yet, then reuses the same
+    repair_done/repair_total fields consolidating_r2 already established
+    once the item count is known and each one gets upserted."""
     if _fashion_lock.locked():
         return {"status": "already_running"}
     async with _fashion_lock:
         started_at = datetime.now(timezone.utc).isoformat()
-        items = await asyncio.to_thread(nowfashion_scraper.scrape_schedule_dates)
-        for it in items:
-            await db.nowfashion_schedule.update_one({"source_id": it["source_id"]}, {"$set": it}, upsert=True)
+        await db.meta.update_one(
+            {"_id": "fashion"},
+            {"$set": {"scraping": True, "phase": "updating_schedule", "repair_total": 0, "repair_done": 0}},
+            upsert=True,
+        )
+        try:
+            items = await asyncio.to_thread(nowfashion_scraper.scrape_schedule_dates)
+            await db.meta.update_one({"_id": "fashion"}, {"$set": {"repair_total": len(items)}})
+            for it in items:
+                await db.nowfashion_schedule.update_one({"source_id": it["source_id"]}, {"$set": it}, upsert=True)
+                await db.meta.update_one({"_id": "fashion"}, {"$inc": {"repair_done": 1}})
+        finally:
+            await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
         await _record_job_run(
             "nowfashion_schedule", status="ok", started_at=started_at,
             done=len(items), total=len(items), detail=f"{len(items)} moda haftası takvim kaydı güncellendi",
