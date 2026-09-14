@@ -111,6 +111,13 @@ PUBLIC_HOSTNAME = next(iter(PUBLIC_HOSTNAMES), None)
 _FULLRES_MAX_WIDTH = int(os.environ.get("R2_FULLRES_MAX_WIDTH", "1600"))
 _THUMB_MAX_WIDTH = 480
 
+# Every object is content-addressed (_key_for hashes the source URL) and
+# never overwritten, so a browser/edge cache can hold it forever. Uploads
+# went out with no Cache-Control at all before this, so each repeat view
+# risked a re-fetch from the origin instead of serving from cache -- one of
+# the cheapest wins available for "make the app feel faster".
+_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
 _DOWNLOAD_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -409,7 +416,7 @@ def cache_image(source_url: str) -> str:
         resp = _http().get(source_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
         body, ctype, _ = _derive_variants(resp.content, resp.headers.get("Content-Type", "image/jpeg"))
-        client.put_object(Bucket=acc["bucket"], Key=key, Body=body, ContentType=ctype or "image/jpeg")
+        client.put_object(Bucket=acc["bucket"], Key=key, Body=body, ContentType=ctype or "image/jpeg", CacheControl=_CACHE_CONTROL)
         _wait_until_publicly_readable(public_url)
         return public_url
     except Exception as exc:  # noqa: BLE001
@@ -451,14 +458,14 @@ def cache_image_with_thumb(source_url: str) -> tuple:
 
     if not full_exists:
         try:
-            client.put_object(Bucket=acc["bucket"], Key=full_key, Body=full_body, ContentType=full_ctype or "image/jpeg")
+            client.put_object(Bucket=acc["bucket"], Key=full_key, Body=full_body, ContentType=full_ctype or "image/jpeg", CacheControl=_CACHE_CONTROL)
         except Exception as exc:  # noqa: BLE001
             logger.warning("image_store: failed to upload full %s: %s", source_url, exc)
             return source_url, source_url
 
     if not thumb_exists:
         try:
-            client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg")
+            client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg", CacheControl=_CACHE_CONTROL)
         except Exception as exc:  # noqa: BLE001
             logger.warning("image_store: failed to make/upload thumb for %s: %s", source_url, exc)
             thumb_url = full_url
@@ -487,8 +494,8 @@ def cache_bytes_with_thumb(content: bytes, content_type: str, key_hint: str) -> 
     thumb_url = f"{acc['public_base_url']}/{thumb_key}"
     try:
         full_body, full_ctype, thumb_body = _derive_variants(content, content_type or "image/jpeg")
-        client.put_object(Bucket=acc["bucket"], Key=full_key, Body=full_body, ContentType=full_ctype or "image/jpeg")
-        client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg")
+        client.put_object(Bucket=acc["bucket"], Key=full_key, Body=full_body, ContentType=full_ctype or "image/jpeg", CacheControl=_CACHE_CONTROL)
+        client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg", CacheControl=_CACHE_CONTROL)
         _wait_until_publicly_readable(full_url)
         return full_url, thumb_url
     except Exception as exc:  # noqa: BLE001
@@ -517,7 +524,7 @@ def backfill_thumb(full_url: str) -> Optional[str]:
         resp = _http().get(full_url, headers=_DOWNLOAD_HEADERS, timeout=20)
         resp.raise_for_status()
         _, _, thumb_body = _derive_variants(resp.content, "image/jpeg")
-        client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg")
+        client.put_object(Bucket=acc["bucket"], Key=thumb_key, Body=thumb_body, ContentType="image/jpeg", CacheControl=_CACHE_CONTROL)
         return thumb_url
     except Exception as exc:  # noqa: BLE001
         logger.warning("image_store: failed to backfill thumb for %s: %s", full_url, exc)
@@ -620,7 +627,7 @@ def consolidate_into_primary(max_workers: int = None, on_progress=None) -> dict:
             obj = _client_for(acc).get_object(Bucket=acc["bucket"], Key=key)
             body = obj["Body"].read()
             content_type = obj.get("ContentType") or "application/octet-stream"
-            primary_client.put_object(Bucket=primary["bucket"], Key=key, Body=body, ContentType=content_type)
+            primary_client.put_object(Bucket=primary["bucket"], Key=key, Body=body, ContentType=content_type, CacheControl=_CACHE_CONTROL)
             return "copied"
         except Exception as exc:  # noqa: BLE001
             logger.error("image_store consolidate: failed to copy %s from %s: %s", key, acc["bucket"], exc)
