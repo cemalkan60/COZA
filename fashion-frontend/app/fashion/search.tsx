@@ -16,6 +16,7 @@ import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 
 import { api, FashionLookFilters, FashionLookItem, FashionLookOption } from "@/src/api/client";
 import { useTheme } from "@/src/theme/ThemeContext";
@@ -26,6 +27,7 @@ import { fashionImageUri } from "@/src/utils/fashionImage";
 import { goBack } from "@/src/utils/nav";
 import { storage } from "@/src/utils/storage";
 import { useContentWidth } from "@/src/hooks/useContentWidth";
+import { useGridColumns } from "@/src/hooks/useGridColumns";
 
 // Lens source_id is "<collection source_id>#<photo index>" (see fashion_looks).
 function splitLookId(sid: string): { source_id: string; photo_index: number } {
@@ -374,7 +376,11 @@ export default function FashionSearch() {
     return optLabel(key, val, flatOptionsFor(key)?.find((o) => o.value === val)?.label || val);
   };
 
-  const columns = width >= 1200 ? 5 : width >= 900 ? 4 : width >= 600 ? 3 : 2;
+  // Same shared, persisted preference the home feed's grid-size button
+  // uses (COZA-YOL-HARITASI.md D1) — was hardcoded to a width breakpoint
+  // here instead, so Lens never respected the setting the user picked
+  // there (or offered a way to change it here at all).
+  const { cols: columns, cycle: cycleCols } = useGridColumns();
   const gap = 10;
   const gridPad = spacing.xl - 4;
   const cardWidth = (width - gridPad * 2 - gap * (columns - 1)) / columns;
@@ -542,6 +548,17 @@ export default function FashionSearch() {
                 </Pressable>
               );
             })}
+            <Pressable
+              testID="lens-grid-cols"
+              onPress={() => {
+                Haptics.selectionAsync();
+                cycleCols();
+              }}
+              style={[styles.filterBtn, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}
+            >
+              <Feather name="grid" size={13} color={colors.brandSecondary} />
+              <Text style={{ color: colors.onSurface, fontSize: 12, fontWeight: "700" }}>{columns}</Text>
+            </Pressable>
           </ScrollView>
 
           {similarFor && (
