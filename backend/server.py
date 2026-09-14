@@ -1766,7 +1766,7 @@ async def manufacturer_analytics(code: str):
         "category_distribution": [
             {"label": c["_id"], "count": c["count"]} for c in category_dist if c["_id"]
         ],
-        "sample_image": (sample or {}).get("images", [None])[0],
+        "sample_image": ((sample or {}).get("images") or [None])[0],
     }
 
 
