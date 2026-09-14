@@ -805,7 +805,11 @@ def _finalize_fashion_group(g: dict) -> dict:
     return g
 
 
-_FINALIZE_TIMEOUT_S = 90
+_FINALIZE_TIMEOUT_S = 150
+# ^ was 90 — tuned back when image uploads were spread across 3 R2 accounts.
+# Now that they're consolidated into 1 (single account carries all image
+# traffic), each upload runs a bit slower, and more groups were brushing
+# against the old ceiling than actually needed the safety net.
 # How many collections' photo sets are downloaded + PIL-processed + uploaded
 # at once. Each of those runs its own small pool inside image_store
 # (_CACHE_WORKERS), so real concurrent image decodes ≈ this × that. Kept
