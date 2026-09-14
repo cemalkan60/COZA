@@ -2788,7 +2788,18 @@ async def assistant_chat(body: AssistantChatBody, user: Annotated[dict, Depends(
         }
     out = {**result, "search_filters": None, "limit_reached": False}
     if result["intent"] == "search":
-        out["search_filters"] = await asyncio.to_thread(gemini_client.parse_look_query, body.message, _looks_vocab()) or {}
+        filters = await asyncio.to_thread(gemini_client.parse_look_query, body.message, _looks_vocab()) or {}
+        out["search_filters"] = filters
+        if not filters:
+            # assistant_reply already wrote a confident "getiriyorum!"-style
+            # reply promising a search that's about to happen -- if the
+            # separate filter-extraction call then comes back empty (its own
+            # Gemini slot on cooldown, or genuinely nothing recognizable),
+            # the frontend does nothing (no filters to search with) and the
+            # user is left staring at a broken promise with no explanation.
+            # Overwrite the reply so it matches what actually happened.
+            out["reply"] = "Bulamadım, farklı kelimelerle tekrar dener misin?"
+            out["intent"] = "chat"
     return out
 
 
