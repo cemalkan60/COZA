@@ -5317,6 +5317,52 @@ async def _scheduled_fashion_cover_fix():
     await _run_tracked("fashion_cover_fix", run_fashion_cover_fix())
 
 
+# Cem: the app was too dependent on him remembering to click admin buttons
+# for what are really ongoing maintenance sweeps, not one-off actions —
+# fashion_cover_fix (above) being manual-only was the direct cause of most
+# collections silently sitting 1-photo-thin. These are the rest of the
+# admin panel's "fix X" buttons that are genuinely routine upkeep (safe to
+# re-run, no human judgment involved) rather than a true one-time action
+# (fashion_backfill, fashion_migrate_image_domain, fashion_consolidate_r2
+# stay manual-only — those really are one-shot) or something needing a
+# person's judgment (fashion_brands/merge, fashion_reports/resolve, user
+# creation — also stay manual).
+async def _scheduled_fashion_merge_duplicates():
+    await _run_tracked("fashion_merge_duplicates", run_fashion_merge_duplicates())
+
+
+async def _scheduled_fashion_clean_cruft():
+    await _run_tracked("fashion_clean_cruft", run_fashion_clean_cruft())
+
+
+async def _scheduled_fashion_repair_urls():
+    await _run_tracked("fashion_repair_urls", run_fashion_repair_urls())
+
+
+async def _scheduled_fashion_drop_dead_images():
+    await _run_tracked("fashion_drop_dead_images", run_fashion_drop_dead_images())
+
+
+async def _scheduled_fashion_fix_thumbnails():
+    await _run_tracked("fashion_thumbnails", run_fashion_thumbnails_backfill())
+
+
+async def _scheduled_fashion_fix_blurhash():
+    await _run_tracked("fashion_blurhash", run_fashion_blurhash_backfill())
+
+
+async def _scheduled_fashion_backfill_cities():
+    await _run_tracked("fashion_backfill_cities", run_fashion_backfill_cities())
+
+
+async def _scheduled_nowfashion_schedule_scrape():
+    await _run_tracked("nowfashion_schedule", run_nowfashion_schedule_scrape())
+
+
+async def _scheduled_enrich_origins():
+    await enrich_origins(await get_proxy_key())
+
+
 async def _scheduled_fashion_prune():
     # run_fashion_prune_old() is deliberately lock-free (run_fashion_scrape
     # calls it while already holding _fashion_lock, and asyncio.Lock isn't
@@ -5410,6 +5456,58 @@ async def on_startup():
     scheduler.add_job(
         _scheduled_fashion_prune, CronTrigger(hour=3, minute=30, timezone="Europe/Istanbul"),
         id="scheduled_fashion_prune", replace_existing=True,
+    )
+    # The rest of the admin panel's "fix X" maintenance sweeps — previously
+    # manual-button-only, same gap fashion_cover_fix had. All share
+    # _fashion_lock (mutual exclusion already), spaced out below so one
+    # doesn't just no-op waiting for the previous one on a slow night; if
+    # one does still overlap into the next slot, that job simply skips to
+    # its next scheduled day — every one of these is safe to re-run/resume,
+    # same as the sweeps already scheduled above.
+    scheduler.add_job(
+        _scheduled_fashion_merge_duplicates, CronTrigger(hour=1, minute=0, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_merge_duplicates", replace_existing=True,
+    )
+    scheduler.add_job(
+        _scheduled_fashion_clean_cruft, CronTrigger(hour=1, minute=15, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_clean_cruft", replace_existing=True,
+    )
+    scheduler.add_job(
+        _scheduled_fashion_repair_urls, CronTrigger(hour=1, minute=30, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_repair_urls", replace_existing=True,
+    )
+    scheduler.add_job(
+        _scheduled_fashion_drop_dead_images, CronTrigger(hour=1, minute=45, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_drop_dead_images", replace_existing=True,
+    )
+    scheduler.add_job(
+        _scheduled_fashion_fix_thumbnails, CronTrigger(hour=2, minute=0, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_fix_thumbnails", replace_existing=True,
+    )
+    scheduler.add_job(
+        _scheduled_fashion_fix_blurhash, CronTrigger(hour=2, minute=15, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_fix_blurhash", replace_existing=True,
+    )
+    # Catalog side (db.products, separate from db.fashion / _fashion_lock
+    # entirely — its own _enrich_lock) — same "on-demand button, nobody
+    # remembers to click it" gap.
+    scheduler.add_job(
+        _scheduled_enrich_origins, CronTrigger(hour=2, minute=30, timezone="Europe/Istanbul"),
+        id="scheduled_enrich_origins", replace_existing=True,
+    )
+    # After tagging (04:00), not alongside it — both this and tagging pull
+    # from the same shared Gemini key/model pool (gemini_client._SLOTS), so
+    # running them back-to-back instead of concurrently means one doesn't
+    # eat the other's quota mid-run.
+    scheduler.add_job(
+        _scheduled_fashion_backfill_cities, CronTrigger(hour=4, minute=30, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_backfill_cities", replace_existing=True,
+    )
+    # Moda Haftaları calendar — was manual-only (POST /admin/nowfashion-
+    # schedule-scrape); a single cheap listing-page fetch, so daily is fine.
+    scheduler.add_job(
+        _scheduled_nowfashion_schedule_scrape, CronTrigger(hour=5, minute=0, timezone="Europe/Istanbul"),
+        id="scheduled_nowfashion_schedule", replace_existing=True,
     )
     scheduler.start()
     # A scrape/sweep can't survive a process restart, so a lingering
