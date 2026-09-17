@@ -405,6 +405,13 @@ export default function AdminPanel() {
                 </Pressable>
                 <Pressable
                   disabled={!!busy}
+                  onPress={() => runAction("cities", api.fashionBackfillCities, "Şehir bilgisi tamamlandı.")}
+                  style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
+                >
+                  <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Şehirleri tamamla</Text>
+                </Pressable>
+                <Pressable
+                  disabled={!!busy}
                   onPress={() => runAction("merge", api.fashionMergeDuplicates, "Birleştirme başladı.")}
                   style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
                 >

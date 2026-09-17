@@ -6,6 +6,7 @@ import uuid
 import secrets
 import asyncio
 import logging
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Annotated
@@ -72,6 +73,7 @@ _JOB_LABELS = {
     "nowfashion_schedule": "Moda haftası takvimi güncelleme",
     "fashion_drop_dead_images": "Ölü fotoğraf adreslerini temizleme",
     "fashion_cover_fix": "Kapak düzeltme",
+    "fashion_backfill_cities": "Şehir bilgisi tamamlama",
     "fashion_thumbnails": "Küçük resimler",
     "fashion_blurhash": "Kapak bulanık önizlemesi",
     "fashion_merge_duplicates": "Yinelenen birleştirme",
@@ -692,6 +694,80 @@ def _looks_better_text(a: str, b: str) -> str:
 _FASHION_CATEGORY_PRIORITY = {"women": 0, "men": 1, "haute-couture": 2}
 
 
+# fashion-press.net and firstview.com never expose which city a show
+# happened in (see their own scrapers' "not shown on this site" comments) —
+# but which city a given house shows its runway collections in is stable,
+# well-documented industry knowledge (that's WHY "fashion month" is a fixed
+# Feb/Sep circuit of New York -> London -> Milan -> Paris). Filling city in
+# from the brand name, for the houses we're confident about, beats leaving
+# the whole feed unfilterable by city just because these two sites don't
+# print the word. Deliberately NOT exhaustive — a brand missing here just
+# stays city: None, same as today; better than guessing wrong.
+_BRAND_CITY_MAP: dict = {
+    "New York": [
+        "Ralph Lauren", "Calvin Klein", "Michael Kors", "Marc Jacobs", "Oscar de la Renta",
+        "Carolina Herrera", "Coach", "Tommy Hilfiger", "Proenza Schouler", "Rodarte",
+        "Altuzarra", "Jason Wu", "Prabal Gurung", "Brandon Maxwell", "Area", "Khaite",
+        "Peter Do", "Christopher John Rogers", "Collina Strada", "Tory Burch", "Vera Wang",
+        "Badgley Mischka", "Anna Sui", "Zimmermann", "Michael Kors Collection", "Batsheva",
+        "Eckhaus Latta", "Jonathan Simkhai", "Pyer Moss", "Sergio Hudson", "Willy Chavarria",
+        "Bibhu Mohapatra", "Naeem Khan", "Longchamp",
+    ],
+    "London": [
+        "Burberry", "Erdem", "Victoria Beckham", "Simone Rocha", "JW Anderson",
+        "Christopher Kane", "Molly Goddard", "Roksanda", "Mary Katrantzou",
+        "Richard Quinn", "16Arlington", "Nensi Dojaka", "S.S. Daley", "Harris Reed",
+        "Paul Smith", "Vivienne Westwood", "Halpern", "Talbot Runhof", "Huishan Zhang",
+        "David Koma", "Emilia Wickstead", "Ashley Williams",
+    ],
+    "Milan": [
+        "Prada", "Miu Miu", "Gucci", "Versace", "Armani", "Giorgio Armani",
+        "Emporio Armani", "Dolce & Gabbana", "Bottega Veneta", "Fendi", "Moschino",
+        "Missoni", "Ferragamo", "Salvatore Ferragamo", "Max Mara", "Marni", "Etro",
+        "Tod's", "Jil Sander", "Trussardi", "Roberto Cavalli", "Diesel",
+        "Ermenegildo Zegna", "Zegna", "Bally", "Brunello Cucinelli", "Sportmax",
+        "Alberta Ferretti", "N°21", "No21", "Philosophy di Lorenzo Serafini",
+        "Blumarine", "Dsquared2", "Iceberg", "Genny", "Ports 1961", "Antonio Marras",
+        "Aigner", "Luisa Beccaria",
+    ],
+    "Paris": [
+        "Chanel", "Dior", "Christian Dior", "Louis Vuitton", "Saint Laurent",
+        "Yves Saint Laurent", "Givenchy", "Balenciaga", "Celine", "Céline", "Hermès",
+        "Hermes", "Balmain", "Lanvin", "Chloé", "Chloe", "Rick Owens",
+        "Comme des Garçons", "Comme des Garcons", "Issey Miyake", "Kenzo",
+        "Off-White", "Thom Browne", "Valentino", "Loewe", "Maison Margiela",
+        "Ann Demeulemeester", "Dries Van Noten", "Stella McCartney", "Courrèges",
+        "Courreges", "Schiaparelli", "Jacquemus", "Acne Studios", "Y/Project",
+        "Rabanne", "Paco Rabanne", "Nina Ricci", "Cacharel", "Carven",
+        "Iris van Herpen", "Viktor & Rolf", "Alexander McQueen", "Sacai",
+        "Coperni", "Elie Saab", "Alexandre Vauthier", "Julien Fournié",
+        "Giambattista Valli", "Maison Margiela Artisanal", "Undercover",
+        "A.F. Vandevorst", "Christian Lacroix", "Mugler", "Thierry Mugler",
+        "Vetements", "Junya Watanabe",
+    ],
+}
+
+
+def _normalize_brand_key(name: str) -> str:
+    """Casefold + strip accents so "Chloé"/"CHLOE"/"chloe" all key the same."""
+    decomposed = unicodedata.normalize("NFKD", name or "")
+    ascii_only = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", ascii_only).strip().casefold()
+
+
+_BRAND_TO_CITY: dict = {
+    _normalize_brand_key(brand): city
+    for city, brands in _BRAND_CITY_MAP.items()
+    for brand in brands
+}
+
+
+def _guess_city_from_brand(brand_tr: str) -> "Optional[str]":
+    if not brand_tr:
+        return None
+    return _BRAND_TO_CITY.get(_normalize_brand_key(brand_tr))
+
+
 def _group_fashion_items(raw_items: list) -> tuple:
     """Group same brand+season+category across sources into one collection.
 
@@ -792,6 +868,11 @@ def _group_fashion_items(raw_items: list) -> tuple:
     result.sort(key=lambda g: (g.get("season_rank") if g.get("season_rank") is not None else -1), reverse=True)
     for i, g in enumerate(result):
         g["feed_seq"] = i
+        # brand_tr is only final now (post cross-source merge, best-text
+        # picked) -- guess after, not while grouping, so a group that later
+        # absorbs a duplicate under the "real" brand spelling still gets it.
+        if not g["city"]:
+            g["city"] = _guess_city_from_brand(g["brand_tr"])
     return result, obsolete
 
 
@@ -3829,6 +3910,37 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
         return {"status": "already_running"}
     asyncio.create_task(_run_tracked("fashion_cover_fix", run_fashion_cover_fix()))
     return {"status": "started"}
+
+
+async def run_fashion_backfill_cities() -> dict:
+    """One-off sweep: apply _guess_city_from_brand to every existing
+    collection that has no city yet (fashion-press/firstview never set one
+    going forward either — _group_fashion_items now guesses at scrape time
+    too — this just catches everything scraped before that existed). Pure
+    in-memory lookup, no network calls, so unlike the other sweeps this
+    doesn't need _fashion_lock or a live progress bar."""
+    started_at = datetime.now(timezone.utc).isoformat()
+    docs = await db.fashion.find(
+        {"city": {"$in": [None, ""]}}, {"_id": 0, "source_id": 1, "brand_tr": 1},
+    ).to_list(length=None)
+    ops = []
+    for d in docs:
+        city = _guess_city_from_brand(d.get("brand_tr") or "")
+        if city:
+            ops.append(UpdateOne({"source_id": d["source_id"]}, {"$set": {"city": city}}))
+    if ops:
+        await db.fashion.bulk_write(ops, ordered=False)
+    logger.info("Fashion city backfill: %d/%d collection(s) matched a known brand.", len(ops), len(docs))
+    await _record_job_run(
+        "fashion_backfill_cities", status="ok", started_at=started_at,
+        done=len(ops), total=len(docs), detail=f"{len(ops)}/{len(docs)} koleksiyona şehir eklendi",
+    )
+    return {"status": "ok", "total": len(docs), "matched": len(ops)}
+
+
+@api.post("/admin/fashion-backfill-cities")
+async def admin_fashion_backfill_cities(admin: Annotated[dict, Depends(require_admin)]):
+    return await run_fashion_backfill_cities()
 
 
 _THUMB_FIX_TIMEOUT_S = 20  # per-photo download(from our own R2)+resize+upload budget
