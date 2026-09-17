@@ -5294,6 +5294,10 @@ async def _scheduled_fashion_tag_photos():
     await _run_tracked("fashion_tag_photos", run_fashion_tag_photos())
 
 
+async def _scheduled_fashion_cover_fix():
+    await _run_tracked("fashion_cover_fix", run_fashion_cover_fix())
+
+
 async def _scheduled_fashion_prune():
     # run_fashion_prune_old() is deliberately lock-free (run_fashion_scrape
     # calls it while already holding _fashion_lock, and asyncio.Lock isn't
@@ -5365,6 +5369,21 @@ async def on_startup():
     scheduler.add_job(
         _scheduled_fashion_tag_photos, CronTrigger(hour=4, minute=0, timezone="Europe/Istanbul"),
         id="scheduled_fashion_tag_firstview", replace_existing=True,
+    )
+    # fashion-press.net collections are scraped with just their listing-page
+    # thumbnail (fetching every full gallery inline made a scrape take over
+    # an hour — see fashion_scraper._finish_items) and only ever got their
+    # real photo set on GET /fashion/collections/{id} (someone opening that
+    # collection) or this same sweep run BY HAND from the admin panel's
+    # "Kapaklar" button. Nothing ever ran it automatically, so any
+    # collection nobody happened to open just sat 1-photo-thin forever —
+    # confirmed live (Cem: most collections looked empty; a manual "Kapaklar"
+    # click or opening one visibly fixed it). Runs before the 04:00 tag
+    # sweep so a freshly-scraped thin collection has its real gallery before
+    # tagging ever looks at it.
+    scheduler.add_job(
+        _scheduled_fashion_cover_fix, CronTrigger(hour=3, minute=45, timezone="Europe/Istanbul"),
+        id="scheduled_fashion_cover_fix", replace_existing=True,
     )
     # Roll the recent-window forward every night (also runs after each
     # scrape). Just before the tag sweep so freshly-aged-out collections
