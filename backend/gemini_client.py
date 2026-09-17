@@ -566,18 +566,28 @@ def guess_brand_cities(brands: list) -> "Optional[dict]":
         response_json=True,
     )
     if not text:
+        logger.warning("guess_brand_cities: _generate returned nothing for %r", brands)
         return None
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
+        logger.warning("guess_brand_cities: no {..} found in reply (%d chars): %r", len(text), text[:300])
         return None
     try:
         obj = json.loads(m.group(0))
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("guess_brand_cities: unparseable JSON (%s): %r", exc, m.group(0)[:300])
         return None
     if not isinstance(obj, dict):
+        logger.warning("guess_brand_cities: parsed JSON wasn't an object: %r", obj)
         return None
     valid_cities = {"New York", "London", "Milan", "Paris"}
-    return {str(brand): city for brand, city in obj.items() if city in valid_cities}
+    out = {str(brand): city for brand, city in obj.items() if city in valid_cities}
+    if len(out) < len(obj):
+        logger.info(
+            "guess_brand_cities: %d/%d entries had a usable city — rest were null/other: %r",
+            len(out), len(obj), {k: v for k, v in obj.items() if v not in valid_cities},
+        )
+    return out
 
 
 _SHOW_CITY_PROMPT = (
@@ -620,21 +630,31 @@ def guess_show_cities(shows: list) -> "Optional[dict]":
         response_json=True,
     )
     if not text:
+        logger.warning("guess_show_cities: _generate returned nothing for %r", [s.get("id") for s in shows])
         return None
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if not m:
+        logger.warning("guess_show_cities: no {..} found in reply (%d chars): %r", len(text), text[:300])
         return None
     try:
         obj = json.loads(m.group(0))
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("guess_show_cities: unparseable JSON (%s): %r", exc, m.group(0)[:300])
         return None
     if not isinstance(obj, dict):
+        logger.warning("guess_show_cities: parsed JSON wasn't an object: %r", obj)
         return None
-    return {
+    out = {
         str(k): v.strip()
         for k, v in obj.items()
         if isinstance(v, str) and v.strip() and v.strip().lower() != "null" and len(v.strip()) <= 40
     }
+    if len(out) < len(obj):
+        logger.info(
+            "guess_show_cities: %d/%d entries had a usable city — rest were null/other: %r",
+            len(out), len(obj), {k: v for k, v in obj.items() if str(k) not in out},
+        )
+    return out
 
 
 _BOARD_SUMMARY_PROMPT = (
