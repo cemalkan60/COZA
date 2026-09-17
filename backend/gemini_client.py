@@ -530,6 +530,52 @@ def suggest_brand_merges(brands: list) -> "Optional[list]":
     return out
 
 
+_BRAND_CITY_PROMPT = (
+    "You are a fashion industry expert. For each brand name below, answer "
+    "which city that house shows its REGULAR ready-to-wear/haute couture "
+    "runway collections in during fashion month (New York, London, Milan, "
+    "or Paris) — not a one-off special/resort/destination show.\n\n"
+    "Only answer when you are genuinely confident. Many brands are smaller/"
+    "regional and don't show at a major fashion week at all, or you may "
+    "simply not know — for those, answer null. Never guess.\n\n"
+    "Reply with ONLY a compact JSON object mapping each brand name (exactly "
+    "as given) to one of \"New York\", \"London\", \"Milan\", \"Paris\", or "
+    "null. No markdown, no explanation.\n\nBrands:\n{brands_json}"
+)
+
+
+def guess_brand_cities(brands: list) -> "Optional[dict]":
+    """B-city: for brand names server.py's own hand-maintained _BRAND_CITY_MAP
+    doesn't cover, ask Gemini directly — it knows far more houses than any
+    list we'd maintain by hand. `brands` is a plain list of brand name
+    strings (should already be deduped by the caller). Returns
+    {brand_name: city}, omitting any brand Gemini answered null/unknown for
+    or that wasn't one of the 4 valid cities — or None if Gemini couldn't
+    answer at all (caller should treat that as "try again later", not "no
+    matches")."""
+    if not ENABLED or not brands:
+        return None
+    text = _generate(
+        [{"text": _BRAND_CITY_PROMPT.format(brands_json=json.dumps(brands, ensure_ascii=False))}],
+        max_output_tokens=2048,
+        timeout=60,
+        response_json=True,
+    )
+    if not text:
+        return None
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(obj, dict):
+        return None
+    valid_cities = {"New York", "London", "Milan", "Paris"}
+    return {str(brand): city for brand, city in obj.items() if city in valid_cities}
+
+
 _BOARD_SUMMARY_PROMPT = (
     "You are a fashion editor describing a moodboard's overall style "
     "direction to its owner. Below is structured data about the board's "
