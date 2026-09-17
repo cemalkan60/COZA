@@ -576,6 +576,59 @@ def guess_brand_cities(brands: list) -> "Optional[dict]":
     return {str(brand): city for brand, city in obj.items() if city in valid_cities}
 
 
+_SHOW_CITY_PROMPT = (
+    "You are a fashion industry expert. Each entry below is one resort/"
+    "cruise/pre-fall runway show (brand, season label, and show title). "
+    "Unlike a brand's regular ready-to-wear/couture show, these are "
+    "frequently staged as special one-off events in a notable location — "
+    "often named or hinted at right in the show's own title/theme (e.g. a "
+    "\"Cruise 2024\" show held in Seoul, a \"Croisière\" show held in "
+    "Marrakech). For each entry, answer the actual city where THAT "
+    "SPECIFIC show was held, using your own knowledge of that particular "
+    "show — not the brand's usual home fashion-week city. Only answer when "
+    "you are confident this specific show's real-world location is "
+    "documented knowledge; otherwise answer null. Never guess.\n\n"
+    "Reply with ONLY a compact JSON object mapping each entry's \"id\" "
+    "(as given, as a string) to a real city name, or null. No markdown, no "
+    "explanation.\n\nShows:\n{shows_json}"
+)
+
+
+def guess_show_cities(shows: list) -> "Optional[dict]":
+    """Like guess_brand_cities, but for resort/cruise/pre-fall shows, which
+    are routinely one-off events in a special (often title-advertised)
+    location rather than the brand's usual fashion-week city — so this asks
+    about the SPECIFIC show (brand + season + title), not just the brand,
+    and accepts any real city name (not just the 4 majors).
+    `shows` is [{"id": str, "brand": str, "season": str, "title": str}, ...].
+    Returns {id: city}, omitting any entry Gemini answered null/unsure for,
+    or None if Gemini couldn't answer at all."""
+    if not ENABLED or not shows:
+        return None
+    text = _generate(
+        [{"text": _SHOW_CITY_PROMPT.format(shows_json=json.dumps(shows, ensure_ascii=False))}],
+        max_output_tokens=2048,
+        timeout=60,
+        response_json=True,
+    )
+    if not text:
+        return None
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return {
+        str(k): v.strip()
+        for k, v in obj.items()
+        if isinstance(v, str) and v.strip() and v.strip().lower() != "null" and len(v.strip()) <= 40
+    }
+
+
 _BOARD_SUMMARY_PROMPT = (
     "You are a fashion editor describing a moodboard's overall style "
     "direction to its owner. Below is structured data about the board's "

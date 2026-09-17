@@ -3836,29 +3836,39 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
     return {"status": "started"}
 
 
-_BRAND_CITY_AI_BATCH = 40  # brand names per Gemini call — plenty of margin under max_output_tokens
+_BRAND_CITY_AI_BATCH = 40  # brand names / shows per Gemini call — plenty of margin under max_output_tokens
 
 
 async def run_fashion_backfill_cities() -> dict:
     """Fill in `city` on every existing collection that has none
     (fashion-press/firstview never provide one at all — see the two
-    scrapers' own comments). Distinct brand names among those get sent to
-    Gemini (gemini_client.guess_brand_cities) in batches — cheap, since
-    many collections share the same brand across seasons, so this is
-    usually far fewer calls than one per collection. Skips resort/pre-fall
-    seasons: those are routinely staged somewhere other than a house's
-    usual fashion-week city (destination/special shows), so "what city does
-    this brand usually show in" isn't a trustworthy answer for them."""
+    scrapers' own comments). Every collection happened SOMEWHERE, so this
+    covers all of them via two different Gemini questions rather than
+    skipping a chunk outright:
+      - Regular AW/SS collections: "what city does this BRAND usually show
+        in" (gemini_client.guess_brand_cities) — deduped by brand name,
+        since the answer is the same for every collection from that house.
+      - Resort/cruise/pre-fall: these are routinely one-off shows in a
+        special, often title-advertised location (not the brand's usual
+        fashion-week city), so each gets its own question instead —
+        "where was THIS SPECIFIC show held" (gemini_client.guess_show_cities),
+        using brand + season + title.
+    Both are batched (many brands/shows per call), so this is a handful of
+    real API calls total, not one per collection."""
     started_at = datetime.now(timezone.utc).isoformat()
     docs = await db.fashion.find(
-        {"city": {"$in": [None, ""]}}, {"_id": 0, "source_id": 1, "brand_tr": 1, "season": 1},
+        {"city": {"$in": [None, ""]}},
+        {"_id": 0, "source_id": 1, "brand_tr": 1, "season": 1, "season_label": 1, "title_tr": 1},
     ).to_list(length=None)
-    eligible = [d for d in docs if str(d.get("season") or "").upper().endswith(("AW", "SS"))]
+    regular, special = [], []
+    for d in docs:
+        (regular if str(d.get("season") or "").upper().endswith(("AW", "SS")) else special).append(d)
 
-    matched = 0
-    if gemini_client.ENABLED and eligible:
+    ops = []
+
+    if gemini_client.ENABLED and regular:
         by_brand: dict = {}
-        for d in eligible:
+        for d in regular:
             by_brand.setdefault(d.get("brand_tr") or "", []).append(d["source_id"])
         by_brand.pop("", None)
         distinct_brands = list(by_brand.keys())
@@ -3868,15 +3878,40 @@ async def run_fashion_backfill_cities() -> dict:
             result = await asyncio.to_thread(gemini_client.guess_brand_cities, batch)
             if result:
                 brand_city.update(result)
-        await _bump_usage_counter("gemini_calls")
-        ops = [
+        ops.extend(
             UpdateOne({"source_id": source_id}, {"$set": {"city": city}})
             for brand, city in brand_city.items()
             for source_id in by_brand.get(brand, [])
-        ]
-        if ops:
-            await db.fashion.bulk_write(ops, ordered=False)
-            matched = len(ops)
+        )
+
+    if gemini_client.ENABLED and special:
+        show_city: dict = {}
+        for i in range(0, len(special), _BRAND_CITY_AI_BATCH):
+            batch = special[i:i + _BRAND_CITY_AI_BATCH]
+            shows = [
+                {
+                    "id": d["source_id"],
+                    "brand": d.get("brand_tr") or "",
+                    "season": d.get("season_label") or d.get("season") or "",
+                    "title": d.get("title_tr") or "",
+                }
+                for d in batch
+            ]
+            result = await asyncio.to_thread(gemini_client.guess_show_cities, shows)
+            if result:
+                show_city.update(result)
+        ops.extend(
+            UpdateOne({"source_id": source_id}, {"$set": {"city": city}})
+            for source_id, city in show_city.items()
+        )
+
+    if gemini_client.ENABLED and (regular or special):
+        await _bump_usage_counter("gemini_calls")
+
+    matched = 0
+    if ops:
+        await db.fashion.bulk_write(ops, ordered=False)
+        matched = len(ops)
 
     logger.info("Fashion city backfill: %d/%d collection(s) matched via Gemini.", matched, len(docs))
     await _record_job_run(
