@@ -56,6 +56,7 @@ const PHASE_LABELS: Record<string, string> = {
   dropping_dead_images: "Ölü fotoğraf adresleri temizleniyor",
   consolidating_r2: "Depolar tek depoda birleştiriliyor",
   updating_schedule: "Moda haftası takvimi güncelleniyor",
+  guessing_cities: "Şehir bilgisi tamamlanıyor",
   tagging_photos: "Fotoğraflar yapay zekayla etiketleniyor",
   tagging_firstview: "Fotoğraflar yapay zekayla etiketleniyor",
 };
@@ -79,7 +80,7 @@ function scrapeProgress(d: AdminDashboard): { pct: number | null; label: string;
     return { pct: Math.round(100 * frac(p.thumbs_done, p.thumbs_total)), label, detail: `${p.thumbs_done}/${p.thumbs_total}` };
   if (phase === "merging_duplicates")
     return { pct: Math.round(100 * frac(p.merge_done, p.merge_total)), label, detail: `${p.merge_done}/${p.merge_total}` };
-  if (phase === "repairing_urls" || phase === "dropping_dead_images" || phase === "consolidating_r2" || phase === "updating_schedule")
+  if (phase === "repairing_urls" || phase === "dropping_dead_images" || phase === "consolidating_r2" || phase === "updating_schedule" || phase === "guessing_cities")
     return { pct: Math.round(100 * frac(p.repair_done ?? 0, p.repair_total ?? 0)), label, detail: `${p.repair_done ?? 0}/${p.repair_total ?? 0}` };
   if (phase === "tagging_photos" || phase === "tagging_firstview")
     return { pct: Math.round(100 * frac(d.tagging.run_done, d.tagging.run_total)), label, detail: `${d.tagging.run_done}/${d.tagging.run_total}` };
@@ -405,7 +406,7 @@ export default function AdminPanel() {
                 </Pressable>
                 <Pressable
                   disabled={!!busy}
-                  onPress={() => runAction("cities", api.fashionBackfillCities, "Şehir bilgisi tamamlandı.")}
+                  onPress={() => runAction("cities", api.fashionBackfillCities, "Şehir bilgisi tamamlama başladı.")}
                   style={[styles.btnSm, { borderColor: colors.border, opacity: busy ? 0.5 : 1 }]}
                 >
                   <Text style={[styles.btnTxtSm, { color: colors.onSurface }]}>Şehirleri tamamla</Text>

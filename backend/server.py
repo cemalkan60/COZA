@@ -3864,54 +3864,70 @@ async def run_fashion_backfill_cities() -> dict:
     for d in docs:
         (regular if str(d.get("season") or "").upper().endswith(("AW", "SS")) else special).append(d)
 
+    # Live progress bar, same repair_done/repair_total fields + shared
+    # db.meta doc consolidating_r2/updating_schedule already established —
+    # admin.tsx's scrapeProgress() just needs the new phase name added to
+    # its own list (see PHASE_LABELS/the repair_done branch there).
+    await db.meta.update_one(
+        {"_id": "fashion"},
+        {"$set": {"scraping": True, "phase": "guessing_cities", "repair_total": len(docs), "repair_done": 0}},
+        upsert=True,
+    )
     ops = []
+    try:
+        if gemini_client.ENABLED and regular:
+            by_brand: dict = {}
+            for d in regular:
+                by_brand.setdefault(d.get("brand_tr") or "", []).append(d["source_id"])
+            by_brand.pop("", None)
+            distinct_brands = list(by_brand.keys())
+            brand_city: dict = {}
+            for i in range(0, len(distinct_brands), _BRAND_CITY_AI_BATCH):
+                batch = distinct_brands[i:i + _BRAND_CITY_AI_BATCH]
+                result = await asyncio.to_thread(gemini_client.guess_brand_cities, batch)
+                if result:
+                    brand_city.update(result)
+                await db.meta.update_one(
+                    {"_id": "fashion"},
+                    {"$inc": {"repair_done": sum(len(by_brand[b]) for b in batch)}},
+                )
+            ops.extend(
+                UpdateOne({"source_id": source_id}, {"$set": {"city": city}})
+                for brand, city in brand_city.items()
+                for source_id in by_brand.get(brand, [])
+            )
 
-    if gemini_client.ENABLED and regular:
-        by_brand: dict = {}
-        for d in regular:
-            by_brand.setdefault(d.get("brand_tr") or "", []).append(d["source_id"])
-        by_brand.pop("", None)
-        distinct_brands = list(by_brand.keys())
-        brand_city: dict = {}
-        for i in range(0, len(distinct_brands), _BRAND_CITY_AI_BATCH):
-            batch = distinct_brands[i:i + _BRAND_CITY_AI_BATCH]
-            result = await asyncio.to_thread(gemini_client.guess_brand_cities, batch)
-            if result:
-                brand_city.update(result)
-        ops.extend(
-            UpdateOne({"source_id": source_id}, {"$set": {"city": city}})
-            for brand, city in brand_city.items()
-            for source_id in by_brand.get(brand, [])
-        )
+        if gemini_client.ENABLED and special:
+            show_city: dict = {}
+            for i in range(0, len(special), _BRAND_CITY_AI_BATCH):
+                batch = special[i:i + _BRAND_CITY_AI_BATCH]
+                shows = [
+                    {
+                        "id": d["source_id"],
+                        "brand": d.get("brand_tr") or "",
+                        "season": d.get("season_label") or d.get("season") or "",
+                        "title": d.get("title_tr") or "",
+                    }
+                    for d in batch
+                ]
+                result = await asyncio.to_thread(gemini_client.guess_show_cities, shows)
+                if result:
+                    show_city.update(result)
+                await db.meta.update_one({"_id": "fashion"}, {"$inc": {"repair_done": len(batch)}})
+            ops.extend(
+                UpdateOne({"source_id": source_id}, {"$set": {"city": city}})
+                for source_id, city in show_city.items()
+            )
 
-    if gemini_client.ENABLED and special:
-        show_city: dict = {}
-        for i in range(0, len(special), _BRAND_CITY_AI_BATCH):
-            batch = special[i:i + _BRAND_CITY_AI_BATCH]
-            shows = [
-                {
-                    "id": d["source_id"],
-                    "brand": d.get("brand_tr") or "",
-                    "season": d.get("season_label") or d.get("season") or "",
-                    "title": d.get("title_tr") or "",
-                }
-                for d in batch
-            ]
-            result = await asyncio.to_thread(gemini_client.guess_show_cities, shows)
-            if result:
-                show_city.update(result)
-        ops.extend(
-            UpdateOne({"source_id": source_id}, {"$set": {"city": city}})
-            for source_id, city in show_city.items()
-        )
+        if gemini_client.ENABLED and (regular or special):
+            await _bump_usage_counter("gemini_calls")
 
-    if gemini_client.ENABLED and (regular or special):
-        await _bump_usage_counter("gemini_calls")
-
-    matched = 0
-    if ops:
-        await db.fashion.bulk_write(ops, ordered=False)
-        matched = len(ops)
+        matched = 0
+        if ops:
+            await db.fashion.bulk_write(ops, ordered=False)
+            matched = len(ops)
+    finally:
+        await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
 
     logger.info("Fashion city backfill: %d/%d collection(s) matched via Gemini.", matched, len(docs))
     await _record_job_run(
