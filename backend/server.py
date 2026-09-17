@@ -6,6 +6,7 @@ import uuid
 import secrets
 import asyncio
 import logging
+import unicodedata
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Annotated
@@ -3839,6 +3840,15 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
 _BRAND_CITY_AI_BATCH = 40  # brand names / shows per Gemini call — plenty of margin under max_output_tokens
 
 
+def _normalize_brand_key(name: str) -> str:
+    """Casefold + strip accents + collapse whitespace, so "Chloé" / "CHLOE"
+    / "  chloe " all dedupe to the same house instead of each looking like
+    a separate unknown brand to Gemini."""
+    decomposed = unicodedata.normalize("NFKD", name or "")
+    ascii_only = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", ascii_only).strip().casefold()
+
+
 async def run_fashion_backfill_cities() -> dict:
     """Fill in `city` on every existing collection that has none
     (fashion-press/firstview never provide one at all — see the two
@@ -3876,25 +3886,38 @@ async def run_fashion_backfill_cities() -> dict:
     ops = []
     try:
         if gemini_client.ENABLED and regular:
-            by_brand: dict = {}
+            # Group by a normalized key first, not the raw brand_tr string —
+            # the same house routinely sits under several spellings
+            # ("Prada" / "PRADA" / stray whitespace / a JA->TR translation
+            # that drifted — see _group_fashion_items's own note on that
+            # last one). Without this, each variant is a separate unknown
+            # to Gemini and only whichever spelling it happens to answer
+            # confidently for gets matched; the others silently don't, even
+            # though they're the exact same brand.
+            by_norm: dict = {}
             for d in regular:
-                by_brand.setdefault(d.get("brand_tr") or "", []).append(d["source_id"])
-            by_brand.pop("", None)
-            distinct_brands = list(by_brand.keys())
+                raw = (d.get("brand_tr") or "").strip()
+                if not raw:
+                    continue
+                key = _normalize_brand_key(raw)
+                entry = by_norm.setdefault(key, {"display": raw, "source_ids": []})
+                entry["source_ids"].append(d["source_id"])
+            display_names = [v["display"] for v in by_norm.values()]
             brand_city: dict = {}
-            for i in range(0, len(distinct_brands), _BRAND_CITY_AI_BATCH):
-                batch = distinct_brands[i:i + _BRAND_CITY_AI_BATCH]
+            for i in range(0, len(display_names), _BRAND_CITY_AI_BATCH):
+                batch = display_names[i:i + _BRAND_CITY_AI_BATCH]
                 result = await asyncio.to_thread(gemini_client.guess_brand_cities, batch)
                 if result:
                     brand_city.update(result)
+                batch_keys = {_normalize_brand_key(b) for b in batch}
                 await db.meta.update_one(
                     {"_id": "fashion"},
-                    {"$inc": {"repair_done": sum(len(by_brand[b]) for b in batch)}},
+                    {"$inc": {"repair_done": sum(len(by_norm[k]["source_ids"]) for k in batch_keys)}},
                 )
             ops.extend(
                 UpdateOne({"source_id": source_id}, {"$set": {"city": city}})
-                for brand, city in brand_city.items()
-                for source_id in by_brand.get(brand, [])
+                for display, city in brand_city.items()
+                for source_id in by_norm.get(_normalize_brand_key(display), {}).get("source_ids", [])
             )
 
         if gemini_client.ENABLED and special:
