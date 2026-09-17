@@ -82,10 +82,14 @@ def _normalize_season(title: str) -> str:
         era = m.group(2).upper().replace("-", "").replace(" ", "")
         return f"{m.group(1)}{'RESORT' if era in ('RESORT', 'CRUISE') else 'PREFALL'}"
 
-    # Japanese season words. The suffix regex (_TITLE_SUFFIX_RE) already
-    # knows all four; this must recognise the same set or Resort/Pre-Fall
-    # collections come back seasonless (season_rank -1) and slip the rolling
-    # prune. Year can be a span (2026-27) for 秋冬, single for the rest.
+    # Japanese season words. The suffix regex (_TITLE_SUFFIX_RE) must
+    # recognise the same set or Resort/Pre-Fall collections come back
+    # seasonless (season_rank -1) and slip the rolling prune. Year can be a
+    # span (2026-27) for 秋冬, single for the rest. A bare 夏 ("summer") or
+    # 冬 ("winter") — without the more common 春夏/秋冬 pairing — showed up
+    # live in a title that otherwise matched every other known token
+    # (year/gender/"collection"); folded into the nearest full season same
+    # as fashion industry convention (summer -> SS, winter -> AW).
     m = re.search(r"(\d{4}(?:-\d{2})?)\s*年?\s*秋冬", title)
     if m:
         return f"{m.group(1)}AW"
@@ -98,6 +102,12 @@ def _normalize_season(title: str) -> str:
     m = re.search(r"(\d{4})\s*年?\s*プレフォール", title)
     if m:
         return f"{m.group(1)}PREFALL"
+    m = re.search(r"(\d{4})\s*年?\s*夏", title)
+    if m:
+        return f"{m.group(1)}SS"
+    m = re.search(r"(\d{4})\s*年?\s*冬", title)
+    if m:
+        return f"{m.group(1)}AW"
 
     # Bare season word with a year captured anywhere in the string.
     m = re.search(r"(\d{4}(?:-\d{2})?)", title)
@@ -113,6 +123,10 @@ def _normalize_season(title: str) -> str:
         return f"{yr4}RESORT"
     if "プレフォール" in title:
         return f"{yr4}PREFALL"
+    if "夏" in title:
+        return f"{yr4}SS"
+    if "冬" in title:
+        return f"{yr4}AW"
     return ""
 
 
@@ -230,7 +244,7 @@ def _parse_collection_links(html: str, limit: int) -> list:
 
 _TITLE_SUFFIX_RE = re.compile(
     r"\s*(?:オートクチュール\s*)?"
-    r"\d{4}(?:-\d{2})?年?(?:秋冬|春夏|春|秋|リゾート|プレフォール)?\s*"
+    r"\d{4}(?:-\d{2})?年?(?:秋冬|春夏|春|夏|秋|冬|リゾート|プレフォール)?\s*"
     r"(?:ウィメンズ&メンズ|ウィメンズ|メンズ)?\s*"
     r"(?:コレクション)?\s*$"
 )
