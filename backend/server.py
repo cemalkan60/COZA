@@ -955,6 +955,9 @@ async def _check_scrape_yield(by_source: dict) -> list:
     return warnings
 
 
+_SOURCE_FETCH_TIMEOUT_S = 120  # wall-clock cap on one source's listing-page fetch — see its use below
+
+
 async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> dict:
     """Scrape runway collections (women / men / haute couture) from
     fashion-press.net and firstview.com (nowfashion.com temporarily disabled,
@@ -1043,8 +1046,24 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
 
         for label, fn, args in tasks:
             try:
-                got = await asyncio.to_thread(fn, *args)
+                # Same hard wall-clock timeout as _finalize_and_save_group,
+                # and for the same reason: requests' own timeout= only
+                # resets per byte received, so a source that trickles data
+                # very slowly (never dropping the connection outright) can
+                # stall a listing-page fetch indefinitely with zero
+                # exception raised. Left unguarded here, that hang holds
+                # _fashion_lock forever -- every later scrape (scheduled OR
+                # manual) then sees the lock held and silently no-ops with
+                # nothing recorded anywhere, until the process happens to
+                # restart. Confirmed live: automatic scraping added nothing
+                # for a stretch, a manual attempt afterward "just worked".
+                got = await asyncio.wait_for(asyncio.to_thread(fn, *args), timeout=_SOURCE_FETCH_TIMEOUT_S)
                 raw_items.extend(got or [])
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Fashion scrape source timed out (%s, >%ds, likely a stalled connection) — skipping",
+                    label, _SOURCE_FETCH_TIMEOUT_S,
+                )
             except Exception:
                 logger.exception("Fashion scrape source failed (%s)", label)
             await db.meta.update_one({"_id": "fashion"}, {"$inc": {"sources_done": 1}})
