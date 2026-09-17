@@ -871,7 +871,11 @@ def _group_fashion_items(raw_items: list) -> tuple:
         # brand_tr is only final now (post cross-source merge, best-text
         # picked) -- guess after, not while grouping, so a group that later
         # absorbs a duplicate under the "real" brand spelling still gets it.
-        if not g["city"]:
+        # Resort/pre-fall shows are routinely staged somewhere other than
+        # the house's usual fashion-week city (special/destination shows) --
+        # the brand->city map reflects the regular AW/SS circuit, so it's
+        # only trustworthy for those two.
+        if not g["city"] and str(g.get("season") or "").upper().endswith(("AW", "SS")):
             g["city"] = _guess_city_from_brand(g["brand_tr"])
     return result, obsolete
 
@@ -3921,10 +3925,14 @@ async def run_fashion_backfill_cities() -> dict:
     doesn't need _fashion_lock or a live progress bar."""
     started_at = datetime.now(timezone.utc).isoformat()
     docs = await db.fashion.find(
-        {"city": {"$in": [None, ""]}}, {"_id": 0, "source_id": 1, "brand_tr": 1},
+        {"city": {"$in": [None, ""]}}, {"_id": 0, "source_id": 1, "brand_tr": 1, "season": 1},
     ).to_list(length=None)
     ops = []
     for d in docs:
+        # Same restriction as _group_fashion_items: only the regular AW/SS
+        # circuit, never resort/pre-fall (routinely shown somewhere else).
+        if not str(d.get("season") or "").upper().endswith(("AW", "SS")):
+            continue
         city = _guess_city_from_brand(d.get("brand_tr") or "")
         if city:
             ops.append(UpdateOne({"source_id": d["source_id"]}, {"$set": {"city": city}}))
