@@ -3837,7 +3837,28 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
     return {"status": "started"}
 
 
-_BRAND_CITY_AI_BATCH = 40  # brand names / shows per Gemini call — plenty of margin under max_output_tokens
+_BRAND_CITY_AI_BATCH = 10  # brand names / shows per Gemini call — smaller batches so one failed/retried
+# call loses less ground, and each retry is cheaper (Cem: "kırklı sorma 10 lu sor")
+
+
+async def _gemini_call_with_retry(fn, arg, attempts: int = 3, delay_s: float = 4.0):
+    """Run a blocking gemini_client call (via asyncio.to_thread), retrying a
+    few times if it comes back empty. A single batch call returning None
+    isn't "these 40 brands are all unknown" — _generate() only gives up
+    after every configured (key, model) slot is on cooldown, and that's
+    often a transient, self-clearing moment (a burst of other calls
+    elsewhere, a slot mid-cooldown that clears by the next try) rather than
+    a real multi-minute outage. Without this, a run's actual match rate
+    swings wildly (a handful of unlucky batches wipe out everything they
+    covered) and "just click the button again" was doing the retrying that
+    belongs in here instead."""
+    for attempt in range(attempts):
+        result = await asyncio.to_thread(fn, arg)
+        if result:
+            return result
+        if attempt < attempts - 1:
+            await asyncio.sleep(delay_s)
+    return None
 
 
 def _normalize_brand_key(name: str) -> str:
@@ -3906,7 +3927,7 @@ async def run_fashion_backfill_cities() -> dict:
             brand_city: dict = {}
             for i in range(0, len(display_names), _BRAND_CITY_AI_BATCH):
                 batch = display_names[i:i + _BRAND_CITY_AI_BATCH]
-                result = await asyncio.to_thread(gemini_client.guess_brand_cities, batch)
+                result = await _gemini_call_with_retry(gemini_client.guess_brand_cities, batch)
                 if result:
                     brand_city.update(result)
                 batch_keys = {_normalize_brand_key(b) for b in batch}
@@ -3933,7 +3954,7 @@ async def run_fashion_backfill_cities() -> dict:
                     }
                     for d in batch
                 ]
-                result = await asyncio.to_thread(gemini_client.guess_show_cities, shows)
+                result = await _gemini_call_with_retry(gemini_client.guess_show_cities, shows)
                 if result:
                     show_city.update(result)
                 await db.meta.update_one({"_id": "fashion"}, {"$inc": {"repair_done": len(batch)}})
