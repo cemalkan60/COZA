@@ -3837,16 +3837,16 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
     return {"status": "started"}
 
 
-_BRAND_CITY_AI_BATCH = 150  # distinct brand names per Gemini call
-_SHOW_CITY_AI_BATCH = 60    # resort/pre-fall shows per Gemini call (each entry carries more text)
-# Went smaller (10) first on the theory that a failed batch loses less
-# ground -- backwards. Every batch is its own full Gemini call, competing
-# for the same small pool of (key, model) slots (see gemini_client._SLOTS);
-# smaller batches mean MORE total calls for the same brands, which burns
-# through a limited quota faster and made the real problem worse, not
-# better. Going the other way instead: as FEW calls as the ~8K output
-# token budget below comfortably allows, so the whole sweep competes for
-# quota only a handful of times instead of dozens.
+_BRAND_CITY_AI_BATCH = 1    # distinct brand names per Gemini call
+_SHOW_CITY_AI_BATCH = 1     # resort/pre-fall shows per Gemini call
+# Cem: one at a time, let it actually finish. 150/60-per-call gave 0/92;
+# 10-per-call gave small-but-nonzero (2, 3, 4, 10) -- failures were scaling
+# with batch size, so this goes to the floor: one brand/show, one question,
+# one answer, no batch-JSON for anything to go wrong in. Slower in wall-
+# clock time (one Gemini call per collection instead of one per ~10-150),
+# but this is a background job with a live progress bar already -- it runs
+# to completion in this one job run regardless of how long that takes,
+# nothing here requires re-clicking the button.
 
 
 async def _gemini_call_with_retry(fn, arg, attempts: int = 3, delay_s: float = 4.0):
