@@ -561,8 +561,8 @@ def guess_brand_cities(brands: list) -> "Optional[dict]":
         return None
     text = _generate(
         [{"text": _BRAND_CITY_PROMPT.format(brands_json=json.dumps(brands, ensure_ascii=False))}],
-        max_output_tokens=2048,
-        timeout=60,
+        max_output_tokens=8192,
+        timeout=90,
         response_json=True,
     )
     if not text:
@@ -625,8 +625,8 @@ def guess_show_cities(shows: list) -> "Optional[dict]":
         return None
     text = _generate(
         [{"text": _SHOW_CITY_PROMPT.format(shows_json=json.dumps(shows, ensure_ascii=False))}],
-        max_output_tokens=2048,
-        timeout=60,
+        max_output_tokens=8192,
+        timeout=90,
         response_json=True,
     )
     if not text:

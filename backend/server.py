@@ -3837,8 +3837,16 @@ async def admin_fashion_fix_covers(admin: Annotated[dict, Depends(require_admin)
     return {"status": "started"}
 
 
-_BRAND_CITY_AI_BATCH = 10  # brand names / shows per Gemini call — smaller batches so one failed/retried
-# call loses less ground, and each retry is cheaper (Cem: "kırklı sorma 10 lu sor")
+_BRAND_CITY_AI_BATCH = 150  # distinct brand names per Gemini call
+_SHOW_CITY_AI_BATCH = 60    # resort/pre-fall shows per Gemini call (each entry carries more text)
+# Went smaller (10) first on the theory that a failed batch loses less
+# ground -- backwards. Every batch is its own full Gemini call, competing
+# for the same small pool of (key, model) slots (see gemini_client._SLOTS);
+# smaller batches mean MORE total calls for the same brands, which burns
+# through a limited quota faster and made the real problem worse, not
+# better. Going the other way instead: as FEW calls as the ~8K output
+# token budget below comfortably allows, so the whole sweep competes for
+# quota only a handful of times instead of dozens.
 
 
 async def _gemini_call_with_retry(fn, arg, attempts: int = 3, delay_s: float = 4.0):
@@ -3943,8 +3951,8 @@ async def run_fashion_backfill_cities() -> dict:
 
         if gemini_client.ENABLED and special:
             show_city: dict = {}
-            for i in range(0, len(special), _BRAND_CITY_AI_BATCH):
-                batch = special[i:i + _BRAND_CITY_AI_BATCH]
+            for i in range(0, len(special), _SHOW_CITY_AI_BATCH):
+                batch = special[i:i + _SHOW_CITY_AI_BATCH]
                 shows = [
                     {
                         "id": d["source_id"],
