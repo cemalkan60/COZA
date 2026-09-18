@@ -425,14 +425,25 @@ def fetch_collection_images(source_id: str):
     preview variants are always prefixed with w<digits>_, so excluding those
     keeps only the full-resolution originals. The number of photos varies
     per collection (no fixed count).
+
+    Matching is scoped to <a class="mount_gallery"> specifically (rather than
+    a bare `src="..."` scan) because the page also lists "other season" /
+    related-collection tiles further down using the same /img/news/<id>/...
+    path shape — those use a lazy-load `data-src="..."` attribute, which a
+    plain `src="..."` regex was matching too (as a substring of `data-src`),
+    prepending an unrelated collection's cover photo onto thin galleries.
     """
     html = _fetch(f"/collections/{source_id}")
-    pattern = re.compile(r'src="(/img/news/\d+/(?!w\d+_)[^"]+\.jpg)"')
+    soup = BeautifulSoup(html, "html.parser")
+    pattern = re.compile(r"^/img/news/\d+/(?!w\d+_)[^?]+\.jpg$")
     seen = set()
     images = []
-    for m in pattern.finditer(html):
-        path = m.group(1)
-        if path in seen:
+    for a in soup.find_all("a", class_="mount_gallery"):
+        img = a.find("img")
+        if not img:
+            continue
+        path = img.get("src") or ""
+        if not pattern.match(path) or path in seen:
             continue
         seen.add(path)
         images.append(BASE + path)

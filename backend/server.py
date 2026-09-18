@@ -2500,6 +2500,29 @@ async def add_user_photo_by_upload(
 # thin one more real attempt instead of skipping it forever.
 _THIN_GALLERY_MAX = 2
 
+# fetch_collection_images() used to also sweep up an unrelated collection's
+# cover photo from the "other season"/related-collections tiles further down
+# the detail page (a data-src="..." lazy-load attribute that a bare
+# src="..." regex matched as a substring) -- fixed at the source in
+# fashion_scraper, but docs scraped before that fix are stuck with a foreign
+# /img/news/<other id>/top.jpg baked into "images" and, since it inflated
+# their count past _THIN_GALLERY_MAX, were never picked up by the normal
+# thin-gallery retry. Detect that specific contamination (any image whose
+# news id doesn't match the doc's own fp_source_id) so those docs get one
+# more real fetch too, same as a thin one.
+_FP_NEWS_ID_RE = re.compile(r"/img/news/(\d+)/")
+
+
+def _gallery_has_foreign_image(doc: dict) -> bool:
+    fp_id = str(doc.get("fp_source_id") or "")
+    if not fp_id:
+        return False
+    for url in doc.get("images") or []:
+        m = _FP_NEWS_ID_RE.search(url or "")
+        if m and m.group(1) != fp_id:
+            return True
+    return False
+
 
 def _tag_profile(image_tags: list, per_facet: int = 3) -> dict:
     """The few most common item/color/material words across a collection's
@@ -2659,7 +2682,7 @@ async def fashion_collection_detail(source_id: str):
     # gallery_fetched). A doc with a suspiciously thin gallery gets one more
     # real attempt instead of trusting the flag -- see _THIN_GALLERY_MAX's
     # other use in run_fashion_cover_fix.
-    already_thin = len(doc.get("images") or []) <= _THIN_GALLERY_MAX
+    already_thin = len(doc.get("images") or []) <= _THIN_GALLERY_MAX or _gallery_has_foreign_image(doc)
     if not fp_id or (doc.get("gallery_fetched") and not already_thin):
         imgs = doc.get("images") or []
         return {
@@ -3813,7 +3836,9 @@ async def run_fashion_cover_fix() -> dict:
         docs = [
             {"source_id": d["source_id"], "fp_source_id": d["fp_source_id"]}
             for d in all_docs
-            if not d.get("gallery_fetched") or len(d.get("images") or []) <= _THIN_GALLERY_MAX
+            if not d.get("gallery_fetched")
+            or len(d.get("images") or []) <= _THIN_GALLERY_MAX
+            or _gallery_has_foreign_image(d)
         ]
         logger.info(
             "Fashion cover fix: %d fashion-press collection(s) still on their low-res cover or a thin gallery.",
