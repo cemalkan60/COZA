@@ -2500,28 +2500,19 @@ async def add_user_photo_by_upload(
 # thin one more real attempt instead of skipping it forever.
 _THIN_GALLERY_MAX = 2
 
-# fetch_collection_images() used to also sweep up an unrelated collection's
-# cover photo from the "other season"/related-collections tiles further down
-# the detail page (a data-src="..." lazy-load attribute that a bare
-# src="..." regex matched as a substring) -- fixed at the source in
-# fashion_scraper, but docs scraped before that fix are stuck with a foreign
-# /img/news/<other id>/top.jpg baked into "images" and, since it inflated
-# their count past _THIN_GALLERY_MAX, were never picked up by the normal
-# thin-gallery retry. Detect that specific contamination (any image whose
-# news id doesn't match the doc's own fp_source_id) so those docs get one
-# more real fetch too, same as a thin one.
-_FP_NEWS_ID_RE = re.compile(r"/img/news/(\d+)/")
-
-
-def _gallery_has_foreign_image(doc: dict) -> bool:
-    fp_id = str(doc.get("fp_source_id") or "")
-    if not fp_id:
-        return False
-    for url in doc.get("images") or []:
-        m = _FP_NEWS_ID_RE.search(url or "")
-        if m and m.group(1) != fp_id:
-            return True
-    return False
+# One-time: fetch_collection_images() used to also sweep up an unrelated
+# collection's cover photo from the "other season"/related-collections
+# tiles further down the detail page (a data-src="..." lazy-load attribute
+# that a bare src="..." regex matched as a substring) -- fixed at the
+# source in fashion_scraper. Every doc fetched under the old code can have
+# a foreign /img/news/<other id>/top.jpg baked into "images", not just thin
+# ones (a large gallery just hides it past the visible cover). Detecting
+# that from the doc alone doesn't work once R2 caching has replaced every
+# URL with an opaque fashion/<sha1>.jpg key, so this forces exactly one
+# full regardless-of-size refetch of every fashion-press gallery the first
+# time run_fashion_cover_fix runs after this fix ships (tracked below),
+# then falls back to the normal thin-only check for every run after.
+_GALLERY_RELATED_FIX_MIGRATION = "fashion_gallery_related_fix_v1"
 
 
 def _tag_profile(image_tags: list, per_facet: int = 3) -> dict:
@@ -2682,7 +2673,7 @@ async def fashion_collection_detail(source_id: str):
     # gallery_fetched). A doc with a suspiciously thin gallery gets one more
     # real attempt instead of trusting the flag -- see _THIN_GALLERY_MAX's
     # other use in run_fashion_cover_fix.
-    already_thin = len(doc.get("images") or []) <= _THIN_GALLERY_MAX or _gallery_has_foreign_image(doc)
+    already_thin = len(doc.get("images") or []) <= _THIN_GALLERY_MAX
     if not fp_id or (doc.get("gallery_fetched") and not already_thin):
         imgs = doc.get("images") or []
         return {
@@ -2713,6 +2704,21 @@ async def fashion_collection_detail(source_id: str):
         update["image"] = images[0]
         update["images_thumb"] = images_thumb
         update["image_thumb"] = images_thumb[0] if images_thumb else images[0]
+        # image_tags is a positional prefix of images -- keep only the
+        # leading tags that still line up against the new array at the
+        # same index (see _fix_one_cover's identical guard); the nightly
+        # tagging sweep regenerates the rest.
+        old_tags = doc.get("image_tags") or []
+        old_imgs = doc.get("images") or []
+        kept_tags = []
+        for i, u in enumerate(images):
+            if i < len(old_tags) and i < len(old_imgs) and old_imgs[i] == u:
+                kept_tags.append(old_tags[i])
+            else:
+                break
+        if len(kept_tags) != len(old_tags):
+            update["image_tags"] = kept_tags
+            tagged_count = len(kept_tags)
     # Mark fetched even on failure/empty so a broken collection doesn't
     # re-trigger this fetch (and re-hit fashion-press.net) on every view —
     # the existing thumbnail stays as the fallback.
@@ -3801,18 +3807,31 @@ async def _fix_one_cover(doc: dict, sem: asyncio.Semaphore) -> bool:
                 return False
             images = [full for full, _ in cached]
             images_thumb = [thumb for _, thumb in cached]
-        await db.fashion.update_one(
-            {"source_id": doc["source_id"]},
-            {
-                "$set": {
-                    "gallery_fetched": True,
-                    "images": images,
-                    "image": images[0],
-                    "images_thumb": images_thumb,
-                    "image_thumb": images_thumb[0] if images_thumb else images[0],
-                }
-            },
-        )
+        # image_tags is a positional prefix of images (image_tags[i]
+        # describes images[i]) -- this replaces the whole images array, so
+        # keep only the leading tags that still line up against the new
+        # array at the same index (same guard as the merge-duplicates
+        # sweep); the nightly tagging sweep regenerates the rest. Without
+        # this, a doc whose gallery just went from [old cover, real1, ...]
+        # to [real1, real2, ...] keeps old tags describing the wrong photo.
+        old_tags = doc.get("image_tags") or []
+        old_imgs = doc.get("images") or []
+        kept_tags = []
+        for i, u in enumerate(images):
+            if i < len(old_tags) and i < len(old_imgs) and old_imgs[i] == u:
+                kept_tags.append(old_tags[i])
+            else:
+                break
+        update = {
+            "gallery_fetched": True,
+            "images": images,
+            "image": images[0],
+            "images_thumb": images_thumb,
+            "image_thumb": images_thumb[0] if images_thumb else images[0],
+        }
+        if len(kept_tags) != len(old_tags):
+            update["image_tags"] = kept_tags
+        await db.fashion.update_one({"source_id": doc["source_id"]}, {"$set": update})
         return True
 
 
@@ -3829,20 +3848,21 @@ async def run_fashion_cover_fix() -> dict:
         return {"status": "already_running"}
     async with _fashion_lock:
         started_at = datetime.now(timezone.utc).isoformat()
+        migration_done = await db.meta.find_one({"_id": _GALLERY_RELATED_FIX_MIGRATION})
+        force_all = migration_done is None
         all_docs = await db.fashion.find(
             {"fp_source_id": {"$ne": None}},
-            {"_id": 0, "source_id": 1, "fp_source_id": 1, "gallery_fetched": 1, "images": 1},
+            {"_id": 0, "source_id": 1, "fp_source_id": 1, "gallery_fetched": 1, "images": 1, "image_tags": 1},
         ).to_list(length=None)
         docs = [
-            {"source_id": d["source_id"], "fp_source_id": d["fp_source_id"]}
+            {"source_id": d["source_id"], "fp_source_id": d["fp_source_id"],
+             "images": d.get("images") or [], "image_tags": d.get("image_tags") or []}
             for d in all_docs
-            if not d.get("gallery_fetched")
-            or len(d.get("images") or []) <= _THIN_GALLERY_MAX
-            or _gallery_has_foreign_image(d)
+            if force_all or not d.get("gallery_fetched") or len(d.get("images") or []) <= _THIN_GALLERY_MAX
         ]
         logger.info(
-            "Fashion cover fix: %d fashion-press collection(s) still on their low-res cover or a thin gallery.",
-            len(docs),
+            "Fashion cover fix: %d fashion-press collection(s) still on their low-res cover or a thin gallery%s.",
+            len(docs), " (one-time full re-check)" if force_all else "",
         )
         await db.meta.update_one(
             {"_id": "fashion"},
@@ -3863,6 +3883,12 @@ async def run_fashion_cover_fix() -> dict:
         await asyncio.gather(*(_run_one(d) for d in docs))
         logger.info("Fashion cover fix: done, %d/%d cover(s) upgraded.", fixed, len(docs))
         await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        if force_all:
+            await db.meta.update_one(
+                {"_id": _GALLERY_RELATED_FIX_MIGRATION},
+                {"$set": {"done_at": datetime.now(timezone.utc).isoformat()}},
+                upsert=True,
+            )
         await _record_job_run(
             "fashion_cover_fix", status="ok", started_at=started_at,
             done=fixed, total=len(docs), detail=f"{fixed}/{len(docs)} kapak güncellendi",
