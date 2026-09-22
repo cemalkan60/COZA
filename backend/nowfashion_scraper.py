@@ -31,11 +31,17 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# nowfashion.com returns a flat 403 on direct requests (bot protection) — fall
-# back to the same ScraperAPI proxy the Zara scraper already uses when that
-# happens. Read directly from the env var rather than importing scraper.py,
-# to keep this module independently importable/testable.
-SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY", "")
+# nowfashion.com returns a flat 403 on direct requests (bot protection) —
+# fall back to ScraperAPI when that happens. Its own key/account, NOT the
+# Zara scraper's SCRAPER_API_KEY: nowfashion's render=true fetch costs
+# ~20 credits/page (confirmed live 2026-09) vs Zara's plain ~1-credit
+# fetches, so sharing one pool would let this starve Zara's budget. Cem is
+# running this on ScraperAPI's free tier (1,000 credits/month) on purpose
+# and swapping NOWFASHION_SCRAPER_API_KEY by hand as it runs out, rather
+# than paying for a plan -- read directly from the env var rather than
+# importing scraper.py, to keep this module independently importable/
+# testable.
+NOWFASHION_SCRAPER_API_KEY = os.environ.get("NOWFASHION_SCRAPER_API_KEY", "")
 SCRAPER_PROXY_BASE = "http://api.scraperapi.com/"
 
 # Our category -> the site's own `collection` filter value.
@@ -59,13 +65,17 @@ def _fetch(path_or_url: str, timeout: int = 30) -> str:
         return resp.text
     except requests.exceptions.HTTPError as exc:
         blocked = exc.response is not None and exc.response.status_code in (403, 429)
-        if not (blocked and SCRAPER_API_KEY):
+        if not (blocked and NOWFASHION_SCRAPER_API_KEY):
             raise
         # A plain (non-rendered) proxy request still 500s here -- the block is
         # a JS challenge, not just an IP/UA check, so it needs ScraperAPI to
-        # actually run a browser (render=true). Costs ~10x a normal request;
-        # accepted since this scraper only runs twice a week (see its call
-        # site in server.py).
+        # actually run a browser (render=true). Costs ~20 credits/page
+        # (confirmed live 2026-09) -- Cem is on ScraperAPI's free tier and
+        # swaps the key by hand as it runs out (see NOWFASHION_SCRAPER_API_KEY
+        # above), so a run can burn through the month's credits well before
+        # it burns through every source's items; each gallery fetch failing
+        # once that happens is caught per-item by _scrape_from_listing's own
+        # try/except, not fatal to the whole run.
         #
         # render=true alone can return /fashion-week-schedules (a client-
         # rendered/Next.js page) before its own client-side data fetch has
@@ -80,7 +90,7 @@ def _fetch(path_or_url: str, timeout: int = 30) -> str:
         # just calls this plain path a few times instead.
         resp = requests.get(
             SCRAPER_PROXY_BASE,
-            params={"api_key": SCRAPER_API_KEY, "url": url, "render": "true"},
+            params={"api_key": NOWFASHION_SCRAPER_API_KEY, "url": url, "render": "true"},
             timeout=max(timeout, 60),
         )
         resp.raise_for_status()
