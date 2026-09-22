@@ -44,11 +44,9 @@ CATEGORY_TO_PARAM = {"women": "ready-to-wear", "men": "menswear", "haute-couture
 # (which contains no other category's name) is tried before shorter ones.
 _SLUG_CATEGORY_MARKERS = [("ready-to-wear", "women"), ("menswear", "men"), ("couture", "haute-couture")]
 
-KNOWN_CITIES = ["new-york", "paris", "milan", "london", "gran-canaria"]
-
 _NON_GALLERY_SLUGS = {
-    "search", "fashion-week", "about", "about-us", "contact", "login", "register",
-    "privacy", "terms", "subscribe", "our-services", "services",
+    "search", "fashion-week", "fashion-week-schedules", "about", "about-us", "contact",
+    "login", "register", "privacy", "terms", "subscribe", "our-services", "services",
 }
 _GALLERY_HREF_RE = re.compile(r"^/([a-z0-9][a-z0-9-]{10,})/?$")
 
@@ -108,7 +106,16 @@ def _extract_gallery_links(html: str, limit: int) -> list:
 
 
 def _parse_slug(slug: str) -> dict:
-    """Best-effort split of a confirmed {brand}-{category}-{season}-{year}-{city} slug."""
+    """Best-effort split of a confirmed {brand}-{category}-{season}-{year}-{city} slug.
+
+    City used to be matched against a fixed KNOWN_CITIES whitelist, so a
+    fashion week nowfashion covers in a city outside that short list (any
+    of Tokyo, Shanghai, Seoul, Copenhagen, ...) came back with city: None.
+    The year is a reliable, unambiguous anchor (4 digits) that always sits
+    between season and city in this slug shape, so city is now whatever
+    hyphenated text follows it -- positional, same idea as
+    _parse_schedule_slug below -- picking up any city without a code change.
+    """
     category = None
     brand_part, rest = slug, ""
     for marker, cat in _SLUG_CATEGORY_MARKERS:
@@ -119,25 +126,28 @@ def _parse_slug(slug: str) -> dict:
             rest = slug[idx + len(marker) + 2:]
             break
 
-    city = None
-    for c in KNOWN_CITIES:
-        if rest.endswith(c):
-            city = c.replace("-", " ").title()
-            rest = rest[: -len(c)].rstrip("-")
-            break
-
     season = None
-    year_m = re.search(r"(19|20)\d{2}", rest)
+    city = None
+    # Fall/Winter can span two calendar years on some sites (2026-27 /
+    # 2026-2027) -- the optional second half is matched (and skipped over
+    # for the city split) even though every confirmed live slug so far
+    # used a single year, so a two-year-span slug doesn't get "27" or
+    # "2027" stuck onto the front of the city.
+    year_m = re.search(r"(19|20)\d{2}(?:-(?:19|20)?\d{2})?", rest)
     if year_m:
-        year = year_m.group(0)
-        if "fall-winter" in rest or "autumn-winter" in rest:
+        year = year_m.group(0)[:4]
+        season_part = rest[: year_m.start()]
+        if "fall-winter" in season_part or "autumn-winter" in season_part:
             season = f"{year}AW"
-        elif "spring-summer" in rest:
+        elif "spring-summer" in season_part:
             season = f"{year}SS"
-        elif "resort" in rest or "cruise" in rest:
+        elif "resort" in season_part or "cruise" in season_part:
             season = f"{year}RESORT"
-        elif "pre-fall" in rest:
+        elif "pre-fall" in season_part:
             season = f"{year}PREFALL"
+        city_part = rest[year_m.end():].strip("-")
+        if city_part:
+            city = city_part.replace("-", " ").title()
 
     brand = brand_part.replace("-", " ").strip().title() if brand_part else None
     return {"brand": brand, "category": category, "season": season, "city": city}
@@ -239,15 +249,14 @@ _SCHEDULE_TYPE_MARKERS = [("ready-to-wear", "women"), ("menswear", "men"), ("cou
 def _parse_schedule_slug(slug: str) -> "Optional[dict]":
     """'paris-ready-to-wear-spring-summer-2027' -> city/category/season.
     Unlike _parse_slug (brand galleries), the city comes FIRST here and
-    there's no brand name to strip.
-
-    City is NOT limited to KNOWN_CITIES (that list is only used by the
-    dormant brand-gallery parser below) — whichever of the 3 known category
-    markers appears
-    first anchors the split, so everything before it (any number of
-    hyphenated words) is taken as the city. That way a fashion week for a
-    city nowfashion adds later (Copenhagen, Tokyo, São Paulo, ...) is still
-    picked up without a code change, instead of being silently dropped."""
+    there's no brand name to strip -- whichever of the 3 known category
+    markers appears first anchors the split, so everything before it (any
+    number of hyphenated words) is taken as the city. Same positional idea
+    _parse_slug above uses (anchored on the year instead, since city sits
+    at the other end of that slug shape): no fixed city list either way, so
+    a fashion week for a city nowfashion adds later (Copenhagen, Tokyo, São
+    Paulo, ...) is picked up without a code change instead of being
+    silently dropped."""
     category = None
     city_part = rest = None
     for marker, cat in _SCHEDULE_TYPE_MARKERS:

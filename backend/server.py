@@ -922,7 +922,7 @@ async def _bump_usage_counter(kind: str, n: int = 1) -> None:
     await db.meta.update_one({"_id": f"usage:{month}"}, {"$inc": {kind: n}}, upsert=True)
 
 
-_SCRAPE_YIELD_SITES = ("fashion-press", "firstview")
+_SCRAPE_YIELD_SITES = ("fashion-press", "firstview", "nowfashion")
 
 
 async def _check_scrape_yield(by_source: dict) -> list:
@@ -960,9 +960,13 @@ _SOURCE_FETCH_TIMEOUT_S = 120  # wall-clock cap on one source's listing-page fet
 
 async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> dict:
     """Scrape runway collections (women / men / haute couture) from
-    fashion-press.net and firstview.com (nowfashion.com temporarily disabled,
-    see below), merging the same brand+season+category found across sources
-    into one entry.
+    fashion-press.net, firstview.com and nowfashion.com, merging the same
+    brand+season+category found across sources into one entry. Only regular
+    (non-backfill) runs hit nowfashion -- every one of its gallery pages
+    needs a paid ScraperAPI render=true fetch to get past its Cloudflare
+    challenge (confirmed live 2026-09), so a deep multi-year backfill there
+    would be an unbounded credit bill; nowfashion's own items already carry
+    a real city (parsed straight from the URL slug), unlike the other two.
 
     Regular runs (`backfill=False`, the twice-weekly schedule and the manual
     "tara" button) only fetch each source's single "newest first" page —
@@ -1016,15 +1020,17 @@ async def run_fashion_scrape(reason: str = "manual", backfill: bool = False) -> 
                 ("fashion-press/women", fashion_scraper.scrape_collections, (40, "women")),
                 ("fashion-press/men", fashion_scraper.scrape_collections, (40, "men")),
                 ("fashion-press/haute-couture", fashion_scraper.scrape_haute_couture, (40,)),
-                # nowfashion.com's actual runway-photo galleries (scrape_category,
-                # still in nowfashion_scraper.py) are NOT wired in here -- Cem
-                # only wants its fashion-week CALENDAR (dates, no photos), which
-                # is a fundamentally different shape than every other source
-                # here (city/season/dates, not a photo collection) and doesn't
-                # belong merged into db.fashion alongside them. See
-                # run_nowfashion_schedule_scrape's own separate job/collection.
             ]
             tasks += [(f"firstview/{cat}", firstview_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES]
+            # nowfashion.com's actual runway-photo galleries (scrape_category)
+            # -- every gallery page needs a ScraperAPI render=true fetch to
+            # get past its Cloudflare challenge (~20 credits/page, confirmed
+            # live 2026-09), unlike fashion-press/firstview which fetch
+            # directly for free. Each item already carries a real city
+            # parsed straight from the URL slug (see nowfashion_scraper.
+            # _parse_slug) -- no Gemini guess needed, unlike every other
+            # source here.
+            tasks += [(f"nowfashion/{cat}", nowfashion_scraper.scrape_category, (cat, 30)) for cat in FASHION_CATEGORIES]
 
         start_iso = started.isoformat()
         await db.meta.update_one(
@@ -2097,11 +2103,8 @@ async def admin_dashboard(admin: Annotated[dict, Depends(require_admin)]):
         "system": {
             "db_name": os.environ["DB_NAME"],
             "sources": {
-                "active": ["fashion-press.net", "firstview.com"],
-                "disabled": [
-                    {"name": "nowfashion.com",
-                     "reason": "Bot koruması (HTTP 403 / JS challenge). Aşmak ScraperAPI render=true (~10x kredi) gerektirdiği için kapalı."},
-                ],
+                "active": ["fashion-press.net", "firstview.com", "nowfashion.com"],
+                "disabled": [],
                 # Rolling per-site item-count baseline the broken-scraper
                 # alarm compares against (see _check_scrape_yield).
                 "yield_baseline": yield_meta,
