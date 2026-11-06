@@ -34,7 +34,7 @@ export type FashionItem = {
   // Filled in gradually by the tagging sweep (FirstView first), so this can
   // be shorter than `images` or absent entirely on a doc that hasn't been
   // reached yet.
-  image_tags?: { item: string; color: string; pattern: string; material: string }[];
+  image_tags?: { item: string; color: string; pattern: string; material: string; wash?: string }[];
   // D5: blur placeholder for the cover thumbnail only (not every photo —
   // see image_store.blurhash_for_url). Absent until the backfill sweep
   // reaches this collection.
@@ -82,6 +82,8 @@ export type FashionLookFilters = {
   colors: FashionLookOption[];
   materials: FashionLookOption[];
   patterns: FashionLookOption[];
+  /** Denim wash/finish (taş yıkama, asit yıkama, …). Older backends omit it. */
+  washes?: FashionLookOption[];
 };
 
 export type FashionLookQuery = {
@@ -91,6 +93,7 @@ export type FashionLookQuery = {
   color?: string;
   material?: string;
   pattern?: string;
+  wash?: string;
   q?: string;
   skip?: number;
 };

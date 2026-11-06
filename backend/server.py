@@ -67,6 +67,7 @@ _JOB_LABELS = {
     "fashion_scrape": "Fashion taraması",
     "fashion_backfill": "Fashion taraması (2026'dan beri)",
     "fashion_tag_photos": "Fotoğraf etiketleme",
+    "fashion_tag_washes": "Yıkama etiketleme (denim)",
     "fashion_repair_urls": "Fotoğraf adreslerini onarma",
     "fashion_migrate_image_domain": "Fotoğraf adreslerini yeni alan adına taşıma",
     "fashion_consolidate_r2": "Depoları tek depoda birleştirme",
@@ -2803,8 +2804,8 @@ async def report_fashion_collection(
 
 @api.get("/fashion/looks/filters")
 async def fashion_looks_filters(user: Annotated[dict, Depends(get_current_user)]):
-    """Static filter option lists (season/gender/item/color/material/pattern) for coordinate search."""
-    return fashion_scraper.looks_filters()
+    """Static filter option lists (season/gender/item/color/material/pattern/wash) for coordinate search."""
+    return {**fashion_scraper.looks_filters(), "washes": fashion_tag_map.wash_options()}
 
 
 def _looks_vocab() -> dict:
@@ -2816,6 +2817,7 @@ def _looks_vocab() -> dict:
         "color": [c["value"] for c in raw["colors"]],
         "material": [m["value"] for m in raw["materials"]],
         "pattern": [p["value"] for p in raw["patterns"]],
+        "wash": [w["value"] for w in fashion_tag_map.wash_options()],
     }
 
 
@@ -2918,6 +2920,7 @@ async def fashion_looks(
     pattern: Optional[str] = None,
     q: Optional[str] = None,
     skip: int = 0,
+    wash: Optional[str] = None,
 ):
     """Coordinate search ("kombin arama"): single runway photos, filtered by
     item / color / material / pattern / season / gender.
@@ -2930,7 +2933,7 @@ async def fashion_looks(
     Gemini actually writes. Only photos that have been tagged so far appear;
     coverage fills in as the nightly tag sweep runs.
     """
-    pipeline = _looks_pipeline(gender, season, item, color, material, pattern, q, skip, _LOOKS_LIMIT)
+    pipeline = _looks_pipeline(gender, season, item, color, material, pattern, q, skip, _LOOKS_LIMIT, wash=wash)
     rows = await db.fashion.aggregate(pipeline).to_list(length=_LOOKS_LIMIT)
     for r in rows:
         r.pop("season_rank", None)
@@ -3003,6 +3006,7 @@ async def fashion_look_similar(look_id: str, user: Annotated[dict, Depends(get_c
 def _looks_pipeline(
     gender: Optional[str], season: Optional[str], item: Optional[str], color: Optional[str],
     material: Optional[str], pattern: Optional[str], q: Optional[str], skip: int, limit: int,
+    wash: Optional[str] = None,
 ) -> list:
     """The aggregation pipeline behind /fashion/looks — factored out so A8's
     smart-board refresh can run the exact same match a saved filter
@@ -3027,7 +3031,9 @@ def _looks_pipeline(
             ors.append({"image_tags": {"$elemMatch": {"$or": [{f: c} for f, c in qtags.items()]}}})
         match["$or"] = ors
 
-    tconds = fashion_tag_map.tag_match_conditions(item=item, color=color, material=material, pattern=pattern)
+    tconds = fashion_tag_map.tag_match_conditions(
+        item=item, color=color, material=material, pattern=pattern, wash=wash,
+    )
     if tconds:
         match["image_tags"] = {"$elemMatch": tconds}
 
@@ -3535,6 +3541,7 @@ async def smart_refresh_board(board_id: str, user: Annotated[dict, Depends(get_c
     pipeline = _looks_pipeline(
         sf.get("gender"), sf.get("season"), sf.get("item"), sf.get("color"),
         sf.get("material"), sf.get("pattern"), sf.get("q"), 0, 200,
+        wash=sf.get("wash"),
     )
     rows = await db.fashion.aggregate(pipeline).to_list(length=200)
     existing = await db.saved_photos.find(
@@ -4728,6 +4735,97 @@ async def admin_suggest_brand_merges(admin: Annotated[dict, Depends(require_admi
     return {"suggestions": suggestions}
 
 
+# Photos per run the wash backfill may send to Gemini — bounds the one-time
+# cost of tagging the existing denim archive; the nightly sweep continues.
+_WASH_MAX_PER_RUN = int(os.environ.get("FASHION_WASH_MAX_PER_RUN", "3000"))
+_DENIM_TAG_COND = {"$or": [{"material": "denim"}, {"item": {"$in": ["jeans", "denim"]}}]}
+
+
+async def _backfill_washes(max_photos: int = 0) -> dict:
+    """One-time-ish catch-up: photos tagged BEFORE the wash facet existed have
+    no `wash` key. For denim ones only (material denim / item jeans|denim) ask
+    Gemini for the wash and store it in place (`image_tags.<i>.wash`) —
+    non-denim photos never need one, the filter simply doesn't match them.
+    A photo answered "none" still gets wash="none" so it isn't asked again; a
+    photo that couldn't be fetched/read stays untouched for the next sweep.
+    Caller must hold _fashion_lock (it rewrites the same tag arrays)."""
+    if not gemini_client.ENABLED:
+        return {"status": "gemini_disabled"}
+    started_at = datetime.now(timezone.utc).isoformat()
+    cap = max_photos or _WASH_MAX_PER_RUN
+    docs = await db.fashion.find(
+        {"image_tags": {"$elemMatch": {**_DENIM_TAG_COND, "wash": {"$exists": False}}}},
+        {"_id": 0, "source_id": 1, "images": 1, "images_thumb": 1, "image": 1, "image_tags": 1, "season_rank": 1},
+    ).to_list(length=None)
+    docs.sort(key=lambda d: d.get("season_rank") or -1, reverse=True)  # newest shows first
+    jobs: list = []  # (source_id, [photo indexes still missing a wash])
+    total = 0
+    for d in docs:
+        tags = d.get("image_tags") or []
+        idxs = [
+            i for i, t in enumerate(tags)
+            if isinstance(t, dict) and "wash" not in t
+            and (t.get("material") == "denim" or t.get("item") in ("jeans", "denim"))
+        ]
+        if not idxs:
+            continue
+        if total + len(idxs) > cap and total:
+            break
+        jobs.append((d, idxs))
+        total += len(idxs)
+    if not jobs:
+        return {"status": "ok", "total": 0, "done": 0}
+    logger.info("Wash backfill: %d denim photo(s) in %d collection(s).", total, len(jobs))
+    await db.meta.update_one(
+        {"_id": "fashion"},
+        {"$set": {"scraping": True, "phase": "tagging_washes", "tags_total": total, "tags_done": 0}},
+        upsert=True,
+    )
+    sem = asyncio.Semaphore(int(os.environ.get("FASHION_TAG_DOC_CONCURRENCY", "6")))
+
+    async def one(doc: dict, idxs: list) -> int:
+        done = 0
+        async with sem:
+            images = doc.get("images") or ([doc["image"]] if doc.get("image") else [])
+            thumbs = doc.get("images_thumb") or images
+            for k in range(0, len(idxs), _TAG_BATCH):
+                chunk = idxs[k:k + _TAG_BATCH]
+                urls = [
+                    (thumbs[i] if i < len(thumbs) else images[i]) if i < len(images) else ""
+                    for i in chunk
+                ]
+                urls = await asyncio.to_thread(
+                    lambda us=urls: [image_store.find_object_url(u) or u if u else u for u in us]
+                )
+                try:
+                    res = await asyncio.wait_for(
+                        asyncio.to_thread(gemini_client.tag_washes, urls),
+                        timeout=_TAG_TIMEOUT_PER_PHOTO_S * len(urls),
+                    )
+                except Exception:  # noqa: BLE001
+                    res = [None] * len(urls)
+                sets = {f"image_tags.{i}.wash": v for i, v in zip(chunk, res) if v is not None}
+                if sets:
+                    await db.fashion.update_one({"source_id": doc["source_id"]}, {"$set": sets})
+                    done += len(sets)
+                    await db.meta.update_one({"_id": "fashion"}, {"$inc": {"tags_done": len(sets)}})
+        return done
+
+    results = await asyncio.gather(*(one(d, idxs) for d, idxs in jobs))
+    done = sum(results)
+    await _bump_usage_counter("gemini_photos_tagged", done)
+    await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+    status = "ok" if done >= total else "partial"
+    reason = ""
+    if status == "partial":
+        reason = "Bir kısım fotoğrafa ulaşılamadı ya da yanıt okunamadı; kalanlar bir sonraki taramada tekrar denenir."
+    await _record_job_run(
+        "fashion_tag_washes", status=status, started_at=started_at,
+        done=done, total=total, reason=reason, detail=f"{done}/{total} denim fotoğrafa yıkama etiketi eklendi",
+    )
+    return {"status": "ok", "total": total, "done": done}
+
+
 async def run_fashion_tag_photos() -> dict:
     """Sweep: tag every still-untagged runway photo across the WHOLE feed
     (all sources) via Gemini vision, so the look feed can be filtered by
@@ -4900,7 +4998,17 @@ async def run_fashion_tag_photos() -> dict:
             "fashion_tag_photos", status=status, started_at=started_at,
             done=tagged, total=total_photos, reason=reason, detail=detail,
         )
-        return {"status": "ok", "total_photos": total_photos, "tagged": tagged, "stats": stats}
+        # Catch up denim photos tagged before the wash facet existed. Skipped
+        # only when Gemini itself refused us this run (quota spent / requests
+        # rejected) — a few unreachable photos must not block it forever.
+        wash = None
+        if not (g_quota or g_rejected):
+            try:
+                wash = await _backfill_washes()
+            except Exception:  # noqa: BLE001
+                logger.exception("Wash backfill failed")
+                await db.meta.update_one({"_id": "fashion"}, {"$set": {"scraping": False}})
+        return {"status": "ok", "total_photos": total_photos, "tagged": tagged, "stats": stats, "wash": wash}
 
 
 @api.post("/admin/fashion-tag-firstview")

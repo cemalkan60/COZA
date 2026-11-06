@@ -88,6 +88,8 @@ export const tr = {
     color: "Renk",
     material: "Kumaş",
     pattern: "Desen",
+    wash: "Yıkama",
+    aiNoMatch: "Bu cümleyi bir filtreye çeviremedim — yazdığın kelimeyle arıyorum. Aşağıdan filtreleri elle de seçebilirsin.",
     empty: "Bu filtreye uygun sonuç bulunamadı.",
     recent: "Son aramalar",
     clearRecent: "Temizle",
@@ -295,6 +297,8 @@ export const en: Dict = {
     color: "Color",
     material: "Material",
     pattern: "Pattern",
+    wash: "Wash",
+    aiNoMatch: "Couldn't turn that into a filter — searching your words instead. You can also pick filters below.",
     empty: "No results match this filter.",
     recent: "Recent searches",
     clearRecent: "Clear",
@@ -502,6 +506,8 @@ export const es: Dict = {
     color: "Color",
     material: "Material",
     pattern: "Estampado",
+    wash: "Lavado",
+    aiNoMatch: "No pude convertirlo en un filtro — busco por tus palabras. También puedes elegir filtros abajo.",
     empty: "No hay resultados para este filtro.",
     recent: "Búsquedas recientes",
     clearRecent: "Borrar",
@@ -686,6 +692,10 @@ export const FILTER_OPTIONS: Record<"en" | "es", FacetMap> = {
       monogram: "Monogram", logo: "Logo / lettering", graphic: "Graphic print", heart: "Heart print",
       cross: "Cross print", print: "Printed", abstract: "Abstract", solid: "Solid", one_spot: "Placement print",
     },
+    wash: {
+      raw: "Raw / dry", dark: "Dark wash", medium: "Medium wash", light: "Light wash", stonewash: "Stonewash",
+      acid: "Acid wash", bleached: "Bleached", faded: "Faded / vintage", distressed: "Distressed", coated: "Coated / waxed",
+    },
   },
   es: {
     itemGroup: {
@@ -731,6 +741,10 @@ export const FILTER_OPTIONS: Record<"en" | "es", FacetMap> = {
       color_block: "Color block", gradient: "Degradado / tie-dye", paisley: "Cachemir", nordic: "Nórdico",
       monogram: "Monograma", logo: "Logo / letras", graphic: "Estampado gráfico", heart: "Corazones",
       cross: "Cruces", print: "Estampado", abstract: "Abstracto", solid: "Liso", one_spot: "Estampado localizado",
+    },
+    wash: {
+      raw: "Crudo / seco", dark: "Lavado oscuro", medium: "Lavado medio", light: "Lavado claro", stonewash: "Stonewash",
+      acid: "Lavado ácido", bleached: "Decolorado", faded: "Desteñido / vintage", distressed: "Desgastado", coated: "Encerado",
     },
   },
 };

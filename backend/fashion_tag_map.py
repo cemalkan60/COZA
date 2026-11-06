@@ -13,6 +13,7 @@ instead of live-proxying fashion-press.
 Values here are compared against gemini_client._clean_tag output: already
 lowercased and trimmed.
 """
+import re
 from typing import Optional
 
 # --- material: fashion-press value -> Gemini words -------------------------
@@ -135,7 +136,47 @@ _ITEM_FAMILY = {
     "trench coat": {"trench coat", "trench", "coat"},
 }
 
-_FACETS = {"item": _ITEM_FAMILY, "color": _COLOR, "material": _MATERIAL, "pattern": _PATTERN}
+# --- wash (denim finish): filter value -> Gemini words ----------------------
+# Gemini writes exactly the gemini_client.WASH_VALUES words for denim photos
+# (everything else is "none"), so each option maps to itself plus a few
+# spellings an older/looser tag might carry.
+_WASH = {
+    "raw": {"raw", "dry", "rinse", "unwashed"},
+    "dark": {"dark", "indigo", "dark wash"},
+    "medium": {"medium", "mid", "medium wash"},
+    "light": {"light", "pale", "light wash"},
+    "stonewash": {"stonewash", "stone wash", "stonewashed", "stone-washed"},
+    "acid": {"acid", "acid wash", "acidwash"},
+    "bleached": {"bleached", "bleach"},
+    "faded": {"faded", "vintage", "washed out", "sun-faded"},
+    "distressed": {"distressed", "destroyed", "ripped", "worn"},
+    "coated": {"coated", "waxed", "wax", "resin"},
+}
+# Turkish labels for the wash filter dropdown (value -> label).
+WASH_LABELS_TR = {
+    "raw": "Ham / kuru (raw)",
+    "dark": "Koyu yıkama",
+    "medium": "Orta yıkama",
+    "light": "Açık yıkama",
+    "stonewash": "Taş yıkama",
+    "acid": "Asit yıkama",
+    "bleached": "Ağartma (bleach)",
+    "faded": "Soluk / vintage",
+    "distressed": "Yıpratma / eskitme",
+    "coated": "Kaplamalı (waxed)",
+}
+_ANY_WASH = set().union(*_WASH.values())
+
+
+def wash_options() -> list:
+    """Filter dropdown options for the Lens "Yıkama" filter."""
+    return [{"value": v, "label": WASH_LABELS_TR[v]} for v in _WASH]
+
+
+_FACETS = {
+    "item": _ITEM_FAMILY, "color": _COLOR, "material": _MATERIAL,
+    "pattern": _PATTERN, "wash": _WASH,
+}
 
 # --- free-text (COZA Lens search box): a typed word -> facet + Gemini words.
 # Turkish first, common English too, so "pantolon" / "jean" / "yün ceket" /
@@ -146,9 +187,9 @@ _FREETEXT = {
     "pantalon": {"item": {"trousers", "pants"}},
     "pants": {"item": {"trousers", "pants"}},
     "trousers": {"item": {"trousers", "pants"}},
-    "jean": {"item": {"jeans", "denim"}, "material": {"denim"}},
-    "jeans": {"item": {"jeans", "denim"}, "material": {"denim"}},
-    "kot": {"item": {"jeans", "denim"}, "material": {"denim"}},
+    "jean": {"item": {"jeans", "denim"}},
+    "jeans": {"item": {"jeans", "denim"}},
+    "kot": {"item": {"jeans", "denim"}},
     "ceket": {"item": {"jacket", "blazer"}},
     "jacket": {"item": {"jacket", "blazer"}},
     "blazer": {"item": {"blazer", "jacket"}},
@@ -270,6 +311,35 @@ _FREETEXT = {
     "baskili": {"pattern": {"print", "printed", "graphic"}},
     "duz": {"pattern": {"solid", "plain"}},
     "desensiz": {"pattern": {"solid", "plain"}},
+    # denim wash / finish
+    # generic wash words -> "wash_any" (only used when no specific wash is named)
+    "yikama": {"wash_any": _ANY_WASH},
+    "yikanmis": {"wash_any": _ANY_WASH},
+    "wash": {"wash_any": _ANY_WASH},
+    "washed": {"wash_any": _ANY_WASH},
+    "tas yikama": {"wash": _WASH["stonewash"]},
+    "koyu yikama": {"wash": _WASH["dark"]},
+    "orta yikama": {"wash": _WASH["medium"]},
+    "acik yikama": {"wash": _WASH["light"]},
+    "dark wash": {"wash": _WASH["dark"]},
+    "light wash": {"wash": _WASH["light"]},
+    "medium wash": {"wash": _WASH["medium"]},
+    "stonewash": {"wash": _WASH["stonewash"]},
+    "asit": {"wash": _WASH["acid"]},
+    "acid": {"wash": _WASH["acid"]},
+    "agartma": {"wash": _WASH["bleached"]},
+    "bleach": {"wash": _WASH["bleached"]},
+    "bleached": {"wash": _WASH["bleached"]},
+    "soluk": {"wash": _WASH["faded"]},
+    "faded": {"wash": _WASH["faded"]},
+    "eskitme": {"wash": _WASH["distressed"]},
+    "eskitmeli": {"wash": _WASH["distressed"]},
+    "yipratma": {"wash": _WASH["distressed"]},
+    "yipranmis": {"wash": _WASH["distressed"]},
+    "distressed": {"wash": _WASH["distressed"]},
+    "destroyed": {"wash": _WASH["distressed"]},
+    "waxed": {"wash": _WASH["coated"]},
+    "kaplamali": {"wash": _WASH["coated"]},
 }
 # Turkish letters folded to ASCII so a query typed either way still hits.
 _TR_FOLD = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
@@ -290,6 +360,11 @@ def free_text_conditions(q: str) -> dict:
         if hit:
             for facet, words in mapping.items():
                 acc.setdefault(facet, set()).update(words)
+    # A generic "yıkama"/"wash" only means "any wash" when no specific wash
+    # (taş yıkama, asit, ...) was named; otherwise the specific one wins.
+    generic = acc.pop("wash_any", None)
+    if generic and "wash" not in acc:
+        acc["wash"] = generic
     return {facet: {"$in": sorted(words)} for facet, words in acc.items()}
 
 
@@ -307,12 +382,15 @@ def tag_match_conditions(
     color: "Optional[str]" = None,
     material: "Optional[str]" = None,
     pattern: "Optional[str]" = None,
+    wash: "Optional[str]" = None,
 ) -> dict:
     """Mongo sub-document for `{"image_tags": {"$elemMatch": <this>}}` — the
     conditions a single photo's tag object must satisfy. Empty dict => no
     tag filtering requested (or none of the values were recognised)."""
     out: dict = {}
-    for facet, raw in (("item", item), ("color", color), ("material", material), ("pattern", pattern)):
+    for facet, raw in (
+        ("item", item), ("color", color), ("material", material), ("pattern", pattern), ("wash", wash),
+    ):
         vals = gemini_values_for(facet, raw) if raw else None
         if vals:
             out[facet] = {"$in": sorted(vals)}
@@ -344,6 +422,11 @@ _TAG_LABELS_TR = {
         "denim": "kot kumaşı", "leather": "deri", "knit": "triko", "silk": "ipek",
         "wool": "yün", "cotton": "pamuk", "sequin": "pullu", "velvet": "kadife",
         "satin": "saten", "lace": "dantel", "fur": "kürk", "suede": "süet",
+    },
+    "wash": {
+        "raw": "ham", "dark": "koyu yıkama", "medium": "orta yıkama", "light": "açık yıkama",
+        "stonewash": "taş yıkama", "acid": "asit yıkama", "bleached": "ağartma",
+        "faded": "soluk", "distressed": "yıpratma", "coated": "kaplamalı",
     },
     "pattern": {
         "solid": "düz renk", "striped": "çizgili", "floral": "çiçekli", "plaid": "ekose",
