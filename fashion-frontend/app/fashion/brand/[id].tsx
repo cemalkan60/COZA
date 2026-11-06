@@ -121,6 +121,17 @@ export default function BrandGallery() {
   imagesLengthRef.current = images.length;
   const viewerListRef = useRef<FlatList<string>>(null);
   const wasViewerOpenRef = useRef(false);
+  const openNudgeUntilRef = useRef(0);
+  const openNudgeIndexRef = useRef(0);
+  // Re-pin the viewer list to the photo that was tapped, but only inside the
+  // short window right after opening and only while it is still on that photo
+  // (viewerIndex unchanged), so it never fights a user's own swipe.
+  const nudgeToOpenedPhoto = useCallback(() => {
+    if (Date.now() > openNudgeUntilRef.current) return;
+    const idx = openNudgeIndexRef.current;
+    if (viewerIndexRef.current !== idx) return;
+    viewerListRef.current?.scrollToOffset({ offset: width * idx, animated: false });
+  }, [width]);
   // One ZoomableImage ref per currently-mounted viewer page (FlatList only
   // keeps a handful of pages mounted at once), keyed by index, so the +/-
   // zoom buttons below can always reach whichever page is actually visible
@@ -240,6 +251,16 @@ export default function BrandGallery() {
     wasViewerOpenRef.current = isOpen;
     if (isOpen && !wasOpen) {
       const idx = viewerIndex as number;
+      // Safari (desktop + iOS) can still land on photo 1 after the rAF nudge
+      // below if the list lays out late. For the first ~1.2s after opening,
+      // every layout/content-size event of the list re-pins it to the tapped
+      // photo (see nudgeToOpenedPhoto) and a few timed retries cover the case
+      // where no such event fires. A real swipe/arrow ends the window.
+      openNudgeUntilRef.current = Date.now() + 1200;
+      openNudgeIndexRef.current = idx;
+      const timers = [60, 200, 500, 900].map((ms) =>
+        setTimeout(nudgeToOpenedPhoto, ms),
+      );
       let raf2 = 0;
       const raf1 = requestAnimationFrame(() => {
         raf2 = requestAnimationFrame(() => {
@@ -247,11 +268,12 @@ export default function BrandGallery() {
         });
       });
       return () => {
+        timers.forEach(clearTimeout);
         cancelAnimationFrame(raf1);
         cancelAnimationFrame(raf2);
       };
     }
-  }, [viewerIndex]);
+  }, [viewerIndex, nudgeToOpenedPhoto]);
 
   useEffect(() => {
     let cancelled = false;
@@ -555,6 +577,8 @@ export default function BrandGallery() {
                 initialScrollIndex={viewerIndex}
                 contentOffset={{ x: width * viewerIndex, y: 0 }}
                 getItemLayout={(_, index) => ({ length: width, offset: width * index, index })}
+                onLayout={nudgeToOpenedPhoto}
+                onContentSizeChange={nudgeToOpenedPhoto}
                 onScrollToIndexFailed={(info) => {
                   setTimeout(() => viewerListRef.current?.scrollToIndex({ index: info.index, animated: false }), 50);
                 }}
