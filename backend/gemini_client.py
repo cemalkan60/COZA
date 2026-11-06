@@ -696,8 +696,12 @@ _PARSE_QUERY_PROMPT = (
     "English, or Spanish. Below are the ONLY valid values for each filter "
     "field (as a JSON object of field -> list of allowed values). Read the "
     "user's sentence and reply with ONLY a compact JSON object using AT "
-    "MOST these keys: gender, season, item, color, material, pattern — "
-    "include a key ONLY if the sentence clearly implies a value for it, "
+    "MOST these keys: gender, season, item, color, material, pattern, wash — "
+    "include a key ONLY if the sentence clearly implies a value for it. "
+    "\"wash\" is the denim wash/finish (e.g. Turkish yıkama, taş yıkama, "
+    "asit yıkama, eskitme, soluk, ağartma, koyu/açık yıkama); when the "
+    "sentence is about a wash or finish, set wash (if one specific value "
+    "fits) AND material to denim (if allowed), "
     "and its value MUST be exactly one of that field's allowed values "
     "(never invent a value, never use a label instead of the raw value). "
     "Omit a key entirely if unsure. No markdown, no explanation.\n\n"
@@ -855,9 +859,11 @@ _TAG_SHAPE_RULES = (
     'color, e.g. black, white, red, beige, navy, multicolor>", "pattern": '
     '"<e.g. solid, striped, floral, plaid, animal print, polka dot, none>", '
     '"material": "<best-guess fabric, e.g. denim, leather, knit, silk, wool, '
-    'cotton, sequin, unknown>"}. If you cannot tell a field confidently use '
-    '"unknown" for that field only — never drop a field or invent detail you '
-    "cannot actually see."
+    'cotton, sequin, unknown>", "wash": "<ONLY for denim garments, the wash/'
+    'finish: one of raw, dark, medium, light, stonewash, acid, bleached, '
+    'faded, distressed, coated; for every non-denim garment use none>"}. If '
+    'you cannot tell a field confidently use "unknown" for that field only '
+    "(wash: none) — never drop a field or invent detail you cannot actually see."
 )
 
 _TAG_PROMPT_ONE = (
@@ -878,13 +884,33 @@ def _tag_prompt_batch(n: int) -> str:
     )
 
 
+# Denim wash vocabulary (kept in sync with fashion_tag_map._WASH keys).
+WASH_VALUES = (
+    "raw", "dark", "medium", "light", "stonewash", "acid", "bleached",
+    "faded", "distressed", "coated",
+)
+_DENIM_ITEMS = ("jeans", "denim")
+
+
+def _clean_wash(raw, tag: dict) -> str:
+    """Normalise a wash word; anything not a known wash — or any garment that
+    isn't denim — is "none"."""
+    is_denim = tag.get("material") == "denim" or tag.get("item") in _DENIM_ITEMS
+    v = str(raw or "none").strip().lower().replace(" ", "").replace("-", "")
+    if v in ("stonewashed", "stonewash"):
+        v = "stonewash"
+    return v if (is_denim and v in WASH_VALUES) else "none"
+
+
 def _clean_tag(obj) -> "Optional[dict]":
     if not isinstance(obj, dict):
         return None
-    return {
+    tag = {
         field: str(obj.get(field) or "unknown").strip().lower()[:40]
         for field in _TAG_FIELDS
     }
+    tag["wash"] = _clean_wash(obj.get("wash"), tag)
+    return tag
 
 
 def _download_image(image_url: str) -> "Optional[dict]":
@@ -985,8 +1011,8 @@ def tag_images(image_urls: list) -> list:
     parts = [{"text": _tag_prompt_batch(len(ok_idx))}]
     for i in ok_idx:
         parts.append(downloaded[i])
-    # ~90 output tokens per object is plenty for this fixed 4-field shape.
-    text = _generate(parts, max_output_tokens=64 + 90 * len(ok_idx), timeout=60, response_json=True)
+    # ~110 output tokens per object is plenty for this fixed 5-field shape.
+    text = _generate(parts, max_output_tokens=64 + 110 * len(ok_idx), timeout=60, response_json=True)
     if not text:
         _blame_no_reply(len(ok_idx))
         return out
@@ -1011,6 +1037,53 @@ def tag_images(image_urls: list) -> list:
     for pos, i in enumerate(ok_idx):
         out[i] = _clean_tag(arr[pos])
     _tag_stat("ok", len(ok_idx))
+    return out
+
+
+def _wash_prompt(n: int) -> str:
+    return (
+        f"You are classifying the denim WASH / FINISH of {n} fashion runway "
+        f"photos, given in order. For EACH photo look at the denim garment the "
+        f"model wears and choose exactly one of: raw (dark, unwashed, stiff), "
+        f"dark, medium, light, stonewash, acid (high-contrast mottled), "
+        f"bleached, faded (vintage, sun-worn), distressed (rips, heavy wear), "
+        f"coated (waxed/resin/shiny), none (no denim visible). Reply with ONLY "
+        f"a JSON array of EXACTLY {n} strings in photo order — no markdown, no "
+        f"explanation."
+    )
+
+
+def tag_washes(image_urls: list) -> list:
+    """Backfill: classify the denim wash of several photos in ONE request.
+    Returns a list the same length/order as `image_urls`; an entry is None if
+    that photo couldn't be downloaded or the reply couldn't be used (callers
+    leave it for a later sweep, never raise)."""
+    n = len(image_urls)
+    if not ENABLED or n == 0:
+        return [None] * n
+    downloaded = list(_DL_POOL.map(_download_image, image_urls))
+    ok_idx = [i for i, d in enumerate(downloaded) if d is not None]
+    out: list = [None] * n
+    if not ok_idx:
+        return out
+    parts = [{"text": _wash_prompt(len(ok_idx))}] + [downloaded[i] for i in ok_idx]
+    text = _generate(parts, max_output_tokens=32 + 12 * len(ok_idx), timeout=60, response_json=True)
+    if not text:
+        return out
+    m = re.search(r"\[.*\]", text, re.DOTALL)
+    if not m:
+        return out
+    try:
+        arr = json.loads(m.group(0))
+    except Exception:  # noqa: BLE001
+        return out
+    if not isinstance(arr, list) or len(arr) != len(ok_idx):
+        return out
+    for pos, i in enumerate(ok_idx):
+        v = str(arr[pos] or "none").strip().lower().replace(" ", "").replace("-", "")
+        if v in ("stonewashed",):
+            v = "stonewash"
+        out[i] = v if v in WASH_VALUES else "none"
     return out
 
 

@@ -37,9 +37,9 @@ function splitLookId(sid: string): { source_id: string; photo_index: number } {
     : { source_id: sid.slice(0, i), photo_index: parseInt(sid.slice(i + 1), 10) || 0 };
 }
 
-type FilterKey = "season" | "item" | "color" | "material" | "pattern";
+type FilterKey = "season" | "item" | "color" | "material" | "pattern" | "wash";
 
-const FILTER_KEYS: FilterKey[] = ["season", "item", "color", "material", "pattern"];
+const FILTER_KEYS: FilterKey[] = ["season", "item", "color", "material", "wash", "pattern"];
 
 export default function FashionSearch() {
   const { colors, spacing } = useTheme();
@@ -53,7 +53,7 @@ export default function FashionSearch() {
   // same as any other deep link; the user's own later filter taps take
   // over from there, this never re-applies on its own.
   const initialParams = useLocalSearchParams<{
-    gender?: string; season?: string; item?: string; color?: string; material?: string; pattern?: string;
+    gender?: string; season?: string; item?: string; color?: string; material?: string; pattern?: string; wash?: string;
   }>();
 
   const [filters, setFilters] = useState<FashionLookFilters | null>(null);
@@ -64,6 +64,7 @@ export default function FashionSearch() {
     color: initialParams.color || "",
     material: initialParams.material || "",
     pattern: initialParams.pattern || "",
+    wash: initialParams.wash || "",
   });
   const [items, setItems] = useState<FashionLookItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -221,6 +222,10 @@ export default function FashionSearch() {
   // into the actual filter dropdowns (season/item/color/material/pattern/
   // gender), instead of the plain keyword-table match `q` already does.
   const [aiParsing, setAiParsing] = useState(false);
+  // Shown when the sentence couldn't be turned into any filter — the typed
+  // text stays in the box (keyword search still applies) instead of being
+  // wiped and the whole collection listed.
+  const [aiNote, setAiNote] = useState("");
   const searchWithAI = async () => {
     const text = q.trim();
     if (!text || aiParsing) return;
@@ -228,10 +233,16 @@ export default function FashionSearch() {
     try {
       const res = await api.fashionParseQuery(text);
       const f = res.filters || {};
+      const found = FILTER_KEYS.some((k) => typeof f[k] === "string" && f[k]) || (typeof f.gender === "string" && !!f.gender);
+      if (!found) {
+        setAiNote(t("lens.aiNoMatch"));
+        return;
+      }
+      setAiNote("");
       if (typeof f.gender === "string") setGender(f.gender);
       setSelected((s) => {
         const next = { ...s };
-        (["season", "item", "color", "material", "pattern"] as FilterKey[]).forEach((k) => {
+        FILTER_KEYS.forEach((k) => {
           if (typeof f[k] === "string") next[k] = f[k];
         });
         return next;
@@ -359,6 +370,7 @@ export default function FashionSearch() {
     if (key === "color") return filters.colors;
     if (key === "material") return filters.materials;
     if (key === "pattern") return filters.patterns;
+    if (key === "wash") return filters.washes;
     return undefined;
   };
 
@@ -417,7 +429,7 @@ export default function FashionSearch() {
           <TextInput
             testID="look-search-input"
             value={q}
-            onChangeText={setQ}
+            onChangeText={(v) => { setQ(v); if (aiNote) setAiNote(""); }}
             placeholder={t("lens.searchPlaceholder")}
             placeholderTextColor={colors.brandSecondary}
             style={{ flex: 1, color: colors.onSurface, fontSize: 14, paddingVertical: 8 }}
@@ -441,7 +453,9 @@ export default function FashionSearch() {
           )}
         </View>
         {!!q.trim() && (
-          <Text style={{ color: colors.brandSecondary, fontSize: 11, marginTop: 6 }}>{t("lens.aiSearchHint")}</Text>
+          <Text style={{ color: aiNote ? colors.brand : colors.brandSecondary, fontSize: 11, marginTop: 6 }}>
+            {aiNote || t("lens.aiSearchHint")}
+          </Text>
         )}
 
         {!q.trim() && recent.length > 0 && (
