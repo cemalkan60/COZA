@@ -95,6 +95,11 @@ _DL_POOL = ThreadPoolExecutor(max_workers=16, thread_name_prefix="gemini-img")
 
 ENABLED = bool(_KEYS)
 
+# Last non-quota HTTP error seen (status + model + start of body), surfaced in
+# the Admin "son işlemler" reason so a rejected run says WHY (403 billing, 404
+# retired model, 400 bad request) without digging through Railway logs.
+LAST_ERROR = ""
+
 # --- Per-run failure tally (why did a tagging pass tag nothing?) -------------
 # tag_images / _download_image bump these counters by category so the caller
 # (run_fashion_tag_photos) can write a REAL reason into the Admin panel's
@@ -301,6 +306,8 @@ def _generate(
             continue
         if not resp.ok:
             logger.warning("gemini_client: HTTP %s from %s: %s", resp.status_code, slot.model, resp.text[:200])
+            global LAST_ERROR
+            LAST_ERROR = f"HTTP {resp.status_code} ({slot.model}): {(resp.text or '')[:120]}"
             _cool(slot, quota=False)
             continue
         _slot_ok(slot)
