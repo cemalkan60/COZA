@@ -346,7 +346,11 @@ async def run_scrape(reason: str = "manual") -> dict:
             started_at=started_at,
             done=stats["categories_ok"], total=stats["categories_ok"] + stats["categories_failed"],
             detail=f"{len(products)} ürün, {stats['categories_ok']}/{stats['categories_ok'] + stats['categories_failed']} kategori",
-            reason="Bazı kategoriler taranamadı (kaynak/proxy hatası)." if stats["categories_failed"] else "",
+            reason=(
+                "Bazı kategoriler taranamadı (kaynak/proxy hatası"
+                + (f": {stats['last_error']} — ScraperAPI kredisi/anahtarı kontrol et" if stats.get("last_error") else "")
+                + ")."
+            ) if stats["categories_failed"] else "",
         )
         # Enrich real manufacturing origins in the background (per manufacturer code).
         asyncio.create_task(enrich_origins(proxy_key))
@@ -4860,7 +4864,8 @@ async def run_fashion_tag_photos() -> dict:
         if g_quota:
             bits.append(f"{g_quota} fotoğrafta günlük Gemini kotası doluydu")
         if g_rejected:
-            bits.append(f"{g_rejected} fotoğrafta Gemini isteği reddetti (model/ayar uyumsuzluğu) — Railway loglarına bak")
+            bits.append(f"{g_rejected} fotoğrafta Gemini isteği reddetti (model/ayar uyumsuzluğu)"
+                        + (f" — son hata: {gemini_client.LAST_ERROR}" if getattr(gemini_client, "LAST_ERROR", "") else " — Railway loglarına bak"))
         if g_noreply:
             bits.append(f"{g_noreply} fotoğrafta Gemini yanıt vermedi")
         if g_badreply:

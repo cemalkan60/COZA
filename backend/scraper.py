@@ -201,7 +201,7 @@ def fetch_origin(product_id: str, api_key: str = ""):
 def collect_products(api_key: str = ""):
     """Synchronous. Returns (products, stats). Deduped by product_id."""
     products = {}
-    stats = {"categories_ok": 0, "categories_failed": 0}
+    stats = {"categories_ok": 0, "categories_failed": 0, "last_error": ""}
     for cat_id, cat_name in CATEGORIES:
         try:
             for comp in _fetch_category(cat_id, api_key):
@@ -214,5 +214,8 @@ def collect_products(api_key: str = ""):
             logger.info("Scraped %s (%s)", cat_name, cat_id)
         except Exception as exc:  # noqa: BLE001
             stats["categories_failed"] += 1
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            # ScraperAPI: 401/403 = key invalid or credits exhausted, 429 = rate/concurrency.
+            stats["last_error"] = f"HTTP {code}" if code else f"{type(exc).__name__}: {str(exc)[:120]}"
             logger.error("Failed category %s (%s): %s", cat_name, cat_id, exc)
     return list(products.values()), stats
