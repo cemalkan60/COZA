@@ -7,6 +7,7 @@ We therefore scrape the ES/EN catalog and enrich each product with its genuine o
 """
 import os
 import re
+import time
 import logging
 from pathlib import Path
 
@@ -60,21 +61,51 @@ def map_country(name: str) -> str:
     return COUNTRY_MAP.get(key, name.strip().rstrip("."))
 
 
+# Fallback providers. Each has its own free monthly credit pool, so chaining
+# them (ScraperAPI 1k + Scrape.do 1k + ScrapeOps 1k) triples the free budget.
+# Activated only if the matching env var is set on Railway:
+#   SCRAPEDO_TOKEN, SCRAPEOPS_API_KEY
+# A provider that answers 401/402/403/429 (bad key / credits out / rate limit)
+# is skipped for _COOLDOWN_S so one dead pool doesn't slow every request.
+_COOLDOWN_S = 3600
+_CREDIT_STATUSES = (401, 402, 403, 429)
+_dead_until: dict = {}
+
+
+def _providers(api_key: str = ""):
+    out = [("scraperapi", SCRAPER_BASE, {"api_key": api_key or SCRAPER_API_KEY})]
+    if os.environ.get("SCRAPEDO_TOKEN", "").strip():
+        out.append(("scrapedo", "https://api.scrape.do/", {"token": os.environ["SCRAPEDO_TOKEN"].strip()}))
+    if os.environ.get("SCRAPEOPS_API_KEY", "").strip():
+        out.append(("scrapeops", "https://proxy.scrapeops.io/v1/", {"api_key": os.environ["SCRAPEOPS_API_KEY"].strip()}))
+    return out
+
+
 def _proxy_get(url: str, api_key: str = "", timeout: int = 80) -> requests.Response:
-    # Always go through ScraperAPI. A direct-request-first attempt was tried
-    # here (see git history) to save proxy credits, but it made every scrape
-    # suspiciously fast (16 categories in ~3s) with the catalog never
-    # actually changing afterward — consistent with Zara/a CDN serving a
-    # cached response to direct requests rather than genuinely blocking them.
-    # Reverted now that the real cause of missing updates (an exhausted
-    # ScraperAPI key) is fixed, so there's no upside left to risk it for.
-    resp = requests.get(
-        SCRAPER_BASE,
-        params={"api_key": api_key or SCRAPER_API_KEY, "url": url},
-        timeout=timeout,
-    )
-    resp.raise_for_status()
-    return resp
+    # Always go through a proxy API (a direct request returned cached/stale
+    # data from Zara's CDN, see git history). Try ScraperAPI first, then the
+    # optional fallback providers when one is out of credits / key rejected.
+    now = time.time()
+    last_exc = None
+    providers = _providers(api_key)
+    live = [p for p in providers if _dead_until.get(p[0], 0) <= now] or providers
+    for name, base, auth in live:
+        try:
+            resp = requests.get(base, params={**auth, "url": url}, timeout=timeout)
+        except requests.RequestException as exc:
+            last_exc = exc
+            logger.warning("proxy %s network error: %s", name, exc)
+            continue
+        if resp.status_code in _CREDIT_STATUSES:
+            _dead_until[name] = now + _COOLDOWN_S
+            logger.warning("proxy %s -> HTTP %s (credits/key?), trying next provider", name, resp.status_code)
+            last_exc = requests.HTTPError(f"{name}: HTTP {resp.status_code}", response=resp)
+            continue
+        resp.raise_for_status()
+        return resp
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("no proxy provider available")
 
 
 def _fetch_category(cat_id: int, api_key: str = ""):
